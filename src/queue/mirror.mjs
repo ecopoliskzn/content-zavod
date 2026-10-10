@@ -30,11 +30,12 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../lib/config.mjs";
 import { PROJECT_ROOT, dataPath, env } from "../lib/env.mjs";
-import { readJson, readJsonl, writeAtomic, writeJson } from "../lib/files.mjs";
+import { latestById, readJson, readJsonl, writeAtomic, writeJson } from "../lib/files.mjs";
 import { request } from "../lib/http.mjs";
 import { alert, resolve } from "../lib/notify.mjs";
 import { dueAt, mskDate, mskTime } from "../lib/time.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
+import { clearStop, setStop } from "./switch.mjs";
 
 const flag = (name) => process.argv.includes(`--${name}`);
 const mirrorDir = () => path.resolve(env("MIRROR_DIR", path.join(PROJECT_ROOT, "mirror")));
@@ -55,7 +56,7 @@ async function server(cmd, args = {}, timeoutMs = 30_000) {
 
 const WEEKDAYS = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
 
-/** Расписание на две недели человеческим текстом. Чистая функция. */
+/** Расписание человеческим текстом: две недели вперёд и вышедшее за шестьдесят дней. Чистая функция. */
 export function renderSchedule(entries, now = Date.now(), titles = {}, meta = {}) {
   const today = mskDate(now);
   const horizon = mskDate(now + 14 * 86_400_000);
@@ -80,6 +81,20 @@ export function renderSchedule(entries, now = Date.now(), titles = {}, meta = {}
   if (failed.length) {
     L.push("", "## Требуют решения", "");
     for (const e of failed) L.push(`- ${e.date} ${e.time} · ${titles[e.channel] || e.channel} · ${STATUS_TITLE[e.status]} · ${preview(e, 70)}${e.note ? ` · ${String(e.note).slice(0, 100)}` : ""}`);
+  }
+  // Пакеты, ушедшие человеку: публикацией они станут после отметки «Выложено».
+  const handed = entries.filter((e) => e.status === "handed" && e.date < today);
+  if (handed.length) {
+    L.push("", "## Переданы на ручную выкладку, отметки «Выложено» нет", "");
+    for (const e of handed.sort((a, b) => dueAt(a) - dueAt(b))) L.push(`- ${e.date} ${e.time} · ${titles[e.channel] || e.channel} · ${preview(e, 70)}`);
+  }
+  /* Вышедшее за шестьдесят дней. Сюда сессии смотрят перед тем, как писать: одинаковое
+     начало площадка и читатель видят сразу, а проверка речи сравнивает как раз с этим
+     окном. Раньше раздела не было, и «посмотри прошлые начала» отправляло в пустоту. */
+  const past = entries.filter((e) => e.status === "published" && e.kind !== "reply" && e.date < today && e.date >= mskDate(now - 60 * 86_400_000)).sort((a, b) => dueAt(b) - dueAt(a));
+  if (past.length) {
+    L.push("", "## Вышло за 60 дней", "", "| Дата | Площадка | Материал | Начало текста |", "|---|---|---|---|");
+    for (const e of past) L.push(`| ${e.date.slice(8, 10)}.${e.date.slice(5, 7)} ${e.time} | ${titles[e.channel] || e.channel} | ${String(e.material || "").replace(/\|/g, "/")} | ${preview(e, 70).replace(/\|/g, "/")} |`);
   }
   return L.join("\n") + "\n";
 }
@@ -130,27 +145,60 @@ export async function watch() {
   return { ok: false, ...verdict };
 }
 
+/**
+ * Записи, которые при перехвате нельзя выпускать без взгляда человека. Чистая функция.
+ *
+ * Слот наступил до перехвата, а в копии запись ещё «одобрена». Копия старше остановки
+ * сервера: между ними он мог успеть выпустить запись, и копия об этом не знает. Выпустить
+ * такую запись с компьютера значит рискнуть вторым постом, а снять вышедший пост площадка
+ * не даёт. YouTube сюда не входит: ролик там открывает сам YouTube, выпуск его только сверяет.
+ */
+export function atRisk(entries, now = Date.now()) {
+  return entries.filter((e) => e.status === "approved" && e.channel !== "youtube" && dueAt(e) <= now);
+}
+
 /** Аварийный перехват: расписание ведёт этот компьютер. */
 export async function takeover() {
   if (!flag("yes")) return { code: 1, lines: ["перехват делается осознанно: добавьте --yes. До этого убедитесь, что сервер действительно лежит, а не отвалилась сеть на этом компьютере"] };
   const queueFile = mirrorPath("queue.json");
   if (!existsSync(queueFile)) return { code: 2, lines: ["копии расписания нет (mirror/queue.json): перехватывать нечего. Копию снимает npm run mirror, пока сервер жив"] };
   const lines = [];
-  const paused = await server("pause", { reason: "перехват расписания компьютером оператора" }, 15_000);
+  // takeover: такую остановку сервер не даст снять командой из группы, только возвратом.
+  const paused = await server("pause", { reason: "перехват расписания компьютером оператора", takeover: true }, 15_000);
   lines.push(paused.code === 0 ? "сервер ответил и остановлен (STOP)" : "сервер не ответил: рубильник не поставлен. После возврата он сам встанет на удержание и будет ждать кнопки");
   // Местный каталог данных собирается из копии. Старое местное состояние убирается в сторону.
   const local = dataPath("queue.jsonl");
   if (existsSync(local)) writeFileSync(`${local}.before-takeover`, readFileSync(local));
-  const entries = JSON.parse(readFileSync(queueFile, "utf8"));
+  const now = Date.now();
+  const copy = JSON.parse(readFileSync(queueFile, "utf8"));
+  const risky = atRisk(copy, now);
+  const riskyIds = new Set(risky.map((e) => e.id));
+  const note = "слот наступил до перехвата: сервер мог выпустить запись перед остановкой. Проверьте площадку глазами";
+  const entries = copy.map((e) => (riskyIds.has(e.id) ? { ...e, status: "failed", note, at: new Date(now).toISOString(), by: "перехват" } : e));
   writeAtomic(local, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
   const ledger = existsSync(mirrorPath("ledger.json")) ? JSON.parse(readFileSync(mirrorPath("ledger.json"), "utf8")) : [];
   writeAtomic(dataPath("ledger.jsonl"), ledger.map((r) => JSON.stringify(r)).join("\n") + (ledger.length ? "\n" : ""));
-  for (const f of ["STOP", "HOLD"]) if (existsSync(dataPath(f))) rmSync(dataPath(f));
-  writeJson(dataPath("heartbeat.json"), { runner: new Date().toISOString(), pid: process.pid });
-  writeJson(dataPath("TAKEOVER.json"), { since: new Date().toISOString(), serverPaused: paused.code === 0, copyFrom: readJson(mirrorPath("state.json"), {})?.pulledAt || null });
+  clearStop();
+  writeJson(dataPath("heartbeat.json"), { runner: new Date(now).toISOString(), pid: process.pid });
+  const state = readJson(mirrorPath("state.json"), {}) || {};
+  writeJson(dataPath("TAKEOVER.json"), { since: new Date(now).toISOString(), serverPaused: paused.code === 0, copyFrom: state.pulledAt || null, held: risky.map((e) => `${e.channel}:${e.name}`) });
   const approved = entries.filter((e) => e.status === "approved").length;
   lines.push(`расписание перенесено: записей ${entries.length}, одобренных к выпуску ${approved}`);
-  lines.push("дальше: включите задачу «zavod-takeover» в планировщике (ops/windows/takeover.cmd, раз в 5 минут) либо запускайте npm run release руками");
+
+  /* Слепое окно: что случилось на сервере после последней копии, компьютеру не известно. */
+  if (state.pulledAt) {
+    const gap = state.failSince ? Math.round((Date.parse(state.failSince) - Date.parse(state.pulledAt)) / 60_000) : null;
+    lines.push(`копия снята ${mskDate(Date.parse(state.pulledAt))} в ${mskTime(Date.parse(state.pulledAt))} по Москве${gap !== null ? `, первый отказ сервера замечен через ${gap} мин.` : "."}`);
+    lines.push("всё, что утверждающий одобрил, снял или отправил на правку после копии, компьютеру не известно. Спросите его в рабочей группе, не снимал ли он записи перед аварией: снятое уберите командой npm run queue -- cancel <имя> --channel=<площадка> --local");
+  }
+  if (risky.length) {
+    lines.push("", `записей, чей слот наступил до перехвата: ${risky.length}. Компьютер их сам не выпустит: сервер мог выпустить их перед остановкой.`);
+    for (const e of risky) lines.push(`  ${e.channel} · ${e.name} · слот ${e.date} ${e.time} · ${preview(e, 50)}`);
+    lines.push("по каждой откройте площадку и посмотрите, вышла ли запись:");
+    lines.push("  вышла:    npm run queue -- mark <имя> --channel=<площадка> --link=<ссылка> --local");
+    lines.push("  не вышла: npm run queue -- move <имя> --channel=<площадка> --next --local");
+  }
+  lines.push("", "дальше: включите задачу «zavod-takeover» в планировщике (ops/windows/takeover.cmd, раз в 5 минут) либо запускайте npm run release руками");
   lines.push("когда сервер оживёт: npm run mirror -- --handback. До этого выпуск на сервере не включать");
   return { code: 0, lines };
 }
@@ -164,20 +212,30 @@ export async function handback() {
   for (const r of readJsonl(dataPath("ledger.jsonl"))) if (r.status === "published" && Date.parse(r.at) >= Date.parse(state.since)) done.set(r.id, r);
   let failed = 0;
   for (const r of done.values()) {
-    const res = await server("mark", { ref: r.id, link: r.link || "", externalId: r.externalId || "", at: r.at, note: "вышла при перехвате расписания" });
-    lines.push(`${res.code === 0 ? "✓" : "✗"} ${r.channel} · ${r.name}${res.code === 0 ? "" : `: ${(res.lines || []).join("; ")}`}`);
+    const res = await server("mark", { ref: r.id, link: r.link || "", externalId: r.externalId || "", at: r.at, note: "вышла при перехвате расписания", takeover: true });
+    const stray = res.code === 0 && (res.lines || []).some((l) => /без согласия/.test(l));
+    lines.push(`${res.code === 0 ? "✓" : "✗"} ${r.channel} · ${r.name}${stray ? " — ВЫШЛА БЕЗ СОГЛАСИЯ: на сервере запись была снята или ждала «да». В рабочую группу ушло сообщение" : ""}${res.code === 0 ? "" : `: ${(res.lines || []).join("; ")}`}`);
+    if (res.code !== 0) failed++;
+  }
+  /* Пакеты на ручную выкладку, ушедшие в группу с компьютера. Серверу их нужно отметить
+     переданными, иначе после возврата он отправит тот же пакет второй раз. */
+  const handed = [...latestById(dataPath("queue.jsonl")).values()].filter((e) => e.status === "handed" && Date.parse(e.handedAt || 0) >= Date.parse(state.since) && !done.has(e.id));
+  for (const e of handed) {
+    const res = await server("mark", { ref: e.id, handed: true, packageMessageId: e.result?.packageMessageId || null, at: e.handedAt, note: "пакет отправлен при перехвате расписания" });
+    lines.push(`${res.code === 0 ? "✓" : "✗"} ${e.channel} · ${e.name} (пакет на ручную выкладку)${res.code === 0 ? "" : `: ${(res.lines || []).join("; ")}`}`);
     if (res.code !== 0) failed++;
   }
   if (failed) {
     lines.push(`не передано записей: ${failed}. Выпуск на сервере НЕ включён: иначе они выйдут второй раз. Повторите команду`);
     return { code: 2, lines };
   }
-  const resumed = await server("resume");
+  // handback: остановку ради перехвата сервер снимает только этой командой.
+  const resumed = await server("resume", { handback: true });
   if (resumed.code !== 0) { lines.push(`вышедшее передано (${done.size}), но выпуск на сервере не включился: ${(resumed.lines || []).join("; ")}`); return { code: 2, lines }; }
   rmSync(dataPath("TAKEOVER.json"));
   // Местный выпуск больше работать не должен: рубильник ставится здесь же.
-  writeFileSync(dataPath("STOP"), `расписание возвращено серверу ${new Date().toISOString()}`, "utf8");
-  lines.push(`серверу передано вышедших записей: ${done.size}. Выпуск на сервере включён, местный остановлен`);
+  setStop({ by: "возврат расписания", reason: "расписание возвращено серверу" });
+  lines.push(`серверу передано вышедших записей: ${done.size}${handed.length ? `, пакетов на ручную выкладку: ${handed.length}` : ""}. Выпуск на сервере включён, местный остановлен`);
   lines.push("выключите задачу «zavod-takeover» в планировщике");
   return { code: 0, lines };
 }
@@ -189,6 +247,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     else if (flag("handback")) { const r = await handback(); r.lines.forEach((l) => console.log(l)); code = r.code; }
     else if (flag("watch")) {
       const copy = await pull();
+      // Когда сервер перестал отдавать копию: по этой отметке перехват называет слепое окно.
+      if (!copy.ok) { const st = readJson(mirrorPath("state.json"), null); if (st && !st.failSince) writeJson(mirrorPath("state.json"), { ...st, failSince: new Date().toISOString() }); }
       const r = await watch();
       if (!r.ok || !copy.ok) console.log(`${new Date().toISOString()} сторож: ${r.ok ? "сервер жив" : r.text}${copy.ok ? "" : `; копия не снята: ${copy.error}`}`);
       code = r.ok ? 0 : 1;

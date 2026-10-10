@@ -134,11 +134,60 @@ export async function status(id) {
   return { kind: "ok", privacy: v.status.privacyStatus, publishAt: v.status.publishAt || "", upload: v.status.uploadStatus, rejection: v.status.rejectionReason || "", title: v.snippet.title, raw: v };
 }
 
+/* Поля блока status, которые YouTube принимает в правке. Остальное в ответе (ход загрузки,
+   причина отказа, признак «для детей», выставленный площадкой) только для чтения. */
+const WRITABLE = ["privacyStatus", "publishAt", "embeddable", "license", "publicStatsViewable", "selfDeclaredMadeForKids", "containsSyntheticMedia"];
+const writable = (st) => Object.fromEntries(WRITABLE.filter((k) => st?.[k] !== undefined).map((k) => [k, st[k]]));
+const putStatus = (id, next) => api("videos?part=status", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, status: next }), retries: 0 });
+
 /** Открыть закрытый ролик. Статус замещается целиком, поэтому сначала читаем текущий. */
 async function makePublic(video) {
-  const next = { ...video.status, privacyStatus: "public" };
+  const next = { ...writable(video.status), privacyStatus: "public" };
   delete next.publishAt;
-  return api("videos?part=status", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: video.id, status: next }), retries: 0 });
+  return putStatus(video.id, next);
+}
+
+/**
+ * Поставить, переставить или снять срок выхода закрытого ролика.
+ *
+ * Срок на YouTube — вторые часы выпуска, и очередь их не видит: «Снять» и «Отозвать
+ * согласие» останавливают запись, а YouTube в назначенную минуту открывает ролик сам.
+ * Поэтому срок следует за записью: src/video/schedule.mjs.
+ *
+ * publishAt = "" снимает срок: ролик остаётся закрытым. Правка замещает блок status
+ * целиком, поле, которого нет в запросе, YouTube стирает: так срок и снимается.
+ *
+ * СТАТУС: написано по документации Data API, боем не проверено. Поэтому после правки
+ * ролик читается заново, и «сделано» говорится только по тому, что ответил YouTube.
+ * @param {{ id: string, status: object }} video ролик, как его вернул status().raw
+ * @param {string} publishAt срок в ISO либо пустая строка
+ */
+export async function setSchedule(video, publishAt) {
+  const next = { ...writable(video.status), privacyStatus: "private" };
+  delete next.publishAt;
+  if (publishAt) next.publishAt = publishAt;
+  const r = await putStatus(video.id, next);
+  if (r.kind !== "ok") return { ok: false, kind: r.kind, error: r.error };
+  const check = await status(video.id);
+  if (check.kind !== "ok") return { ok: false, kind: check.kind, error: `правка ушла, но перечитать ролик не удалось: ${check.error}` };
+  const got = check.publishAt ? Date.parse(check.publishAt) : 0;
+  const want = publishAt ? Date.parse(publishAt) : 0;
+  if (check.privacy !== "private") return { ok: false, kind: "refused", error: `после правки ролик не закрыт (доступ «${check.privacy}»)` };
+  if (Math.abs(got - want) > 60_000) return { ok: false, kind: "refused", error: publishAt ? `YouTube не принял срок выхода: на ролике стоит «${check.publishAt || "без срока"}»` : `YouTube не снял срок выхода: на ролике по-прежнему стоит ${check.publishAt}` };
+  return { ok: true };
+}
+
+/**
+ * Ролик уже открыт на YouTube? Нужно выпуску перед тем, как объявить запись просроченной:
+ * после долгого простоя сервера ролик с датой выхода давно открыт самим YouTube, и
+ * сообщение «не вышла» было бы неправдой.
+ * @returns {Promise<{ id: string, link: string } | null>}
+ */
+export async function already(entry) {
+  const id = entry.extra?.youtubeId;
+  if (!id) return null;
+  const s = await status(id);
+  return s.kind === "ok" && s.privacy === "public" ? { id, link: `https://www.youtube.com/watch?v=${id}` } : null;
 }
 
 /**
@@ -153,7 +202,9 @@ export async function publish(entry, ctx = {}) {
   const link = `https://www.youtube.com/watch?v=${id}`;
   if (s.upload === "rejected" || s.upload === "failed") return { ok: false, retry: false, error: `YouTube отклонил ролик: ${s.rejection || s.upload}` };
   if (s.privacy !== "public") {
-    if (s.publishAt && Date.parse(s.publishAt) > Date.now() + 2 * 60_000) return { ok: false, retry: true, error: `YouTube откроет ролик сам в ${s.publishAt}, пока рано` };
+    // Слот записи наступил, значит, ролик пора открывать, какой бы срок ни стоял на самом
+    // YouTube: хозяин расписания — очередь. Срок там может быть позже слота (запись
+    // переставили ближе) либо снят вовсе (выпуск останавливали).
     const opened = await makePublic(s.raw);
     if (opened.kind !== "ok") return { ok: false, error: `ролик не открылся: ${opened.error}`, retry: opened.kind === "network" };
     await sleep(3_000);

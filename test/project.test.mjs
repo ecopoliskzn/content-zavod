@@ -85,9 +85,16 @@ for (const file of sampleFiles) {
     const entry = normalize(raw);
     const format = validate(entry).filter((b) => !(b.startsWith("дата и время") && !entry.date && !entry.time));
     assert.deepEqual(format, [], "претензии к форме");
-    const verdict = checkAll(entry, { stamps, codeWords: codeWords(), restricted: config.channels[entry.channel].access === "restricted", links, recentOpeners: [] });
+    // Образцы показывают запись в полном виде, с кодовым словом и ссылкой в бота, поэтому
+    // приём заявок здесь считается открытым. Что при закрытом приёме такая запись не
+    // пройдёт, держит отдельный тест ниже.
+    const restricted = config.channels[entry.channel].access === "restricted";
+    const verdict = checkAll(entry, { stamps, codeWords: codeWords(), restricted, links, recentOpeners: [], legal: true });
     assert.deepEqual(verdict.block, [], "образец не проходит собственные проверки");
-    assert.deepEqual(verdict.warn, [], "образец учит писать с замечаниями");
+    // На открытой площадке цена допустима, и проверка всегда напоминает сверить её с
+    // сайтом: это единственное замечание, с которым образец остаётся образцом.
+    const warn = verdict.warn.filter((w) => !(!restricted && /^реклама: в тексте есть .*Площадка открытая/.test(w)));
+    assert.deepEqual(warn, [], "образец учит писать с замечаниями");
     // Имя записи годится как метка публикации в ссылке.
     assert.equal(postMark(entry.name), entry.name, "имя записи: латиница, цифры и дефис, до 32 знаков");
     // У каждого утверждения есть источник, и он ведёт на сайт клиента.
@@ -102,6 +109,31 @@ for (const file of sampleFiles) {
     }
   });
 }
+
+test("образцы с кодовым словом и ссылкой в бота не проходят, пока приём заявок закрыт", () => {
+  const closed = (file) => {
+    const entry = normalize(json("prompts", "samples", "entries", file));
+    return checkAll(entry, { stamps, codeWords: codeWords(), restricted: true, links, recentOpeners: [], legal: false }).block.join("|");
+  };
+  assert.match(closed("instagram-vyrubki-do-osnovaniya.json"), /приём заявок закрыт.*кодовое слово/);
+  assert.match(closed("youtube-vyrubki-do-osnovaniya.json"), /приём заявок закрыт.*botKey/);
+  assert.match(closed("bot-rassylka-zamechanie.json"), /приём заявок закрыт.*рассылка в боте/);
+  // Тексты без входа в бота от состояния приёма не зависят.
+  assert.doesNotMatch(closed("threads-vyrubki-14-tochek.json"), /приём заявок закрыт/);
+  assert.doesNotMatch(closed("telegram-zamechanie-v-akte.json"), /приём заявок закрыт/);
+});
+
+test("рабочая сетка в реестре: часы сетки входят в слоты площадки, дни записаны числами 1–7", () => {
+  for (const [name, ch] of Object.entries(config.channels)) {
+    const rules = Array.isArray(ch.grid) ? ch.grid : ch.grid ? [ch.grid] : [];
+    assert.ok(rules.length, `у площадки ${name} нет рабочей сетки (поле grid)`);
+    for (const rule of rules) {
+      for (const time of rule.slots || []) assert.ok(ch.slots.includes(time), `${name}: время сетки ${time} не входит в слоты площадки`);
+      for (const day of rule.weekdays || []) assert.ok(Number.isInteger(day) && day >= 1 && day <= 7, `${name}: день недели ${day}`);
+      for (const kind of rule.kinds || []) assert.ok(ch.kinds.includes(kind), `${name}: в сетке вид «${kind}», которого у площадки нет`);
+    }
+  }
+});
 
 /* ───────────────────────────── окружение и расписание ───────────────────────────── */
 

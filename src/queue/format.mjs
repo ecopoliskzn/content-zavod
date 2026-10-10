@@ -9,7 +9,7 @@
 // по правилу (код выхода 1), а не поломка.
 //
 //   draft ──▶ review ──▶ approved ──▶ running ──▶ published
-//     ▲         │  ▲         │           │
+//     ▲         │  ▲         │           │   └──▶ handed ──▶ published
 //     │         ▼  │         ├──▶ expired (опоздала больше предела)
 //     └────── rework         └──▶ failed (три попытки) ──▶ approved (вернули руками)
 //   любая незавершённая ──▶ cancelled
@@ -17,9 +17,13 @@
 //  · review   — карточка ушла в рабочую группу, ждём «да» человека клиента;
 //  · rework   — человек нажал «Правка» и написал, что не так;
 //  · approved — «да» получено, запись ждёт своего слота;
-//  · running  — пишется ДО отправки на площадку: второй проход эту запись не возьмёт.
+//  · running  — пишется ДО отправки на площадку: второй проход эту запись не возьмёт;
+//  · handed   — площадка программной публикации не даёт: готовый текст ушёл сотруднику
+//               пакетом в рабочую группу. «Вышло» запись становится, когда человек нажал
+//               «Выложено». Пока отметки нет, в сводках она стоит отдельной строкой:
+//               отправленный пакет — ещё не публикация.
 
-export const STATUSES = ["draft", "review", "rework", "approved", "running", "published", "failed", "expired", "cancelled"];
+export const STATUSES = ["draft", "review", "rework", "approved", "running", "handed", "published", "failed", "expired", "cancelled"];
 
 export const STATUS_TITLE = {
   draft: "черновик",
@@ -27,6 +31,7 @@ export const STATUS_TITLE = {
   rework: "на правке",
   approved: "одобрено, ждёт слота",
   running: "выходит",
+  handed: "передано на ручную выкладку",
   published: "вышло",
   failed: "ошибка",
   expired: "просрочено",
@@ -38,7 +43,8 @@ const MOVES = {
   review: ["approved", "rework", "cancelled", "draft"],
   rework: ["draft", "review", "cancelled"],
   approved: ["running", "expired", "cancelled", "review"],
-  running: ["published", "approved", "failed"],
+  running: ["published", "handed", "approved", "failed"],
+  handed: ["published", "cancelled"],
   failed: ["approved", "cancelled"],
   expired: ["approved", "cancelled"],
   published: [],

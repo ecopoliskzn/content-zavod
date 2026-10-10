@@ -18,7 +18,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { config } from "../lib/config.mjs";
-import { dataPath } from "../lib/env.mjs";
+import { PROJECT_ROOT, dataPath } from "../lib/env.mjs";
 import { readJson, readJsonl } from "../lib/files.mjs";
 import { mskDate } from "../lib/time.mjs";
 import { latest } from "../metrics/summary.mjs";
@@ -37,19 +37,42 @@ export function mask(text) {
     .trim();
 }
 
-const count = (rows, key) => rows.reduce((acc, r) => { const k = key(r) || "не определено"; acc[k] = (acc[k] || 0) + 1; return acc; }, {});
+/**
+ * Ключ счёта в снимке. Счёт ведётся по меткам, а метку человек может набрать сам: хвост
+ * ссылки, текст после /start. Всё, что на метку не похоже (длинное число, почта, фраза),
+ * сворачивается в «прочее»: иначе телефон, набранный после /start, уехал бы с сервера
+ * под видом названия строки в таблице.
+ */
+export const safeKey = (k) => { const s = String(k ?? ""); return /^[\p{L}\d _.:/-]{1,48}$/u.test(s) && !/\d{9,}/.test(s) ? s : "прочее"; };
+const count = (rows, key) => rows.reduce((acc, r) => { const k = safeKey(key(r) || "не определено"); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
 const since = (rows, ms, field = "at") => rows.filter((r) => Date.parse(r[field]) >= ms);
 
+const ENTRY_MARKS = ["ig", "vk", "th", "yt", "rt", "dz", "tg", "site"];
+const ENTRY_WORDS = ["direct", "calendar", "subscribe", "diag"];
+
+/**
+ * Метка входа в бота для счёта: «ig-priemka-178414…» → «ig-priemka». Чистая функция.
+ * После /start человек может набрать что угодно, и бот запомнит это как метку. В счёт
+ * идут только метки завода: площадка и ключ материала. Остальное — «прочее».
+ * @param {string[]} [known] ключи материалов и сценариев; пусто — ключ не сверяется
+ */
+export function entryLabel(tag, known = []) {
+  const raw = String(tag || "direct").replace(/^вход-/, "").replace(/-\d{10,}$/, "").toLowerCase();
+  if (ENTRY_WORDS.includes(raw)) return raw;
+  const m = raw.match(/^([a-z]{2,4})-([a-z0-9-]{1,40})$/);
+  if (m && ENTRY_MARKS.includes(m[1])) return known.length && !known.includes(m[2].replace(/--[a-z]+$/, "")) ? `${m[1]}-прочее` : raw;
+  return known.includes(raw) ? raw : "прочее";
+}
+
 /** Воронка без персональных данных. Все входы — строки журналов, выход — только счёт. */
-export function funnel({ clicks = [], leads = [], leadCards = [], subscribers = [], igSent = [], now = Date.now(), days = 60 }) {
+export function funnel({ clicks = [], leads = [], leadCards = [], subscribers = [], igSent = [], now = Date.now(), days = 60, knownEntries = [] }) {
   const from = now - days * 86_400_000;
   const humanClicks = since(clicks, from).filter((r) => r.device !== "robot");
   const freshLeads = since(leads, from, "createdAt");
   const state = new Map();
   for (const c of leadCards) state.set(c.leadId, { ...(state.get(c.leadId) || {}), ...c });
   const status = (l) => state.get(l.id)?.status || "new";
-  // Метка входа без личного хвоста: «ig-priemka-178414…» → «ig-priemka».
-  const entryTag = (s) => ((s.tags || []).filter((t) => t.startsWith("вход-")).pop() || "вход-direct").replace("вход-", "").replace(/-\d{10,}$/, "");
+  const entryTag = (s) => entryLabel((s.tags || []).filter((t) => t.startsWith("вход-")).pop(), knownEntries);
   const subs = subscribers.filter((s) => Date.parse(s.subscribedAt || s.updatedAt || 0) >= from);
   return {
     days,
@@ -112,7 +135,10 @@ export function questionCount(events, now = Date.now(), days = 60) {
  */
 export function publicEntry(entry) {
   const out = { ...entry };
-  if (out.approval) { const { by, ...rest } = out.approval; out.approval = rest; }
+  // Номер Telegram лежит в двух местах: у согласия и у просьбы о правке.
+  for (const field of ["approval", "fixAsked"]) {
+    if (out[field] && typeof out[field] === "object") { const { by, ...rest } = out[field]; out[field] = rest; }
+  }
   if (/^tg:\d+$/.test(String(out.by || ""))) out.by = "рабочая группа";
   return out;
 }
@@ -132,6 +158,20 @@ function weeklyReports(limit = 8) {
   const dir = dataPath("reports", "weekly");
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((f) => f.endsWith(".md")).sort().slice(-limit).map((f) => ({ week: f.replace(/\.md$/, ""), md: readFileSync(path.join(dir, f), "utf8"), json: readJson(path.join(dir, f.replace(/\.md$/, ".json")), null) }));
+}
+
+/** Ключи материалов и сценариев бота: только они считаются метками входа. */
+function entryKeys() {
+  const keys = new Set();
+  for (const m of readJson(path.join(PROJECT_ROOT, "bot", "materials.json"), []) || []) if (m?.key) keys.add(String(m.key).toLowerCase());
+  const dir = path.join(PROJECT_ROOT, "bot", "scenarios");
+  if (existsSync(dir)) {
+    for (const f of readdirSync(dir).filter((x) => x.endsWith(".json"))) {
+      const s = readJson(path.join(dir, f), {}) || {};
+      for (const item of Array.isArray(s) ? s : [s]) { const key = item?.["ключ"] || item?.key; if (key) keys.add(String(key).toLowerCase()); }
+    }
+  }
+  return [...keys];
 }
 
 export function snapshot(now = Date.now()) {
@@ -164,6 +204,7 @@ export function snapshot(now = Date.now()) {
       subscribers: [...new Map(readJsonl(dataPath("leads", "tg-subscribers.jsonl")).map((s) => [s.id, s])).values()],
       igSent: readJsonl(dataPath("leads", "ig-sent.jsonl")),
       now,
+      knownEntries: entryKeys(),
     }),
     questions: privacy.shareBotQuestions === true ? questions(botEvents.slice(-3000)) : [],
     questionCount: questionCount(botEvents, now),

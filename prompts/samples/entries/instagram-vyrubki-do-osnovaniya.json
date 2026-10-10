@@ -3,10 +3,26 @@
   "kind": "reel",
   "name": "vyrubki-do-osnovaniya",
   "material": "blog:kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2",
-  "text": "Толщину покрытия на глаз не проверить\n\nДва одинаковых с виду участка могут сильно отличаться по расходу смеси. Поэтому слой проверяют вырубкой: вырезают квадрат 10 на 10 сантиметров до основания и измеряют штангенциркулем.\n\nНа площадке в 500 квадратных метров таких точек 14. Берут их не ближе 3 метров от края.\n\nРезать готовое покрытие самому заказчику не нужно: метод контроля заранее записывают в договор, а вырубки делают при обеих сторонах.\n\nЧек-лист приёмки пришлём в личные сообщения. Напишите в комментарии слово ПРИЁМКА.",
-  "media": [{ "type": "video", "url": "https://s3.twcstorage.ru/ecopolis-media/2026/10/vyrubki-do-osnovaniya.mp4", "cover": "https://s3.twcstorage.ru/ecopolis-media/2026/10/vyrubki-do-osnovaniya.jpg" }],
+  "text": "Толщину покрытия на глаз не проверить\n\nОдинаковые с виду участки могут существенно отличаться по расходу смеси. Поэтому слой проверяют вырубкой: вырезают квадрат 10 на 10 сантиметров до основания и измеряют штангенциркулем.\n\nПо инструкции «Экополиса» на площадке в 500 квадратных метров таких точек 14. Берут их не ближе 3 метров от края.\n\nВырезать готовое покрытие самому заказчику не следует: метод контроля заранее включают в договор, а вырубки делают при представителях сторон.\n\nЧек-лист приёмки пришлём в личные сообщения. Напишите в комментарии слово ПРИЁМКА.",
+  "media": [
+    {
+      "type": "video",
+      "url": "https://s3.twcstorage.ru/ecopolis-media/2026/10/vyrubki-do-osnovaniya.mp4",
+      "cover": "https://s3.twcstorage.ru/ecopolis-media/2026/10/vyrubki-do-osnovaniya.jpg"
+    }
+  ],
   "facts": [
-    { "claim": "размер вырубки 10 × 10 см до основания, измерение штангенциркулем", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
-    { "claim": "для объекта площадью 500 м² потребуется 14 вырубок; не менее чем в 3 метрах от края", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" }
+    {
+      "claim": "размер вырубки 10 × 10 см до основания, измерение штангенциркулем; одинаково выглядящие участки могут существенно отличаться по расходу смеси",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "согласно инструкции компании «Экополис»: для объекта площадью 500 м² потребуется 14 вырубок; не менее чем в 3 метрах от края",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "самостоятельно вырезать готовое покрытие заказчику не следует; метод контроля заранее включают в договор, вырубки проводят в присутствии представителей сторон",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    }
   ]
 }

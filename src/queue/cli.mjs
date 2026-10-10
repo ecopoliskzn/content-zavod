@@ -28,7 +28,7 @@
 
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { env } from "../lib/env.mjs";
+import { env, wrongUser } from "../lib/env.mjs";
 import { request } from "../lib/http.mjs";
 import { splitPosts } from "./format.mjs";
 
@@ -86,6 +86,9 @@ async function main() {
     if (res.kind !== "ok" && !res.data?.lines) return { code: 2, lines: [`сервер очереди не ответил: ${res.error}`] };
     return res.data;
   }
+  // Местный каталог данных: команда под root оставит в нём файлы, которые завод не прочитает.
+  const foreign = wrongUser();
+  if (foreign) return { code: 1, lines: [foreign] };
   const { execute } = await import("./commands.mjs");
   return execute(cmd, args, env("OPERATOR_NAME", "оператор"));
 }

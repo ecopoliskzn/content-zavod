@@ -13,7 +13,10 @@
 //    хранилищ он не дотягивается, поэтому при отказе файл скачивается сервером и
 //    отправляется байтами;
 //  · число просмотров бот у Telegram узнать не может: цифры снимаются с веб-витрины
-//    t.me/s/<канал> (см. metrics ниже).
+//    t.me/s/<канал> (см. metrics ниже);
+//  · историю канала бот тоже не читает. Вышел ли пост оборванной попыткой, сверяется по
+//    той же витрине. СТАТУС сверки: написана для этого завода, боем не проверена; с
+//    сервера в России витрина может не открыться, тогда решение отдаётся человеку.
 
 import { env } from "../lib/env.mjs";
 import { request, sleep } from "../lib/http.mjs";
@@ -36,15 +39,59 @@ async function fetchBytes(url) {
   return Buffer.from(await res.arrayBuffer());
 }
 
+/* Текст без разметки, знаков и регистра: так пост из очереди сравнивается с постом на витрине. */
+const plain = (s) => String(s || "").replace(/<[^>]+>/g, " ").replace(/&(?:[a-z]+|#\d+|#x[0-9a-f]+);/gi, " ").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
 /**
- * @param {{ text: string, media?: Array<{type:string,url:string,cover?:string}>, buttons?: Array<Array<{text:string,url:string}>> }} entry
+ * Есть ли пост с таким началом на веб-витрине канала. Чистая функция.
+ * @returns {{ id: string, link: string } | null | undefined} null — поста нет; undefined — это не витрина, судить нельзя
  */
-export async function publish(entry) {
+export function findInShowcase(html, text) {
+  const want = plain(text).slice(0, 60);
+  const blocks = String(html || "").split('<div class="tgme_widget_message_wrap').slice(1);
+  if (!blocks.length || want.length < 12) return undefined;
+  for (const b of blocks.reverse()) {
+    const m = b.match(/data-post="([^"/]+)\/(\d+)"/);
+    if (m && plain(b).includes(want)) return { id: m[2], link: `https://t.me/${m[1]}/${m[2]}` };
+  }
+  return null;
+}
+
+/**
+ * Вышел ли пост прошлой попыткой. Историю канала бот читать не может, поэтому сверка идёт
+ * по веб-витрине t.me/s/<канал>. У закрытого канала витрины нет: ответ «неизвестно».
+ * @returns {Promise<{ state: "found"|"absent"|"unknown", id?: string, link?: string }>}
+ */
+async function findPosted(entry) {
+  const handle = String(channelId()).replace(/^@/, "");
+  if (!handle || /^-?\d+$/.test(handle)) return { state: "unknown" };
+  const r = await request(`https://t.me/s/${handle}`, { headers: { "user-agent": "Mozilla/5.0" }, retries: 1, timeoutMs: 20_000 });
+  const found = r.text ? findInShowcase(r.text, entry.text) : undefined;
+  if (found === undefined) return { state: "unknown" };
+  return found ? { state: "found", ...found } : { state: "absent" };
+}
+
+/**
+ * @param {{ text: string, media?: Array<{type:string,url:string,cover?:string}>, buttons?: Array<Array<{text:string,url:string}>>, result?: object }} entry
+ * @param {{ verify?: boolean, onState?: (fields: object) => Promise<void> }} ctx
+ */
+export async function publish(entry, ctx = {}) {
   const chat = channelId();
   if (!chat) return { ok: false, error: "нет TG_CHANNEL", retry: false };
   const buttons = entry.buttons?.length ? keyboard(entry.buttons) : {};
   const media = entry.media?.[0];
   let res;
+
+  /* Повтор после оборванной отправки. Сетевой сбой не говорит, дошёл ли пост: запрос мог
+     уйти, а ответ потеряться. Отправить ещё раз вслепую значит рискнуть вторым постом в
+     канале, а его читатели видят сразу. Поэтому перед повтором идёт сверка с витриной
+     канала, и если сверить не удалось, решение отдаётся человеку. */
+  if (ctx.verify && entry.result?.tgSending) {
+    const seen = await findPosted(entry);
+    if (seen.state === "found") return { ok: true, id: seen.id, link: seen.link, note: "пост найден в канале: его выпустила прошлая попытка" };
+    if (seen.state === "unknown") return { ok: false, retry: false, error: "прошлая попытка оборвалась на отправке, а проверить канал программа не смогла. Откройте канал. Пост есть: перешлите это сообщение оператору, он отметит запись вышедшей. Поста нет: нажмите «Вернуть в ближайший слот»" };
+  }
+  if (ctx.onState) await ctx.onState({ tgSending: true });
 
   if (!media) {
     res = await tg("sendMessage", { chat_id: chat, text: entry.text, parse_mode: "HTML", ...buttons });
@@ -61,12 +108,18 @@ export async function publish(entry) {
         const fields = { chat_id: String(chat), caption: entry.text, parse_mode: "HTML", ...(media.type === "video" ? { supports_streaming: "true" } : {}), ...(buttons.reply_markup ? { reply_markup: buttons.reply_markup } : {}) };
         res = await tgUpload(method, fields, field, { buffer, name: fileName });
       } catch (e) {
+        // До отправки дело не дошло: поста в канале точно нет, сверка повтору не нужна.
+        if (ctx.onState) await ctx.onState({ tgSending: false });
         return { ok: false, error: `файл не скачался для отправки байтами: ${e.message}`, retry: true };
       }
     }
   }
 
-  if (res.kind !== "ok") return { ok: false, error: res.error, retry: res.kind === "network" };
+  if (res.kind !== "ok") {
+    // Внятный отказ площадки значит, что пост не вышел: следующей попытке сверка не нужна.
+    if (res.kind !== "network" && ctx.onState) await ctx.onState({ tgSending: false });
+    return { ok: false, error: res.error, retry: res.kind === "network" };
+  }
   return { ok: true, id: String(res.result?.message_id || ""), link: linkOf(res.result) };
 }
 

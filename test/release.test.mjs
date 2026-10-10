@@ -177,7 +177,10 @@ test("ответ на комментарий: уходит сотруднику 
   sent.length = 0;
   calls.length = 0;
   const run = await runOnce({ now: dueAt(slot) + 60_000 });
-  assert.ok(run.published.includes("otvet-kacheli"));
+  // Ответ ушёл сотруднику, а не на площадку: это «передано», публикацией он станет по кнопке.
+  assert.ok(run.handed.includes("otvet-kacheli"));
+  assert.ok(!run.published.includes("otvet-kacheli"));
+  assert.equal(store.get(entry.id).status, "handed");
   const pack = sent.find((s) => /Ответить на комментарий/.test(s.body.text || ""));
   assert.ok(pack, "сотрудник получает пакет: ссылка на комментарий и что сделать");
   assert.match(pack.body.text, /lc=abc/);
@@ -189,6 +192,7 @@ test("ответ на комментарий: уходит сотруднику 
   assert.equal(ledger.published({ channel: "youtube" }).length, 0);
 
   await staff.handleCallback({ id: "cb", data: `d:done:${entry.id}`, from: { id: 42, first_name: "Анна" }, message: { chat: { id: -1001 }, message_id: 5, text: "пакет" } });
+  assert.equal(store.get(entry.id).status, "published", "«Отвечено» делает запись вышедшей");
   assert.deepEqual(comments.byStatus("answered").map((c) => c.id), ["youtube:abc"]);
   assert.equal(comments.byStatus("new").length, 0);
   assert.ok(ledger.rows().some((r) => r.id === entry.id && r.status === "replied"));
@@ -220,4 +224,179 @@ test("утренний план и вечерняя сводка собираю�
   assert.match(day, /Не вышло/);
   assert.match(day, /Завтра в очереди: 1/);
   assert.doesNotMatch(day, /snyata/);
+});
+
+test("пакет на ручную выкладку: «передано», а не «вышло»; публикацией его делает кнопка «Выложено»", async () => {
+  const staff = await import("../src/bot/staff.mjs");
+  _setAdapter("dzen", { name: "dzen", publish: async (entry, ctx) => { await ctx.onState({ packageMessageId: 7001 }); return { ok: true, manual: true, note: "пакет отправлен в группу" }; } });
+  const slot = { date: "2030-03-21", time: "11:00" };
+  const text = "Примыкания относятся к самым уязвимым местам резинового покрытия. ".repeat(14);
+  const { entry } = await store.put({ channel: "dzen", kind: "article", name: "paket-dzen", material: "blog:primer", ...slot, title: "Где покрытие отслаивается чаще всего", text }, "S1");
+  await submit(entry.id, "S1");
+  await press(`q:ok:${entry.id}`);
+  const run = await runOnce({ now: dueAt(slot) + 60_000 });
+  assert.deepEqual(run.handed, ["paket-dzen"]);
+  assert.deepEqual(run.published, [], "отправленный человеку пакет вышедшим не считается");
+  assert.equal(store.get(entry.id).status, "handed");
+  assert.deepEqual(ledger.rows().filter((r) => r.id === entry.id).map((r) => r.status), ["handed"]);
+  // Потолок площадки пакет не съедает: в журнале нет строки «вышло».
+  assert.equal(ledger.published({ channel: "dzen" }).length, 0);
+
+  // Итог дня: «вышло 0», пакет стоит отдельной строкой, а не в «не вышло».
+  const day = digest(store.all(), dueAt(slot) + 11 * 3600_000);
+  assert.match(day, /Итог 21\.03: вышло 0 из 1/);
+  assert.match(day, /Переданы на ручную выкладку, отметки «Выложено» нет: \d/);
+  assert.doesNotMatch(day, /Не вышло/);
+  // И на следующее утро он всё ещё напоминает о себе.
+  assert.match(morning(store.all(), dueAt({ date: "2030-03-22", time: "08:00" })), /Переданы на ручную выкладку/);
+
+  // Править текст пакета, который уже у сотрудника, нельзя.
+  await assert.rejects(() => store.put({ channel: "dzen", kind: "article", name: "paket-dzen", material: "blog:primer", ...slot, title: "Другой заголовок", text }, "S1"), (e) => e.code === "RULE" && /уже у сотрудника/.test(e.message));
+
+  const cb = { id: "cb", data: `d:done:${entry.id}`, from: { id: 42, first_name: "Анна" }, message: { chat: { id: -1001 }, message_id: 7001, text: "пакет" } };
+  await staff.handleCallback(cb);
+  assert.equal(store.get(entry.id).status, "published");
+  assert.equal(ledger.published({ channel: "dzen" }).length, 1);
+  // Второе нажатие ничего не задваивает.
+  await staff.handleCallback(cb);
+  assert.equal(ledger.published({ channel: "dzen" }).length, 1);
+});
+
+test("ролик YouTube с датой выхода: «Отозвать», «Снять» и остановка выпуска снимают срок, о неудаче бот говорит прямо", async () => {
+  const staff = await import("../src/bot/staff.mjs");
+  const schedule = await import("../src/video/schedule.mjs");
+  const { setStop, clearStop, stopState } = await import("../src/queue/switch.mjs");
+  const yt = { publishAt: "", fail: false, calls: [] };
+  schedule._setApi({
+    status: async (id) => ({ kind: "ok", privacy: "private", publishAt: yt.publishAt, raw: { id, status: { privacyStatus: "private" } } }),
+    setSchedule: async (video, publishAt) => { yt.calls.push(publishAt); if (yt.fail) return { ok: false, error: "квота исчерпана" }; yt.publishAt = publishAt; return { ok: true }; },
+  });
+  const slot = { date: "2030-04-02", time: "15:00" };
+  const iso = new Date(dueAt(slot)).toISOString();
+  const { entry } = await store.put({ channel: "youtube", kind: "short", name: "rolik-so-srokom", material: "blog:primer", ...slot, title: "Вместо нового асфальта под площадкой уложили выравнивающий слой", text: "Основание под площадкой было неровным.", media: [{ type: "video", url: "https://s3.example.ru/rolik.mp4" }], hashtags: ["покрытие"] }, "S2");
+  await submit(entry.id, "S2");
+  await press(`q:ok:${entry.id}`);
+  // Ролик загружен с компьютера оператора со сроком выхода из слота.
+  yt.publishAt = iso;
+  await store.patch(entry.id, { extra: { youtubeId: "abcdefghijk", youtubePublishAt: iso } }, "S2");
+  const saved = () => store.get(entry.id).extra.youtubePublishAt;
+
+  sent.length = 0;
+  await press(`q:undo:${entry.id}`);
+  assert.equal(store.get(entry.id).status, "review");
+  assert.equal(yt.publishAt, "", "согласие отозвано: срок с ролика снят");
+  assert.equal(saved(), "");
+  assert.match(sent.map((s) => s.body.text || "").join("\n"), /Срок выхода на YouTube снят: ролик остаётся закрытым/);
+
+  // Снова «да»: срок возвращается на ролик.
+  await press(`q:ok:${entry.id}`);
+  assert.equal(yt.publishAt, iso);
+  assert.equal(saved(), iso);
+
+  // Остановка выпуска человеком снимает срок со всех роликов, включение возвращает.
+  sent.length = 0;
+  await staff.handleCommand({ text: "/stop_release", chat: { id: -1001 }, from: { id: 42, first_name: "Анна" } });
+  assert.equal(yt.publishAt, "");
+  assert.match(sent.at(-1).body.text, /Срок выхода на YouTube снят у роликов: 1/);
+  await staff.handleCommand({ text: "/start_release", chat: { id: -1001 }, from: { id: 42, first_name: "Анна" } });
+  assert.equal(yt.publishAt, iso);
+  assert.equal(stopState().stopped, false);
+
+  // Остановка ради перехвата: срок не трогаем, а команда из группы выпуск не включает.
+  setStop({ by: "оператор", reason: "перехват", takeover: true });
+  yt.calls.length = 0;
+  sent.length = 0;
+  await staff.handleCommand({ text: "/start_release", chat: { id: -1001 }, from: { id: 42, first_name: "Анна" } });
+  assert.equal(stopState().stopped, true, "остановку ради перехвата снимает только возврат расписания");
+  assert.match(sent.at(-1).body.text, /Включить выпуск сейчас нельзя/);
+  assert.deepEqual(yt.calls, [], "сервер уступил расписание: сроки роликов не трогаются");
+  assert.equal(yt.publishAt, iso);
+  clearStop();
+
+  // YouTube отказал: «не выйдет» не говорится, человек получает действие.
+  yt.fail = true;
+  sent.length = 0;
+  await press(`q:no:${entry.id}`);
+  assert.equal(store.get(entry.id).status, "cancelled");
+  assert.equal(saved(), iso, "срок остался на ролике, и завод это помнит");
+  const all = sent.map((s) => s.body.text || "").join("\n");
+  assert.match(all, /снять не удалось/);
+  assert.match(all, /Студия YouTube/);
+  assert.doesNotMatch(all, /Не выйдет\./);
+
+  // Следующий проход выпуска повторяет попытку сам.
+  yt.fail = false;
+  await runOnce({ now: Date.now() });
+  assert.equal(yt.publishAt, "");
+  assert.equal(saved(), "");
+  schedule._setApi(null);
+});
+
+test("ролик YouTube, который открылся сам за время простоя, не объявляется невышедшим", async () => {
+  // Слот утренний: проход через семь часов не должен попасть на вечернюю сводку со сжатием журнала.
+  const slot = { date: "2030-04-09", time: "10:00" };
+  const link = "https://www.youtube.com/watch?v=zzzzzzzzzzz";
+  _setAdapter("youtube", { name: "youtube", already: async () => ({ id: "zzzzzzzzzzz", link }), publish: async () => ({ ok: false, error: "не должно вызываться", retry: false }) });
+  const { entry } = await store.put({ channel: "youtube", kind: "short", name: "otkrylsya-sam", material: "blog:primer", ...slot, title: "На площадке режем покрытие до основания", text: "Толщину по внешнему виду не оценить.", media: [{ type: "video", url: "https://s3.example.ru/sam.mp4" }], hashtags: ["покрытие"] }, "S2");
+  await submit(entry.id, "S2");
+  await press(`q:ok:${entry.id}`);
+  const run = await runOnce({ now: dueAt(slot) + 7 * 3600_000 });
+  assert.deepEqual(run.expired, []);
+  assert.ok(run.published.includes("otkrylsya-sam"));
+  assert.equal(store.get(entry.id).status, "published");
+  assert.equal(store.get(entry.id).result.link, link);
+});
+
+test("загруженный ролик YouTube проверяется заранее: застава в минуту слота опоздала бы", async () => {
+  const schedule = await import("../src/video/schedule.mjs");
+  const yt = { publishAt: "", calls: [] };
+  schedule._setApi({
+    status: async (id) => ({ kind: "ok", privacy: "private", publishAt: yt.publishAt, raw: { id, status: { privacyStatus: "private" } } }),
+    setSchedule: async (video, publishAt) => { yt.calls.push(publishAt); yt.publishAt = publishAt; return { ok: true }; },
+  });
+  const slot = { date: "2030-04-16", time: "15:00" };
+  const iso = new Date(dueAt(slot)).toISOString();
+  // Запись одобрили, пока приём заявок был открыт: в ней ссылка в бота. Потом приём закрылся
+  // (в тестах он закрыт: согласия в проекте не утверждены), а ролик уже лежит на YouTube со сроком.
+  const { entry } = await store.put({ channel: "youtube", kind: "short", name: "rolik-s-botom", material: "blog:primer", ...slot, title: "Покрытие вырезали до основания при заказчике", text: "Толщину по внешнему виду не оценить.", media: [{ type: "video", url: "https://s3.example.ru/bot.mp4" }], hashtags: ["покрытие"], botKey: "priemka" }, "S2");
+  await store.transition(entry.id, "review", {}, "S2");
+  await store.transition(entry.id, "approved", { approval: { by: 42, name: "Анна", at: new Date().toISOString() } }, "tg:42");
+  await store.patch(entry.id, { extra: { youtubeId: "bbbbbbbbbbb", youtubePublishAt: iso } }, "S2");
+  yt.publishAt = iso;
+
+  sent.length = 0;
+  // До слота ещё далеко: обычная застава сработала бы только в минуту слота, когда YouTube уже открыл ролик.
+  const run = await runOnce({ now: Date.now() });
+  assert.deepEqual(run.published, []);
+  assert.equal(store.get(entry.id).status, "review", "согласие снято заранее");
+  assert.equal(yt.publishAt, "", "и срок с ролика убран, пока до него есть время");
+  assert.equal(store.get(entry.id).extra.youtubePublishAt, "");
+  const alarm = sent.map((s) => s.body.text || "").join("\n");
+  assert.match(alarm, /проверка перед выпуском не пустила/);
+  assert.match(alarm, /приём заявок закрыт/);
+  schedule._setApi(null);
+});
+
+test("ролик на другой площадке ждёт премьеры на YouTube, даже если его слот уже наступил", async () => {
+  const day = { date: "2030-04-23" };
+  let rutubeCalls = 0;
+  _setAdapter("rutube", { name: "rutube", publish: async () => { rutubeCalls++; return { ok: true, id: "rt1", link: "https://rutube.ru/video/rt1/" }; } });
+  let youtubeReady = false;
+  _setAdapter("youtube", { name: "youtube", publish: async () => (youtubeReady ? { ok: true, id: "ccccccccccc", link: "https://www.youtube.com/watch?v=ccccccccccc" } : { ok: false, error: "ролик не загружен на YouTube", retry: true }) });
+  const base = { material: "blog:primer", title: "Толщину покрытия проверили вырубкой при заказчике", text: "Толщину по внешнему виду не оценить.", media: [{ type: "video", url: "https://s3.example.ru/p.mp4" }], hashtags: ["покрытие"] };
+  const yt = (await store.put({ channel: "youtube", kind: "short", name: "zhdet-premery", ...day, time: "10:00", ...base }, "S2")).entry;
+  const rt = (await store.put({ channel: "rutube", kind: "short", name: "zhdet-premery", ...day, time: "10:10", ...base }, "S2")).entry;
+  for (const e of [yt, rt]) { await submit(e.id, "S2"); await press(`q:ok:${e.id}`); }
+  // 10:15: слот Rutube наступил, а премьера на YouTube не состоялась.
+  const first = await runOnce({ now: dueAt({ ...day, time: "10:15" }) });
+  assert.ok(first.waiting.includes("zhdet-premery"));
+  assert.equal(rutubeCalls, 0, "Rutube раньше YouTube не выходит");
+  assert.equal(store.get(rt.id).status, "approved");
+  // Ролик загрузили, YouTube вышел: следующий проход отпускает и Rutube.
+  youtubeReady = true;
+  await runOnce({ now: dueAt({ ...day, time: "10:20" }) });
+  assert.equal(store.get(yt.id).status, "published");
+  await runOnce({ now: dueAt({ ...day, time: "10:25" }) });
+  assert.equal(store.get(rt.id).status, "published");
+  assert.equal(rutubeCalls, 1);
 });

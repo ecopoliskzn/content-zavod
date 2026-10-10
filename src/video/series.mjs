@@ -93,8 +93,6 @@ export function composeDescription(entry, ctx = {}) {
   return blocks.filter(Boolean).join("\n\n");
 }
 
-/** Первые слова строк блока связей: по ним блок находится в уже вышедшем описании. */
-const RELATION_START = /^(?:Серия «|Следующая часть: |Предыдущая часть: |Статья на сайте: |Смотрите также: )/;
 
 /**
  * Блок связей ролика: плейлист серии, соседние части, статья сайта, «смотрите также».
@@ -115,15 +113,33 @@ export function relations(entry, ctx = {}) {
 }
 
 /**
- * Заменить блок связей в готовом описании, не трогая остальной текст. Нужно старым
- * роликам канала: их описания писались без завода, а в серию их включить хочется.
- * Блок связей всегда стоит последним: всё от его первой строки до конца заменяется.
+ * Поставить или обновить блок связей в описании старого ролика канала. Чистая функция.
+ *
+ * Описания старых роликов писал клиент, без завода. Наше в них только то, что мы сами
+ * дописали в конец, и трогать можно только это. Первая версия искала блок по первым
+ * словам строки («Смотрите также: …») и заменяла всё от неё до конца. Если такая строка
+ * стояла у клиента в середине его текста, хвост его описания пропадал без следа.
+ *
+ * Теперь блок узнаётся не по словам, а по памяти: рядом с роликом хранится, что именно
+ * мы дописали в прошлый раз (state.block), и каким описание было до первой правки
+ * (state.first). Убирается ровно прошлый блок и только с конца. Если описание с тех пор
+ * правили руками так, что блок не на месте, программа его не трогает и говорит об этом.
+ *
+ * @param {string} live описание на YouTube сейчас
+ * @param {string[]} rel строки нового блока связей
+ * @param {{ first?: string, block?: string } | null} state что запомнено про этот ролик
+ * @returns {{ description: string, state: { first: string, block: string }, skipped?: string }}
  */
-export function replaceRelations(description, rel) {
-  const lines = String(description || "").replace(/\r\n?/g, "\n").split("\n");
-  const start = lines.findIndex((l) => RELATION_START.test(l));
-  const head = (start >= 0 ? lines.slice(0, start) : lines).join("\n").replace(/\s+$/, "");
-  return rel.length ? `${head}\n\n${rel.join("\n")}` : head;
+export function swapRelations(live, rel, state = null) {
+  const text = String(live || "").replace(/\r\n?/g, "\n").replace(/\s+$/, "");
+  const block = rel.join("\n");
+  const first = state?.first ?? text;
+  let own = text;
+  if (state?.block) {
+    if (text.endsWith(state.block)) own = text.slice(0, text.length - state.block.length).replace(/\s+$/, "");
+    else return { description: text, state: { first, block: state.block }, skipped: "описание правили руками после нашей правки, прошлый блок ссылок не на месте: не трогаю. Посмотрите ролик в Студии" };
+  }
+  return { description: block ? `${own}${own ? "\n\n" : ""}${block}` : own, state: { first, block } };
 }
 
 /** Текст закреплённого комментария: та же ссылка, что в описании, и приглашение спросить. */

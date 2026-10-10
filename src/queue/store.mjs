@@ -67,6 +67,7 @@ export async function put(raw, by) {
     const was = get(next.id);
     if (!was) return { entry: write({ ...next, status: "draft", attempts: 0 }, by), result: "создана" };
     if (was.status === "running") throw new RuleError("запись прямо сейчас выходит, править нельзя");
+    if (was.status === "handed") throw new RuleError("пакет с этим текстом уже у сотрудника на ручной выкладке: править нельзя. Снимите запись и заведите новую с другим именем");
     if (isFinal(was.status)) throw new RuleError(`запись уже ${was.status === "published" ? "вышла" : "снята"}: заведите новую с другим именем`);
     if ((was.done?.length ?? 0) > 0) throw new RuleError("часть ветки уже вышла: замена задвоит начало. Хвост дописывается руками");
     const merged = { ...was, ...next, status: was.status, attempts: was.attempts ?? 0, approval: was.approval, done: was.done, result: was.result };
@@ -111,8 +112,22 @@ export async function forcePublished(id, fields = {}, by) {
     const was = get(id);
     if (!was) throw new RuleError(`записи ${id} нет в очереди`);
     if (was.status === "published") return was;
-    if (!["approved", "running", "expired", "failed"].includes(was.status)) throw new RuleError(`запись в статусе «${was.status}»: вышедшей отмечается только одобренная`);
+    if (!["approved", "running", "handed", "expired", "failed"].includes(was.status)) throw new RuleError(`запись в статусе «${was.status}»: вышедшей отмечается только одобренная`);
     return write({ ...was, ...fields, status: "published" }, by);
+  });
+}
+
+/**
+ * Отметить, что пакет на ручную выкладку уже ушёл человеку НЕ через этот сервер
+ * (расписание вёл компьютер оператора). Иначе после возврата сервер отправит его второй раз.
+ */
+export async function forceHanded(id, fields = {}, by) {
+  return withLock(() => {
+    const was = get(id);
+    if (!was) throw new RuleError(`записи ${id} нет в очереди`);
+    if (was.status === "handed" || was.status === "published") return was;
+    if (!["approved", "running", "expired", "failed"].includes(was.status)) throw new RuleError(`запись в статусе «${was.status}»: переданной отмечается только одобренная`);
+    return write({ ...was, ...fields, status: "handed" }, by);
   });
 }
 
@@ -121,7 +136,7 @@ export async function reschedule(id, date, time, by) {
   return withLock(() => {
     const was = get(id);
     if (!was) throw new RuleError(`записи ${id} нет в очереди`);
-    if (was.status === "running" || isFinal(was.status)) throw new RuleError(`запись в статусе «${was.status}», слот не переставляется`);
+    if (["running", "handed"].includes(was.status) || isFinal(was.status)) throw new RuleError(`запись в статусе «${was.status}», слот не переставляется`);
     const next = { ...was, date, time };
     const bad = validate(normalize(next)).filter((b) => b.startsWith("дата"));
     if (bad.length) throw new RuleError(bad.join("; "));

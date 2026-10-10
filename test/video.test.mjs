@@ -8,7 +8,7 @@ import path from "node:path";
 process.env.DATA_DIR = mkdtempSync(path.join(os.tmpdir(), "zavod-video-"));
 process.env.ZAVOD_ENV_FILE = path.join(process.env.DATA_DIR, "нет-такого.env");
 
-const { composeDescription, hashtags, neighbours, pinnedComment, relations, replaceRelations, sortByViews, withVideo } = await import("../src/video/series.mjs");
+const { composeDescription, hashtags, neighbours, pinnedComment, relations, sortByViews, swapRelations, withVideo } = await import("../src/video/series.mjs");
 const { describeChannel, seconds } = await import("../src/video/youtube-tools.mjs");
 const { spoilers, video, speech } = await import("../src/gates/rules.mjs");
 const { videoId } = await import("../src/channels/youtube.mjs");
@@ -82,14 +82,17 @@ test("закреплённый комментарий несёт ту же сс�
   assert.match(text, /отвечает специалист/);
 });
 
-test("у старого ролика заменяется только блок связей, текст остаётся как был", () => {
-  const old = "Электровал в работе.\nТелефон в описании канала.\n\nСерия «Старое»: https://example.ru/1\nСмотрите также: https://youtu.be/xxxxxxxxxxx";
+test("у старого ролика меняется только то, что завод дописал сам; строки клиента остаются", () => {
+  // «Смотрите также» клиент когда-то написал сам: это его текст, а не наш блок.
+  const old = "Электровал в работе.\nТелефон в описании канала.\n\nСмотрите также: https://youtu.be/xxxxxxxxxxx";
   const rel = relations({ name: "", series: "val" }, { ...ctx, videoId: "aaaaaaaaaa1" });
-  const next = replaceRelations(old, rel);
-  assert.ok(next.startsWith("Электровал в работе.\nТелефон в описании канала."));
-  assert.doesNotMatch(next, /Старое|xxxxxxxxxxx/);
-  assert.match(next, /Следующая часть: https:\/\/youtu\.be\/aaaaaaaaaa2/);
-  assert.equal(replaceRelations("Просто текст.", []), "Просто текст.");
+  const first = swapRelations(old, rel, null);
+  assert.ok(first.description.startsWith(old), "описание клиента цело, блок дописан в конец");
+  assert.match(first.description, /Следующая часть: https:\/\/youtu\.be\/aaaaaaaaaa2/);
+  assert.equal(first.state.first, old);
+  // Повторный запуск с тем же блоком ничего не меняет и ничего не задваивает.
+  assert.equal(swapRelations(first.description, rel, first.state).description, first.description);
+  assert.equal(swapRelations("Просто текст.", [], null).description, "Просто текст.");
 });
 
 test("порядок серии по просмотрам: лучший первым", () => {

@@ -7,27 +7,48 @@
 //   2 — поломка окружения: нет ключа, сеть, не читается файл. Это чинится.
 // Смешаете — оператор побежит чинить сервер там, где ему просто отказали.
 
-import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { channel as channelCfg, channelNames } from "../lib/config.mjs";
-import { dataPath } from "../lib/env.mjs";
+import { alert, h, resolve as resolveAlert } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskTime } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
 import { inbox, submit } from "../bot/approval.mjs";
+import { afterChange as syncYoutube, sayAll, syncAll } from "../video/schedule.mjs";
 import { STATUS_TITLE, normalize, preview, validate } from "./format.mjs";
 import { record } from "./ledger.mjs";
-import { nextSlot, slotTaken } from "./slots.mjs";
-import { all, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
+import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
+import { all, forceHanded, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
+import { clearStop, setStop, stopState } from "./switch.mjs";
 
 const byDue = (a, b) => dueAt(a) - dueAt(b);
 
+/** Все записи с этим номером либо именем. Имя ролика одно на четыре площадки. */
+function findAll(ref, channel) {
+  const direct = get(ref);
+  if (direct) return [direct];
+  return all().filter((e) => e.name === ref && (!channel || e.channel === channel));
+}
+
 /** Найти запись по номеру или по имени (имя уникально в пределах площадки). */
 function find(ref, channel) {
-  const direct = get(ref);
-  if (direct) return direct;
-  const named = all().filter((e) => e.name === ref && (!channel || e.channel === channel));
+  const named = findAll(ref, channel);
   if (named.length === 1) return named[0];
-  if (named.length > 1) throw Object.assign(new Error(`имя «${ref}» есть на нескольких площадках: уточните --channel`), { code: "RULE" });
+  if (named.length > 1) throw Object.assign(new Error(`имя «${ref}» есть на нескольких площадках (${named.map((e) => e.channel).join(", ")}): добавьте --channel=<площадка>`), { code: "RULE" });
   throw Object.assign(new Error(`записи «${ref}» в очереди нет`), { code: "RULE" });
+}
+
+/** Номер Telegram человека клиента наружу не отдаём: в выводе остаётся «рабочая группа». */
+const actorName = (by) => (/^tg:\d+$/.test(String(by || "")) ? "рабочая группа" : String(by || ""));
+function withoutIds(entry) {
+  const out = { ...entry, by: actorName(entry.by) };
+  for (const field of ["approval", "fixAsked"]) {
+    if (out[field] && typeof out[field] === "object") { const { by, ...rest } = out[field]; out[field] = rest; }
+  }
+  return out;
+}
+
+/** Сроки роликов YouTube после рубильника: строки для оператора. Сбой рубильник не роняет. */
+async function youtubeAfterSwitch() {
+  try { const said = sayAll(await syncAll()); return said ? said.split("\n") : []; } catch (e) { return [`сроки роликов YouTube сверить не удалось (${e?.message || e}): сервер повторит попытку через пять минут`]; }
 }
 
 const row = (e) => `${e.id}  ${e.date} ${e.time}  ${e.channel.padEnd(9)} ${String(STATUS_TITLE[e.status] || e.status).padEnd(20)} ${preview(e, 60)}`;
@@ -52,18 +73,29 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             const soon = Date.now() + 10 * 60_000;
             Object.assign(e, { date: mskDate(soon), time: mskTime(soon) });
           }
+          const queue = all();
+          const cfg = channelCfg(e.channel);
           if (!e.date || !e.time) {
-            const slot = nextSlot(channelCfg(e.channel), all().filter((x) => x.channel === e.channel), Date.now(), e.id);
-            if (!slot) throw Object.assign(new Error(`у площадки ${e.channel} нет свободных слотов на месяц вперёд`), { code: "RULE" });
+            // Слот по рабочей сетке площадки; ролик на остальных площадках — после премьеры на YouTube.
+            const slot = slotFor(e, queue, cfg);
+            if (!slot) throw Object.assign(new Error(`у площадки ${e.channel} нет свободных слотов на два месяца вперёд`), { code: "RULE" });
             Object.assign(e, slot);
-          } else if (slotTaken(all().filter((x) => x.channel === e.channel), e.date, e.time, e.id)) {
-            lines.push(`внимание: слот ${e.date} ${e.time} на ${e.channel} уже занят другой записью`);
+          } else if (e.kind !== "reply") {
+            // Время задано руками: сетку оно обходит, поэтому о каждом отступлении говорим.
+            if (slotTaken(queue.filter((x) => x.channel === e.channel), e.date, e.time, e.id)) lines.push(`внимание: слот ${e.date} ${e.time} на ${e.channel} уже занят другой записью`);
+            if (cfg.slots?.length && !cfg.slots.includes(e.time)) lines.push(`внимание: времени ${e.time} нет среди слотов площадки ${e.channel} (${cfg.slots.join(", ")})`);
+            const premiere = premiereOf(queue, e);
+            if (premiere && dueAt(e) <= premiere) lines.push(`внимание: этот же ролик выходит на YouTube ${mskDate(premiere)} в ${mskTime(premiere)}, а здесь стоит раньше. YouTube идёт первым: поставьте запись без --date и --time, слот подберётся сам`);
           }
           const { entry, result } = await put(e, actor);
           const verdict = check(entry);
           lines.push(`${result}: ${row(entry)}`);
           for (const b of verdict.block) lines.push(`  ⛔ ${b}`);
           for (const w of verdict.warn) lines.push(`  ⚠ ${w}`);
+          // Текст одобренного ролика изменили: согласия больше нет, срок на YouTube снимается.
+          const yt = await syncYoutube(entry.id);
+          if (yt) lines.push(`  ${yt}`);
+          for (const x of aheadOfPremiere(all(), entry)) lines.push(`  внимание: этот ролик на ${x.channel} стоит на ${x.date} ${x.time}, не позже премьеры на YouTube. Переставьте: npm run queue -- move ${x.name} --channel=${x.channel} --next`);
         }
         return { code: 0, lines };
       }
@@ -77,7 +109,7 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           .sort(byDue);
         if (!found.length) lines.push("очередь пуста");
         for (const e of found) lines.push(row(e));
-        return { code: 0, lines, data: found };
+        return { code: 0, lines, data: found.map(withoutIds) };
       }
       case "show": {
         const e = find(args.ref, args.channel);
@@ -87,8 +119,9 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         if (e.note) lines.push(`заметка: ${e.note}`);
         if (e.result?.link) lines.push(`ссылка: ${e.result.link}`);
         if (e.approval?.name) lines.push(`одобрил(а): ${e.approval.name}, ${e.approval.at}`);
-        if (args.history) for (const h of history(e.id)) lines.push(`  ${h.at} ${h.by} → ${h.status}`);
-        return { code: 0, lines, data: e };
+        // Вывод уходит на компьютер оператора: номера Telegram людей клиента в нём не нужны.
+        if (args.history) for (const h of history(e.id)) lines.push(`  ${h.at} ${actorName(h.by)} → ${STATUS_TITLE[h.status] || h.status}`);
+        return { code: 0, lines, data: withoutIds(e) };
       }
       case "check": {
         const e = args.entry ? normalize(args.entry) : find(args.ref, args.channel);
@@ -105,8 +138,18 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         return { code: verdict.block.length ? 1 : 0, lines, data: verdict };
       }
       case "submit": {
-        const targets = args.ref ? [find(args.ref, args.channel)] : all().filter((e) => e.status === "draft" && (!args.channel || e.channel === args.channel));
-        if (!targets.length) lines.push("черновиков нет");
+        // Имя ролика одно на четыре площадки: «submit <имя>» отправляет все его черновики
+        // разом, утверждающий получает четыре карточки подряд.
+        let targets;
+        if (args.ref) {
+          const named = findAll(args.ref, args.channel);
+          if (!named.length) throw Object.assign(new Error(`записи «${args.ref}» в очереди нет`), { code: "RULE" });
+          targets = named.length > 1 ? named.filter((e) => ["draft", "rework"].includes(e.status)) : named;
+          if (!targets.length) lines.push(`по имени «${args.ref}» черновиков нет: ${named.map((e) => `${e.channel} — ${STATUS_TITLE[e.status] || e.status}`).join(", ")}`);
+        } else {
+          targets = all().filter((e) => e.status === "draft" && (!args.channel || e.channel === args.channel));
+          if (!targets.length) lines.push("черновиков нет");
+        }
         let refused = 0;
         for (const e of targets) {
           try {
@@ -130,18 +173,27 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const e = find(args.ref, args.channel);
         let { date, time } = args;
         if (args.next || !date || !time) {
-          const slot = nextSlot(channelCfg(e.channel), all().filter((x) => x.channel === e.channel), Date.now(), e.id);
+          const slot = slotFor(e, all(), channelCfg(e.channel));
           if (!slot) throw Object.assign(new Error("свободных слотов нет"), { code: "RULE" });
           ({ date, time } = slot);
         }
         const moved = await reschedule(e.id, date, time, actor);
         lines.push(`переставлена на ${human(moved)}: ${row(moved)}`);
+        const premiere = premiereOf(all(), moved);
+        if (premiere && dueAt(moved) <= premiere) lines.push(`внимание: этот же ролик выходит на YouTube ${mskDate(premiere)} в ${mskTime(premiere)}, а здесь стоит раньше. YouTube идёт первым: npm run queue -- move ${moved.name} --channel=${moved.channel} --next`);
+        // Срок на YouTube переезжает вместе со слотом: иначе ролик откроется по старому.
+        const yt = await syncYoutube(moved.id);
+        if (yt) lines.push(yt);
+        for (const x of aheadOfPremiere(all(), moved)) lines.push(`внимание: этот ролик на ${x.channel} стоит на ${x.date} ${x.time}, не позже премьеры на YouTube. Переставьте: npm run queue -- move ${x.name} --channel=${x.channel} --next`);
         return { code: 0, lines };
       }
       case "cancel": {
         const e = find(args.ref, args.channel);
         const done = await transition(e.id, "cancelled", { note: args.reason || "снята оператором" }, actor);
         lines.push(`снята: ${row(done)}`);
+        if (e.status === "handed") lines.push("пакет уже ушёл сотруднику в тему «Выложить руками»: предупредите его, что выкладывать не нужно. Выложенное программа не снимет");
+        const yt = await syncYoutube(done.id);
+        if (yt) lines.push(yt);
         return { code: 0, lines };
       }
       case "extra": {
@@ -150,16 +202,17 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const e = find(args.ref, args.channel);
         const saved = await patch(e.id, { extra: { ...(e.extra || {}), ...(args.fields || {}) } }, actor);
         lines.push(`дописано (${Object.keys(args.fields || {}).join(", ")}): ${row(saved)}`);
-        return { code: 0, lines, data: saved };
+        return { code: 0, lines, data: withoutIds(saved) };
       }
       case "slots": {
+        // Ближайшие свободные слоты по рабочей сетке. --kind=video покажет строку сетки для видео.
         const names = args.channel ? [args.channel] : channelNames();
         for (const n of names) {
           const taken = all().filter((x) => x.channel === n);
           const out = [];
           let after = Date.now();
           for (let i = 0; i < (Number(args.count) || 5); i++) {
-            const s = nextSlot(channelCfg(n), taken, after);
+            const s = nextSlot(channelCfg(n), taken, after, "", String(args.kind || ""));
             if (!s) break;
             out.push(`${s.date} ${s.time}`);
             taken.push({ id: `tmp${i}`, ...s, status: "approved" });
@@ -197,7 +250,9 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const { publicComments } = await import("./snapshot.mjs");
         const found = publicComments(api.byStatus(String(args.status || "new")).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, Number(args.count) || 40));
         if (!found.length) lines.push("комментариев с таким статусом нет");
-        for (const c of found) lines.push(`${c.id}  ${String(c.at).slice(0, 10)}  ${c.platform}\n  «${String(c.text).replace(/\s+/g, " ").slice(0, 200)}»\n  ${c.link}`);
+        // Текст целиком (в снимке он уже обрезан до 600 знаков): ответ пишется по нему, и
+        // хвост вопроса, которого сессия не увидела, даёт ответ не о том.
+        for (const c of found) lines.push(`${c.id}  ${String(c.at).slice(0, 10)}  ${c.platform}\n  «${String(c.text).replace(/\s+/g, " ")}»\n  ${c.link}`);
         return { code: 0, lines, data: found };
       }
       case "news": {
@@ -214,14 +269,29 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         return { code: 0, lines, data: found };
       }
       case "pause": {
-        // Рубильник: перед перехватом расписания компьютером оператора сервер обязан замолчать.
-        writeFileSync(dataPath("STOP"), `остановил ${actor} ${new Date().toISOString()}${args.reason ? `: ${args.reason}` : ""}`, "utf8");
-        lines.push("выпуск на сервере остановлен (файл STOP). Включить: npm run queue -- resume");
+        // Рубильник. Остановок две: человек сказал «стоп» либо расписание перехватывает
+        // компьютер оператора (takeover). Вторую снимает только возврат расписания.
+        setStop({ by: actor, reason: String(args.reason || ""), takeover: Boolean(args.takeover) });
+        if (args.takeover) {
+          lines.push("выпуск на сервере остановлен ради перехвата. Включит его возврат: npm run mirror -- --handback");
+          // Сроки роликов YouTube не трогаем: сервер уступил расписание, а «не выпускать» никто не говорил.
+        } else {
+          lines.push("выпуск на сервере остановлен (файл STOP). Включить: npm run queue -- resume");
+          lines.push(...await youtubeAfterSwitch());
+        }
         return { code: 0, lines };
       }
       case "resume": {
-        for (const f of ["STOP", "HOLD"]) if (existsSync(dataPath(f))) rmSync(dataPath(f));
+        // Остановку ради перехвата снимает только возврат (он передаёт handback): иначе
+        // сервер и компьютер оператора выпускали бы одно и то же.
+        if (stopState().takeover && !args.handback) {
+          return { code: 1, lines: ["выпуск остановлен ради перехвата расписания компьютером оператора. Включает его возврат: npm run mirror -- --handback. Иначе выпускающих станет двое"] };
+        }
+        clearStop();
+        resolveAlert("release:stop");
+        resolveAlert("release:hold");
         lines.push("выпуск на сервере включён");
+        lines.push(...await youtubeAfterSwitch());
         return { code: 0, lines };
       }
       case "mark": {
@@ -229,10 +299,31 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         // серверу, иначе он выпустит её второй раз.
         const e = find(args.ref, args.channel);
         const at = args.at || new Date().toISOString();
+        if (args.handed) {
+          // Пакет на ручную выкладку ушёл в группу с компьютера оператора: публикации ещё нет.
+          const handed = await forceHanded(e.id, { result: { ...(e.result || {}), manual: "пакет отправлен, ждёт ручной выкладки", ...(args.packageMessageId ? { packageMessageId: args.packageMessageId } : {}) }, handedAt: at, note: args.note || "пакет отправлен не через сервер" }, actor);
+          record(handed, "handed", { at, by: actor });
+          lines.push(`отмечена переданной на ручную выкладку: ${row(handed)}`);
+          return { code: 0, lines, data: withoutIds(handed) };
+        }
+        /* Возврат расписания после перехвата. Запись вышла с компьютера оператора, а на
+           сервере согласия на ней уже нет: утверждающий снял её либо отозвал «да» после
+           последней копии, и компьютер об этом не знал. Отметить её вышедшей по правилам
+           нельзя, промолчать тоже: возврат застрял бы навсегда, а запись, ждущая «да»,
+           после согласования вышла бы второй раз. Поэтому факт пишется в журнал, запись
+           закрывается, а человек клиента узнаёт об этом сразу. */
+        if (args.takeover && ["review", "rework", "draft", "cancelled"].includes(e.status)) {
+          const was = STATUS_TITLE[e.status] || e.status;
+          if (e.status !== "cancelled") await transition(e.id, "cancelled", { note: `вышла с компьютера оператора при перехвате расписания, когда запись была «${was}»`, result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" } }, actor);
+          record(e, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor, withoutApproval: true });
+          await alert(`stray:${e.id}`, `<b>${h(channelCfg(e.channel).title)}</b>: «${h(e.name)}» вышла во время аварии сервера, хотя на сервере она была «${h(was)}». Расписание вёл компьютер оператора по копии, снятой до этого решения.${args.link ? `\n${h(args.link)}` : ""}`, { action: "откройте публикацию. Если она должна быть убрана, её удаляет владелец аккаунта на самой площадке" });
+          lines.push(`вышла без согласия: ${e.channel} · ${e.name} (на сервере была «${was}»). В рабочую группу ушло сообщение, запись закрыта`);
+          return { code: 0, lines };
+        }
         const done = await forcePublished(e.id, { result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" }, publishedAt: at, note: args.note || "вышла не через сервер" }, actor);
         record(done, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor });
         lines.push(`отмечена вышедшей: ${row(done)}`);
-        return { code: 0, lines, data: done };
+        return { code: 0, lines, data: withoutIds(done) };
       }
       default:
         return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, comments, export, keys, pause, resume, mark`] };

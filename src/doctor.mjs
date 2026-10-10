@@ -18,7 +18,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./lib/config.mjs";
-import { PROJECT_ROOT, dataDir, dataPath, env, envFile, has } from "./lib/env.mjs";
+import { PROJECT_ROOT, dataDir, dataPath, env, envFile, has, wrongUser } from "./lib/env.mjs";
 import { readJson } from "./lib/files.mjs";
 import { request } from "./lib/http.mjs";
 import { tg } from "./lib/telegram.mjs";
@@ -66,7 +66,7 @@ function checkEnvironment(where) {
   if (where === "operator" && has("TG_BOT_TOKEN")) warn("TG_BOT_TOKEN на компьютере: токен бота должен жить только в секретах релея");
 }
 
-function checkProject() {
+function checkProject(where) {
   head("Проект");
   let cfg;
   try { cfg = config(); ok(`реестр zavod.config.json: площадок ${Object.keys(cfg.channels).length}, сессий ${cfg.sessions.length}`); }
@@ -87,6 +87,9 @@ function checkProject() {
     bad(`каталог данных ${dataDir()} недоступен на запись: ${e.message}. Создайте его и отдайте пользователю, под которым работает завод`);
   }
   if (dataDir().startsWith(PROJECT_ROOT) && process.platform !== "win32") warn("каталог данных лежит внутри каталога кода: выкладка может его затереть. Задайте DATA_DIR=/opt/ecopolis-data");
+  if (wrongUser()) bad(wrongUser());
+  // Сторож на компьютере оператора шлёт тревогу в тему «Тревоги»: без номера темы она уйдёт в общую.
+  if (where === "operator" && has("TG_GROUP_ID") && !has("TG_TOPIC_ALERTS")) warn("нет TG_TOPIC_ALERTS: тревога сторожа о молчащем сервере уйдёт в общую тему рабочей группы, а не в «Тревоги»");
   if (existsSync(dataPath("STOP"))) warn("выпуск остановлен файлом STOP");
   if (existsSync(dataPath("HOLD"))) warn("выпуск ждёт кнопки после простоя (файл HOLD)");
   if (existsSync(dataPath("TAKEOVER.json"))) warn("расписание сейчас ведёт этот компьютер (перехват). Вернуть серверу: npm run mirror -- --handback");
@@ -133,8 +136,8 @@ function checkBot() {
   // ниже, бот людям не отвечает, формы закрыты, кодовые слова молчат. Это не поломка.
   const gaps = legalGaps();
   for (const g of gaps) warn(g);
-  if (gaps.length) info("приём закрыт: бот для людей, формы заявок и кодовые слова не работают, пока юрист клиента не утвердил тексты согласий. Рабочая группа, согласование и выпуск работают");
-  else ok("тексты согласий утверждены: бот для людей, формы и кодовые слова открыты");
+  if (gaps.length) info("приём закрыт: бот для людей, формы заявок и кодовые слова не работают, пока клиент не закрыл все строки выше. Рабочая группа, согласование и выпуск работают. Запись с кодовым словом, ссылкой в бота или на форму проверку сейчас не пройдёт: ведите по ссылке на статью сайта");
+  else ok("согласия утверждены, вопрос с Роскомнадзором закрыт: бот для людей, формы и кодовые слова открыты");
   const approved = readJson(path.join(PROJECT_ROOT, "legal", "site", "approved.json"), {}) || {};
   for (const doc of LEGAL_DOCS) {
     if (texts && approved[doc]?.date && approved[doc].version !== texts.consentVersion && doc !== "politika") warn(`версия документа ${doc} (${approved[doc].version}) не совпадает с версией согласия в боте (${texts.consentVersion})`);
@@ -183,8 +186,11 @@ async function checkLive(where) {
   }
 }
 
-async function checkMedia() {
+async function checkMedia(where) {
   head("Хранилище файлов");
+  // Ключи хранилища роликов лежат на компьютере оператора: файлы уходят оттуда. На сервере
+  // их нет намеренно, и красная строка здесь была бы ложной тревогой.
+  if (where === "server" && !has("S3_ENDPOINT")) { info("хранилище роликов проверяется с компьютера оператора (npm run doctor -- --live --media): на сервере его ключей нет и быть не должно"); return; }
   if (!has("S3_ENDPOINT") || !has("S3_BUCKET")) { bad("хранилище не настроено (S3_ENDPOINT, S3_BUCKET, S3_ACCESS_KEY, S3_SECRET_KEY): без него не выйдут рилсы и картинки в Threads"); return; }
   const { uploadFile } = await import("./media/upload.mjs");
   // Маленькая настоящая картинка: 1×1 PNG.
@@ -205,10 +211,10 @@ async function checkMedia() {
 async function main() {
   const where = opt("where") || (process.platform === "win32" || process.platform === "darwin" || has("QUEUE_API_BASE") ? "operator" : "server");
   checkEnvironment(where);
-  checkProject();
+  checkProject(where);
   checkBot();
   if (flag("live")) await checkLive(where);
-  if (flag("media")) await checkMedia();
+  if (flag("media")) await checkMedia(where);
   for (const r of results) console.log(r.mark ? `${r.mark} ${r.text}` : r.text);
   const fails = results.filter((r) => r.mark === "✗").length;
   const warns = results.filter((r) => r.mark === "⚠").length;

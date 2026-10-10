@@ -41,9 +41,9 @@ const NODES = [
   { key: "server", title: "Сервер завода", color: "4", modules: ["src/server.mjs"], what: "Виртуальный сервер в России. Держит очередь, расписание, бота, заявки и журналы. Здесь лежат персональные данные, и наружу они не уходят." },
   { key: "relay", title: "Релей за границей", color: "2", modules: ["ops/relay/"], what: "Маленький посредник вне России. Через него сервер достаёт до Telegram и Instagram, а их события доходят до сервера. Данных не хранит." },
   { key: "operator", title: "Компьютер оператора", color: "5", modules: ["src/queue/mirror.mjs", "src/queue/cli.mjs", "src/gates/cli.mjs", "src/doctor.mjs"], what: "Здесь работают сессии Codex, лежат ролики и дубль расписания. Командует очередью через ключ оператора." },
-  { key: "video", title: "Ролики и YouTube", color: "6", modules: ["src/video/"], what: "Главная видео-площадка. Описание ролика собирается по схеме: текст, ссылка с меткой, ссылка на бота, серия, соседние ролики. Серии и плейлисты ведутся из одного реестра." },
+  { key: "video", title: "Ролики и YouTube", color: "6", modules: ["src/video/"], what: "Главная видео-площадка. Описание ролика собирается по схеме: текст, ссылка с меткой, ссылка на бота, серия, соседние ролики. Серии и плейлисты ведутся из одного реестра. Срок выхода ролика следует за записью очереди: сняли запись — срок с ролика снят." },
   { key: "comments", title: "Комментарии", color: "1", modules: ["src/comments/"], what: "Два раза в день собирает вопросы под публикациями. Отвечает человек: текст ответа готовит сессия, согласует клиент, вставляет сотрудник." },
-  { key: "queue", title: "Очередь выпуска", color: "4", modules: ["src/queue/format.mjs", "src/queue/store.mjs", "src/queue/commands.mjs", "src/queue/runner.mjs", "src/queue/slots.mjs", "src/queue/ledger.mjs", "src/queue/snapshot.mjs", "src/channels/index.mjs"], what: "Единый список того, что и когда выходит. Один писатель, журнал только дописывается. Выпуск раз в пять минут берёт одобренное, чей слот наступил." },
+  { key: "queue", title: "Очередь выпуска", color: "4", modules: ["src/queue/format.mjs", "src/queue/store.mjs", "src/queue/commands.mjs", "src/queue/runner.mjs", "src/queue/slots.mjs", "src/queue/switch.mjs", "src/queue/ledger.mjs", "src/queue/snapshot.mjs", "src/channels/index.mjs"], what: "Единый список того, что и когда выходит. Один писатель, журнал только дописывается. Запись без времени встаёт по рабочей сетке площадки. Выпуск раз в пять минут берёт одобренное, чей слот наступил." },
   { key: "gates", title: "Проверки перед выходом", color: "3", modules: ["src/gates/"], what: "Пять проверок на двух постах: при постановке на согласование и прямо перед выпуском. Готовность, речь, реклама, факты, ролик." },
   { key: "approval", title: "Согласование", color: "3", modules: ["src/bot/approval.mjs"], what: "Карточка в рабочей группе. «Одобрить» нажимает ответственный со стороны клиента; без этого не выходит ничего." },
   { key: "group", title: "Рабочая группа Telegram", color: "5", modules: ["src/lib/notify.mjs", "src/lib/telegram.mjs", "src/bot/staff.mjs"], what: "Пульт завода в телефоне: согласование, заявки, отчёты, тревоги, новости, пакеты на ручную выкладку." },
@@ -88,6 +88,20 @@ function walk(dir, test, out = []) {
 }
 
 const rel = (root, p) => path.relative(root, p).split(path.sep).join("/");
+
+const WEEKDAY_SHORT = ["", "пн", "вт", "ср", "чт", "пт", "сб", "вс"];
+const KIND_TITLE = { video: "ролик", short: "короткий ролик", post: "пост", reel: "рилс", article: "статья", thread: "ветка", carousel: "карусель", story: "история" };
+
+/** Рабочая сетка площадки человеческой строкой: «вт, чт, сб: 15:00». Чистая функция. */
+export function gridText(channelCfg) {
+  const rules = Array.isArray(channelCfg.grid) ? channelCfg.grid : channelCfg.grid ? [channelCfg.grid] : [];
+  if (!rules.length) return "не задана: запись встаёт в ближайший свободный слот";
+  return rules.map((r) => {
+    const days = r.weekdays?.length ? r.weekdays.map((d) => WEEKDAY_SHORT[d] || d).join(", ") : "каждый день";
+    const kinds = r.kinds?.length ? `${r.kinds.map((k) => KIND_TITLE[k] || k).join(", ")}, ` : "";
+    return `${kinds}${days}: ${(r.slots || channelCfg.slots || []).join(", ")}`;
+  }).join("; ");
+}
 
 /** Шапка модуля: первый блок комментариев после необязательной строки запуска. */
 export function moduleHeader(source) {
@@ -358,6 +372,7 @@ export function buildVault(input) {
       ["Ведёт сессия", s ? cellLink(P.session(s), `${s.id} ${s.title}`) : "—"],
       ["Что выходит", (c.kinds || []).join(", ")],
       ["Слоты по Москве", (c.slots || []).join(", ")],
+      ["Рабочая сетка", gridText(c)],
       ["Потолок в сутки", c.perDay],
       ["Пауза между выходами", `${c.minGapMin} мин`],
       ["Как достаём до площадки", c.reach || ""],
@@ -370,6 +385,9 @@ export function buildVault(input) {
     if (name === "youtube" && hasYoutube) L.push("## Канал и серии", "", `- ${link("YouTube/Канал", "Опись канала")}: что на нём лежит и что уже заходило`, ...ytSeries.map((s) => `- ${link(seriesPath(s), s.title || s.key)}`), "");
     if (c.rules) L.push("## Правила площадки", "", String(c.rules), "");
     L.push("## Сейчас", "", `Вышло всего: **${published.length}**, за семь дней: **${week}**. Обычный пост набирает ${usualViews[name] ? num(usualViews[name]) : "—"} просмотров.`, "");
+    // Пакет, ушедший человеку на ручную выкладку, вышедшим не считается: он стоит отдельной строкой.
+    const handed = mine.filter((e) => e.status === "handed");
+    if (handed.length) L.push(callout("warning", "Ждут отметки «Выложено»", `Передано на ручную выкладку: **${handed.length}**. Текст лежит в рабочей группе, публикацией запись станет после кнопки.`), "");
     if (upcoming.length) L.push("Ближайшее в очереди:", "", table(["Когда", "Статус", "Что"], upcoming.slice(0, 8).map((e) => [`${e.date.slice(8)}.${e.date.slice(5, 7)} ${e.time}`, STATUS_TITLE[e.status], cellLink(pubPath(e), preview(e, 60))])), "");
     else L.push("В очереди на площадку пусто.", "");
     if (best.length) {

@@ -28,7 +28,7 @@
 
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { env, envFile, fingerprint, has } from "../lib/env.mjs";
+import { env, envFile, fingerprint, has, wrongUser } from "../lib/env.mjs";
 import { setEnv } from "../lib/envfile.mjs";
 import { request } from "../lib/http.mjs";
 import { alert, resolve } from "../lib/notify.mjs";
@@ -241,17 +241,35 @@ export async function compare() {
   const remote = res.data.data;
   const local = fingerprints();
   const lines = [];
-  let differ = 0;
+  const toPc = [];
+  const toServer = [];
+  const unclear = [];
   for (const r of REGISTRY.filter((x) => x.secret && x.where.includes("server") && x.where.includes("operator"))) {
     const a = local[r.name];
     const b = remote[r.name];
     if (!a && !b) continue;
     if (a && b && a === b) { lines.push(`✓ ${r.name}`); continue; }
-    differ++;
     lines.push(`✗ ${r.name}: ${!a ? "на компьютере нет" : !b ? "на сервере нет" : "значения разные"}`);
+    /* Куда нести. Ключ есть на одной стороне — несём с неё. Значения разные:
+       маркер со сроком продлевает сервер, и копия на компьютере стареет молча;
+       ключ YouTube выдаётся входом владельца канала на компьютере оператора;
+       про остальные по отпечатку не понять, какое значение рабочее. */
+    if (a && !b) toServer.push(r.name);
+    else if (!a && b) toPc.push(r.name);
+    else if (r.expires) toPc.push(r.name);
+    else if (r.name === "YOUTUBE_REFRESH_TOKEN") toServer.push(r.name);
+    else unclear.push(r.name);
   }
-  lines.push(differ ? `расходятся: ${differ}. Хозяин значения — сервер (маркеры продлеваются там). Скопируйте файл окружения с сервера заново` : "копии ключей совпадают");
-  return { code: differ ? 1 : 0, lines };
+  if (!toPc.length && !toServer.length && !unclear.length) { lines.push("копии ключей совпадают"); return { code: 0, lines }; }
+  /* Файл окружения целиком не копируется никогда: на сервере лежат ключи, которым не
+     место на компьютере, и наоборот (src/tokens/registry.mjs, поле where). Ключи несут
+     по именам, командами выгрузки и приёма: значение при этом не появляется на экране. */
+  lines.push(`расходятся: ${toPc.length + toServer.length + unclear.length}`);
+  if (toPc.length) lines.push(`с сервера на компьютер. На сервере: npm run tokens -- --export=${toPc.join(",")} --out=keys.tmp · перенести файл по scp · здесь: npm run tokens -- --import=keys.tmp`);
+  if (toServer.length) lines.push(`с компьютера на сервер. Здесь: npm run tokens -- --export=${toServer.join(",")} --out=keys.tmp · перенести файл по scp · на сервере: npm run tokens -- --import=keys.tmp`);
+  if (unclear.length) lines.push(`значения разные, и по отпечатку не видно, какое рабочее: ${unclear.join(", ")}. Проверьте живым вызовом на обеих машинах (npm run doctor -- --live) и перенесите рабочее теми же командами`);
+  lines.push("принесённый файл после приёма удаляется сам; оригинал на стороне выгрузки удалите руками");
+  return { code: 1, lines };
 }
 
 async function main() {
@@ -260,6 +278,10 @@ async function main() {
     process.stdout.write(example(Object.fromEntries(Object.entries(config().channels || {}).map(([k, v]) => [k, v.title]))));
     return 0;
   }
+  // Создание секретов, приём и продление ключей переписывают файл окружения: под чужим
+  // пользователем он станет недоступен заводу.
+  const foreign = wrongUser();
+  if (foreign && process.argv.some((a) => a === "--init" || a === "--refresh" || a.startsWith("--import="))) { console.error(`✗ ${foreign}`); return 1; }
   if (flag("init")) {
     const r = await init();
     console.log(r.created.length ? `созданы в ${r.file}: ${r.created.join(", ")}` : "все случайные секреты уже заданы");

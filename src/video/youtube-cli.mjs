@@ -9,6 +9,7 @@
 //   npm run yt -- --status --video=<номер ролика>
 //   npm run yt -- --update --id=<запись>                переписать название и описание вышедшего ролика
 //   npm run yt -- --relink [--series=<ключ>]            обновить ссылки на соседние ролики в описаниях серии
+//   npm run yt -- --restore --video=<номер>             вернуть описание, каким оно было до первой правки завода
 //   npm run yt -- --series                              серии и что в них
 //   npm run yt -- --series-create --series=<ключ>       создать плейлист серии на канале
 //   npm run yt -- --series-add --series=<ключ> --video=<номер>   включить в серию старый ролик канала
@@ -19,6 +20,11 @@
 // которую одобрил человек клиента: ролик уходит закрытым с датой выхода из слота, и
 // YouTube открывает его сам. Номер ролика записывается обратно в запись, и сервер в слот
 // сверяет, что ролик открылся. Загрузить «просто файл» в обход очереди скрипт не даёт.
+//
+// СРОК ВЫХОДА СЛЕДУЕТ ЗА ЗАПИСЬЮ. Дату выхода на YouTube после загрузки ведёт сервер:
+// запись сняли, отозвали согласие, отправили на правку или остановили выпуск — срок с
+// ролика снимается; переставили слот — срок переезжает; одобрили ролик, загруженный до
+// «да», — срок ставится. Руками в Студии дату не трогают. Подробно: src/video/schedule.mjs.
 //
 // ОПИСАНИЕ СОБИРАЕТСЯ ИЗ ДВУХ ЧАСТЕЙ. Текст согласует человек. Блок ссылок под ним
 // (серия, соседние части, статья, «смотрите также») ставит программа из реестра серий
@@ -41,7 +47,7 @@ import { dueAt } from "../lib/time.mjs";
 import { probe, status, upload } from "../channels/youtube.mjs";
 import { video as videoGate } from "../gates/rules.mjs";
 import { describeContext } from "./describe.mjs";
-import { composeDescription, pinnedComment, relations, replaceRelations, sortByViews, withVideo } from "./series.mjs";
+import { composeDescription, pinnedComment, relations, sortByViews, swapRelations, withVideo } from "./series.mjs";
 import { addToPlaylist, channelSnapshot, createPlaylist, orderPlaylist, setThumbnail, updateSnippet, videos } from "./youtube-tools.mjs";
 
 const flag = (name) => process.argv.includes(`--${name}`);
@@ -111,35 +117,55 @@ async function login() {
   return 0;
 }
 
+/* Память о правках описаний: каким описание было до первой правки завода (first) и какой
+   блок ссылок мы дописали в прошлый раз (block). Лежит в git рядом с реестром серий:
+   описание чужого ролика правится только с возможностью вернуть всё как было. */
+const HISTORY = path.join(DIR, "history");
+const historyFile = (videoId) => path.join(HISTORY, `${videoId}.json`);
+const loadHistory = (videoId) => readJson(historyFile(videoId), null);
+function saveHistory(videoId, state) {
+  mkdirSync(HISTORY, { recursive: true });
+  writeJson(historyFile(videoId), { ...state, at: new Date().toISOString() });
+}
+
 /** Обновить блоки ссылок у роликов серии. Возвращает число изменённых описаний. */
 async function relink(registry, only = "") {
   let changed = 0;
   let failed = 0;
+  let skipped = 0;
   for (const s of registry.series || []) {
     if (only && s.key !== only) continue;
     for (const v of (s.videos || []).filter((x) => x.id)) {
       const ctx = context(registry, v.id);
+      const cur = await videos([v.id], "snippet");
+      const live = cur.items?.[0]?.snippet?.description;
+      if (live === undefined) { console.log(`  ✗ ${v.id}: ролик не читается`); failed++; continue; }
+      const state = loadHistory(v.id);
       let description;
+      let next = { first: state?.first ?? live, block: state?.block || "" };
       if (v.name) {
         // Ролик вышел через завод: описание собирается заново из согласованного текста.
         const shown = await queue("show", { ref: v.name, channel: "youtube" });
-        if (!shown.data) { console.log(`  · ${v.id}: записи «${v.name}» в очереди уже нет, меняю только блок ссылок`); }
+        if (!shown.data) console.log(`  · ${v.id}: записи «${v.name}» в очереди уже нет, меняю только блок ссылок`);
         else description = composeDescription(shown.data, ctx);
       }
       if (description === undefined) {
-        // Старый ролик канала: текст не трогаем, заменяем только блок ссылок в конце.
-        const cur = await videos([v.id], "snippet");
-        const live = cur.items?.[0]?.snippet?.description;
-        if (live === undefined) { console.log(`  ✗ ${v.id}: ролик не читается`); failed++; continue; }
-        description = replaceRelations(live, relations({ name: "", series: s.key }, ctx));
+        // Старый ролик канала: текст клиента не трогаем, меняем только то, что дописали сами.
+        const swap = swapRelations(live, relations({ name: "", series: s.key }, ctx), state);
+        if (swap.skipped) { console.log(`  · ${v.id}: ${swap.skipped}`); skipped++; continue; }
+        description = swap.description;
+        next = swap.state;
       }
       if (description.length > 5000) { console.log(`  ✗ ${v.id}: описание ${description.length} знаков, предел 5000`); failed++; continue; }
+      if (description === String(live).replace(/\r\n?/g, "\n").replace(/\s+$/, "")) continue;
+      // Память пишется ДО правки: если процесс оборвётся после неё, прежнее описание уже сохранено.
+      saveHistory(v.id, next);
       const r = await updateSnippet(v.id, { description });
       if (!r.ok) { console.log(`  ✗ ${v.id}: ${r.error}`); failed++; }
       else if (r.changed) { console.log(`  ✓ ${r.title}`); changed++; }
     }
   }
-  return { changed, failed };
+  return { changed, failed, skipped };
 }
 
 async function doUpload() {
@@ -157,7 +183,7 @@ async function doUpload() {
   const due = dueAt(entry);
   // Дата выхода ставится только одобренной записи: неодобренный ролик сам не откроется.
   const publishAt = entry.status === "approved" && due > Date.now() + 10 * 60_000 ? new Date(due).toISOString() : undefined;
-  console.log(`загружаю «${entry.title}»${publishAt ? `, выход ${entry.date} в ${entry.time} МСК` : ", без даты выхода (закрытым)"}…`);
+  console.log(`загружаю «${entry.title}»${publishAt ? `, выход ${entry.date} в ${entry.time} МСК` : entry.status === "approved" ? ", без даты выхода: до слота меньше десяти минут, ролик откроет сервер" : ", без даты выхода: запись ещё ждёт «да». Срок сервер поставит сам, когда её одобрят"}…`);
   const res = await upload({ file, title: entry.title, description, tags: entry.tags || [], publishAt, privacy: "private" });
   if (!res.ok) { console.error(`✗ ${res.error}`); return 1; }
   console.log(`✓ загружено: https://www.youtube.com/watch?v=${res.id} · доступ: ${res.privacy}`);
@@ -227,8 +253,21 @@ async function main() {
 
   if (flag("relink")) {
     const r = await relink(loadRegistry(), opt("series"));
-    console.log(`описаний изменено: ${r.changed}${r.failed ? `, не удалось: ${r.failed}` : ""}`);
+    console.log(`описаний изменено: ${r.changed}${r.skipped ? `, пропущено (правили руками): ${r.skipped}` : ""}${r.failed ? `, не удалось: ${r.failed}` : ""}`);
+    if (r.changed) console.log(`прежние описания сохранены: ${path.relative(PROJECT_ROOT, HISTORY)}. Вернуть: npm run yt -- --restore --video=<номер ролика>`);
     return r.failed ? 1 : 0;
+  }
+
+  if (flag("restore")) {
+    // Вернуть описание, каким оно было до первой правки завода.
+    const id = opt("video");
+    const state = id ? loadHistory(id) : null;
+    if (!state) { console.error(id ? `про ролик ${id} ничего не запомнено: завод его описание не правил` : "нужен --video=<номер ролика>"); return 1; }
+    const r = await updateSnippet(id, { description: state.first });
+    if (!r.ok) { console.error(`✗ ${r.error}`); return 1; }
+    saveHistory(id, { first: state.first, block: "" });
+    console.log(r.changed ? `✓ описание возвращено: ${r.title}` : "без изменений: на канале уже так");
+    return 0;
   }
 
   if (flag("series")) {
@@ -317,7 +356,7 @@ async function main() {
     return 0;
   }
 
-  console.error("что сделать: --login | --channel [--analytics] | --desc --id= | --upload --id= --file= | --status --video= | --update --id= | --relink | --series | --series-create --series= | --series-add --series= --video= | --series-sort --series= | --thumb --video= --file=");
+  console.error("что сделать: --login | --channel [--analytics] | --desc --id= | --upload --id= --file= | --status --video= | --update --id= | --relink | --restore --video= | --series | --series-create --series= | --series-add --series= --video= | --series-sort --series= | --thumb --video= --file=");
   return 1;
 }
 

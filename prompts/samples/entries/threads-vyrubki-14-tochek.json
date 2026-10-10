@@ -4,18 +4,36 @@
   "name": "vyrubki-14-tochek",
   "material": "blog:kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2",
   "posts": [
-    "На площадке в 500 квадратных метров толщину покрытия проверяют в 14 точках. Каждая точка: вырубка 10 на 10 сантиметров до самого основания.",
-    "Счёт такой. На первые 200 метров площади делают 5 вырубок, на каждые следующие 100 метров ещё по 3. Точку берут не ближе 3 метров от края площадки.",
-    "Толщину измеряют штангенциркулем и записывают в журнал контроля качества. Нижний слой вырубают раньше, чем уложен верхний цветной.",
-    "Заказчику резать готовое покрытие самому не стоит: это повод для спора. Метод контроля заранее записывают в договор, места измерений согласуют, вырубки делают при обеих сторонах, каждую точку отмечают на схеме и фотографируют.",
+    "По инструкции «Экополиса» на площадке в 500 квадратных метров толщину покрытия проверяют в 14 точках. Каждая точка: вырубка 10 на 10 сантиметров до основания.",
+    "Счёт в инструкции такой. На площадку в 200 квадратных метров положено 5 вырубок, на каждые следующие 100 квадратных метров ещё по 3. Точку берут не ближе 3 метров от края площадки.",
+    "Толщину измеряют штангенциркулем, результат записывают в журнал контроля качества. Нижний слой вырубают до того, как уложен верхний цветной.",
+    "Заказчику вырезать готовое покрытие самому не следует: так можно повредить объект и получить спор. Метод контроля заранее включают в договор или программу приёмки, места измерений согласуют, вырубки делают при представителях сторон, каждую точку отмечают на схеме и фотографируют. Контрольный участок потом восстанавливают.",
     "Что ещё проверить до подписи акта, собрано в чек-листе: https://go.ecopolisrf.ru/go/priemka2?c=th&p=vyrubki-14-tochek"
   ],
   "facts": [
-    { "claim": "для объекта площадью 500 м² потребуется 14 вырубок", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
-    { "claim": "размер вырубки 10 × 10 см, до основания", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
-    { "claim": "на 200 м² 5 вырубок, на каждые дополнительные 100 м² ещё 3", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
-    { "claim": "контрольную точку располагают не менее чем в 3 метрах от края площадки", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
-    { "claim": "вырубку нижнего слоя делают до устройства верхнего цветного слоя; результаты фиксируют в журнале контроля качества", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
-    { "claim": "самостоятельно вырезать готовое покрытие заказчику не следует; метод контроля заранее включают в договор", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" }
+    {
+      "claim": "согласно инструкции компании «Экополис»: для объекта площадью 500 м² потребуется 14 вырубок",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "размер вырубки 10 × 10 см; контрольный участок вырезают до основания",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "для площадки площадью 200 м² предусмотрено 5 вырубок; на каждые дополнительные 100 м² добавляют ещё 3 контрольные точки",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "контрольную точку располагают не менее чем в 3 метрах от края площадки",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "измерение выполняют штангенциркулем; вырубку нижнего слоя делают до устройства верхнего цветного слоя; результаты фиксируют в журнале контроля качества",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    },
+    {
+      "claim": "самостоятельно вырезать готовое покрытие заказчику не следует: это может повредить объект и стать причиной спора; порядок: метод контроля в договоре или программе приёмки, согласованные места, присутствие сторон, схема, фото, восстановление участка",
+      "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/"
+    }
   ]
 }

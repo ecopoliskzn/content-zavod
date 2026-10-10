@@ -6,6 +6,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { PROJECT_ROOT } from "../lib/env.mjs";
 import { isRestricted } from "../lib/config.mjs";
 import { readJson } from "../lib/files.mjs";
+import { legalReady } from "../leads/legal.mjs";
 import { all } from "../queue/store.mjs";
 import { checkAll, opener, partsOf } from "./rules.mjs";
 
@@ -37,12 +38,17 @@ export function recentOpeners(channel, now = Date.now()) {
  * block — запись не идёт дальше. warn — показывается человеку в карточке согласования.
  */
 export function check(entry, now = Date.now()) {
+  const links = readJson(LINKS, {}) || {};
   return checkAll(entry, {
     stamps: readJson(STAMPS, { phrases: [] })?.phrases || [],
     recentOpeners: recentOpeners(entry.channel, now),
     codeWords: codeWords(),
     restricted: isRestricted(entry.channel),
     // Слаги коротких ссылок: ссылка на неизвестный слаг молча ведёт на главную сайта.
-    links: Object.keys(readJson(LINKS, {}) || {}),
+    links: Object.keys(links),
+    linkTargets: Object.fromEntries(Object.entries(links).map(([slug, l]) => [slug, String(l?.url || "")])),
+    // Открыт ли приём заявок. Пока нет, запись с кодовым словом, ссылкой в бота или на
+    // форму не идёт ни на согласование, ни в выпуск: человек пришёл бы к отказу.
+    legal: legalReady(),
   });
 }

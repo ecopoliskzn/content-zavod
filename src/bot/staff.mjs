@@ -4,16 +4,28 @@
 // согласовать, поправить, снять, остановить выпуск, взять заявку. Командная строка и
 // сервер остаются оператору.
 
-import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
 import { dataPath, list } from "../lib/env.mjs";
 import { h, resolve as resolveAlert, toGroup } from "../lib/notify.mjs";
 import { answerCallback, editMessageText, sendMessage } from "../lib/telegram.mjs";
 import { STATUS_TITLE, preview } from "../queue/format.mjs";
 import { record } from "../queue/ledger.mjs";
 import { digest, morning } from "../queue/runner.mjs";
-import { all, get, patch } from "../queue/store.mjs";
+import { all, get, patch, transition } from "../queue/store.mjs";
+import { clearStop, isHeld, setStop, stopState } from "../queue/switch.mjs";
 import { setStatus as setNewsStatus } from "../news/inbox.mjs";
 import { setStatus as setCommentStatus } from "../comments/collect.mjs";
+import { sayAll, syncAll } from "../video/schedule.mjs";
+
+/** Сроки роликов YouTube после рубильника: что снято, что поставлено, что не получилось. */
+async function youtubeAfterSwitch() {
+  try { return sayAll(await syncAll()); } catch (e) {
+    console.error("[staff] сверка сроков YouTube не прошла:", e?.message || e);
+    return "Сроки роликов YouTube сверить не удалось: сервер повторит попытку через пять минут.";
+  }
+}
+
+const TAKEOVER_NOTE = "Расписание сейчас ведёт компьютер оператора: сервер остановлен на время аварии. Включит его оператор, когда вернёт серверу вышедшее. Команда /start_release сейчас дала бы двух выпускающих и задвоенные посты.";
 
 const isApprover = (id) => list("APPROVER_IDS").includes(String(id));
 const who = (from) => [from?.first_name, from?.last_name].filter(Boolean).join(" ") || from?.username || String(from?.id || "");
@@ -46,11 +58,14 @@ export async function handleCommand(message) {
     case "plan": {
       // Состояние рубильников стоит первой строкой: «почему ничего не выходит» — самый
       // частый вопрос, и ответ на него должен быть виден с телефона.
-      const state = existsSync(dataPath("STOP"))
-        ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release.\n\n"
-        : existsSync(dataPath("HOLD"))
-          ? "⏳ <b>Выпуск ждёт кнопки «Продолжить выпуск»</b>: сервер вернулся после простоя.\n\n"
-          : "";
+      const stop = stopState();
+      const state = stop.takeover
+        ? `⏸ <b>Выпуск на сервере остановлен.</b> ${TAKEOVER_NOTE}\n\n`
+        : stop.stopped
+          ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release.\n\n"
+          : isHeld()
+            ? "⏳ <b>Выпуск ждёт кнопки «Продолжить выпуск»</b>: сервер вернулся после простоя.\n\n"
+            : "";
       await reply(state + morning(all(), Date.now()));
       return true;
     }
@@ -62,18 +77,27 @@ export async function handleCommand(message) {
       await reply(waiting.length ? `<b>Ждут «да»: ${waiting.length}</b>\n${waiting.map((e) => `${e.date.slice(5)} ${e.time} · ${h(e.channel)} · ${h(preview(e, 50))}`).join("\n")}` : "Всё согласовано, ничего не ждёт.");
       return true;
     }
-    case "stop_release":
+    case "stop_release": {
       if (!isApprover(message.from?.id)) { await reply("Остановить выпуск может только утверждающий."); return true; }
-      writeFileSync(dataPath("STOP"), `остановил ${who(message.from)} ${new Date().toISOString()}`, "utf8");
-      await reply("⏸ Выпуск остановлен. Ничего не выйдет, пока не придёт команда /start_release.");
+      if (stopState().takeover) { await reply(`⏸ Выпуск на сервере уже остановлен. ${TAKEOVER_NOTE}`); return true; }
+      setStop({ by: who(message.from), reason: "команда /stop_release" });
+      // Ролики YouTube с датой выхода сервер не выпускает: их открывает сам YouTube.
+      // Поэтому остановка снимает с них срок, и «ничего не выйдет» говорится по результату.
+      const yt = await youtubeAfterSwitch();
+      await reply(`⏸ Выпуск остановлен. Сервер ничего не выпустит, пока не придёт команда /start_release.${yt ? `\n\n${h(yt)}` : ""}`);
       return true;
-    case "start_release":
+    }
+    case "start_release": {
       if (!isApprover(message.from?.id)) { await reply("Включить выпуск может только утверждающий."); return true; }
-      for (const f of ["STOP", "HOLD"]) if (existsSync(dataPath(f))) rmSync(dataPath(f));
+      // Остановку ради перехвата снимает только возврат расписания серверу.
+      if (stopState().takeover) { await reply(`Включить выпуск сейчас нельзя. ${TAKEOVER_NOTE}`); return true; }
+      clearStop();
       resolveAlert("release:stop");
       resolveAlert("release:hold");
-      await reply("▶️ Выпуск включён. Одобренное пойдёт по расписанию; опоздавшее выйдет по одному, не пачкой.");
+      const yt = await youtubeAfterSwitch();
+      await reply(`▶️ Выпуск включён. Одобренное пойдёт по расписанию; опоздавшее выйдет по одному, не пачкой.${yt ? `\n\n${h(yt)}` : ""}`);
       return true;
+    }
     default:
       return false;
   }
@@ -91,6 +115,9 @@ export async function handleCallback(cb) {
     // Удержание после простоя сервера снимает утверждающий или сотрудник: это решение
     // «дублей не будет», а не согласование текста.
     if (!isApprover(cb.from?.id) && !list("STAFF_IDS").includes(String(cb.from?.id))) { await answerCallback(cb.id, "Кнопка для сотрудников компании.", true); return true; }
+    // Расписание ведёт компьютер оператора: кнопка под старым сообщением не должна
+    // включить второго выпускающего.
+    if (stopState().takeover) { await answerCallback(cb.id, "Расписание сейчас ведёт компьютер оператора. Выпуск на сервере включит оператор.", true); return true; }
     if (existsSync(dataPath("HOLD"))) rmSync(dataPath("HOLD"));
     resolveAlert("release:hold");
     await answerCallback(cb.id, "Выпуск продолжен.");
@@ -111,7 +138,12 @@ export async function handleCallback(cb) {
   if (manual) {
     const entry = get(manual[1]);
     if (!entry) { await answerCallback(cb.id, "Записи нет в очереди.", true); return true; }
-    await patch(entry.id, { result: { ...(entry.result || {}), manual: `выложил(а) ${who(cb.from)}` } }, `tg:${cb.from.id}`);
+    // «Вышло» запись становится здесь, а не в минуту отправки пакета: до нажатия кнопки
+    // материал на площадке не появился, и в сводке дня он стоит отдельной строкой.
+    if (entry.status === "published") { await answerCallback(cb.id, "Уже отмечено как вышедшее."); return true; }
+    if (entry.status !== "handed") { await answerCallback(cb.id, `Запись сейчас «${STATUS_TITLE[entry.status] || entry.status}»: отмечать нечего.`, true); return true; }
+    const at = new Date().toISOString();
+    await transition(entry.id, "published", { result: { ...(entry.result || {}), manual: `выложил(а) ${who(cb.from)}` }, publishedAt: at }, "рабочая группа");
     if (entry.kind === "reply") {
       // Ответ на комментарий — не публикация по сетке: в журнале у него свой статус, а
       // сам комментарий помечается отвеченным.
@@ -135,8 +167,11 @@ export async function handlePackageReply(message) {
   if (!replied || !link) return false;
   const entry = all().find((e) => e.result?.packageMessageId === replied);
   if (!entry) return false;
-  await patch(entry.id, { result: { ...(entry.result || {}), link } }, `tg:${message.from?.id}`);
+  await patch(entry.id, { result: { ...(entry.result || {}), link } }, "рабочая группа");
   record(entry, "link", { link });
-  await toGroup("packages", `Ссылка записана: ${h(entry.name)} (${STATUS_TITLE[entry.status]}).`);
+  // Ссылку прислали, а кнопку не нажали: без отметки «Выложено» запись так и останется
+  // переданной, и в отчёт публикация не попадёт.
+  const pending = entry.status === "handed" ? " Нажмите «Выложено» под пакетом: без отметки публикация не попадёт в отчёт." : "";
+  await toGroup("packages", `Ссылка записана: ${h(entry.name)} (${STATUS_TITLE[entry.status]}).${pending}`);
   return true;
 }

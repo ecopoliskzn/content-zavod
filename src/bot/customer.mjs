@@ -92,10 +92,17 @@ export async function handleMessage(message) {
   const text = String(message.text || "").trim();
 
   if (/^\/stop\b/i.test(text)) {
-    consentLog({ user: userId, kind: "pd", action: "withdrawn", how: "/stop" });
-    consentLog({ user: userId, kind: "ads", action: "withdrawn", how: "/stop" });
-    // Данные удаляются сразу, карточка заявки в группе очищается, сотрудники получают
-    // просьбу удалить контакты у себя.
+    // Отзыв пишется в журнал согласий, только если о человеке есть хоть что-то. Иначе
+    // команда /stop от случайного прохожего сама создавала бы запись с его номером
+    // Telegram: первую и единственную, которая у завода о нём есть.
+    const known = await b.telegram.store.findSubscriber(userId).catch(() => null);
+    if (known) {
+      consentLog({ user: userId, kind: "pd", action: "withdrawn", how: "/stop" });
+      consentLog({ user: userId, kind: "ads", action: "withdrawn", how: "/stop" });
+    }
+    // Удаление идёт всегда: оно ничего не пишет, если удалять нечего. Данные убираются
+    // сразу, карточка заявки в группе очищается, сотрудники получают просьбу удалить
+    // контакты у себя.
     await withdraw(userId, "/stop").catch((e) => console.error("[customer] удаление данных по /stop не прошло:", e?.message || e));
     await sendMessage(chatId, t("stopped"), { reply_markup: { remove_keyboard: true } });
     return;
