@@ -402,7 +402,7 @@ test("сервер поднят из архива старше копии: во�
   });
 });
 
-test("по последней копии выпуск остановлен человеком: при молчащем сервере перехвата нет даже с подтверждением", async () => {
+test("по последней копии выпуск остановлен человеком: при молчащем сервере перехват идёт только с подтверждением запуска", async () => {
   await asServer(() => execute("pause", { reason: "ждём решения клиента" }, "оператор"));
   onPc();
   assert.equal((await pull()).ok, true);
@@ -410,7 +410,11 @@ test("по последней копии выпуск остановлен че�
   const out = await withFlags(["yes", "server-stopped"], () => takeover());
   assert.equal(out.code, 1);
   assert.match(out.lines.join("\n"), /по последней копии .* выпуск остановлен человеком/);
+  assert.match(out.lines.join("\n"), /--start-confirmed/);
   assert.equal(existsSync(path.join(PC, "TAKEOVER.json")), false);
-  net.mode = "up";
-  await asServer(() => execute("resume", {}, "оператор"));
+  // Утверждающий разрешил запуск словами в группе, а сервер лежит и команду принять не может.
+  const go = await withFlags(["yes", "server-stopped", "start-confirmed"], () => takeover());
+  assert.equal(go.code, 0, go.lines.join("\n"));
+  assert.match(go.lines.join("\n"), /Запуск подтверждён оператором со слов утверждающего/);
+  assert.equal(existsSync(path.join(PC, "TAKEOVER.json")), true);
 });

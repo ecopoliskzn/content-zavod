@@ -30,11 +30,10 @@
 //
 // Запуск руками:  node src/queue/runner.mjs [--dry]
 
-import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { config, channel as channelCfg } from "../lib/config.mjs";
 import { dataPath, env, wrongUser } from "../lib/env.mjs";
-import { lock, readJson, writeJson } from "../lib/files.mjs";
+import { lock, readJson, writeAtomic, writeJson } from "../lib/files.mjs";
 import { alert, h, report, resolve, toGroup } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskHour } from "../lib/time.mjs";
 import { adapter } from "../channels/index.mjs";
@@ -77,7 +76,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     // При перехвате расписания компьютером удержание не ставится: кнопку «Продолжить»
     // обрабатывает сервер, а он как раз лежит. Компьютер после сна просто идёт дальше.
     if (rules.outageHoldMin && silentMin > rules.outageHoldMin && !isHeld() && !stopState().stopped && !isTakeover()) {
-      writeFileSync(dataPath("HOLD"), JSON.stringify({ at: new Date().toISOString(), silentMin: Math.round(silentMin) }), "utf8");
+      writeAtomic(dataPath("HOLD"), JSON.stringify({ at: new Date().toISOString(), silentMin: Math.round(silentMin) }));
     }
     if (isTakeover()) {
       /* Перехват: перед проходом компьютер спрашивает сервер, не остановил ли человек
@@ -122,7 +121,9 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
        Выпустить по такому расписанию значит задвоить вышедшее и выпустить снятое. Кнопки
        здесь нет намеренно: снимает остановку только сверка с копией расписания. */
     if (!dry) {
-      await alert("release:restored", "Сервер восстановлен из архива. Расписание в архиве старше, чем было в минуту аварии: что с тех пор вышло, что сняли и что одобрили, сервер не знает. Выпуск стоит, пока оператор не сверит сервер с копией расписания.", {
+      const mark = readJson(dataPath("RESTORED"), {}) || {};
+      const from = mark.archived ? ` от ${String(mark.archived).slice(0, 16).replace("T", " ")} UTC` : "";
+      await alert("release:restored", `Сервер восстановлен из архива${from}. Расписание в архиве старше, чем было в минуту аварии: что с тех пор вышло, что сняли и что одобрили, сервер не знает. Выпуск стоит, пока оператор не сверит сервер с копией расписания.`, {
         action: "перешлите это сообщение оператору. Его команда: npm run mirror -- --reconcile (если расписание вёл компьютер оператора: npm run mirror -- --handback)",
       });
     }

@@ -15,12 +15,11 @@
 //   node src/metrics/weekly.mjs --send          отправить в рабочую группу и сохранить файл
 //   node src/metrics/weekly.mjs --week=2026-10-05
 
-import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../lib/config.mjs";
 import { PROJECT_ROOT, dataPath } from "../lib/env.mjs";
-import { readJsonl } from "../lib/files.mjs";
+import { readJsonl, writeAtomic } from "../lib/files.mjs";
 import { h, report } from "../lib/notify.mjs";
 import { lastWeek, summarize } from "./summary.mjs";
 
@@ -124,9 +123,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       // Отчёт лежит в каталоге данных: он переживает выкладку кода и уезжает в дубль на
       // компьютер оператора вместе с журналами.
       const file = path.join(dataPath("reports", "weekly"), `${summary.week}.md`);
-      mkdirSync(path.dirname(file), { recursive: true });
-      writeFileSync(file, md, "utf8");
-      writeFileSync(path.join(dataPath("reports", "weekly"), `${summary.week}.json`), JSON.stringify(summary, null, 1), "utf8");
+      // Через общий модуль записи: в нём стоит заслон от запуска под чужим пользователем.
+      writeAtomic(file, md);
+      writeAtomic(path.join(dataPath("reports", "weekly"), `${summary.week}.json`), JSON.stringify(summary, null, 1));
       const sent = await report(telegramText(summary, titles));
       console.log(`${new Date().toISOString()} отчёт за неделю ${summary.week}: ${sent.ok ? "отправлен" : `не ушёл (${sent.error})`}, файл ${path.relative(PROJECT_ROOT, file)}`);
       if (!sent.ok) process.exitCode = 2;

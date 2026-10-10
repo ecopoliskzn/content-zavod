@@ -192,3 +192,46 @@ test("длина ролика, номера роликов и записей и�
   assert.equal(postRef({ externalId: "https://vk.com/wall-123_45" }), "-123_45");
   assert.equal(postRef({ externalId: "", link: "" }), "");
 });
+
+test("номер загруженного ролика не дошёл до сервера: повтор команды второй ролик не грузит, срок с ролика снят", async () => {
+  const { spawnSync } = await import("node:child_process");
+  const { existsSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { pathToFileURL, fileURLToPath } = await import("node:url");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const dir = mkdtempSync(path.join(os.tmpdir(), "zavod-upload-"));
+  const state = path.join(dir, "state.json");
+  const queueEntry = {
+    id: "aaaaaaaaaaaaaaaa", channel: "youtube", kind: "short", name: "rolik-1", material: "blog:primer", date: "2030-03-14", time: "15:00", status: "approved",
+    title: "Толщину покрытия проверили вырубкой при заказчике", text: "Толщину по внешнему виду не оценить.", media: [{ type: "video", url: "https://s3.example.ru/rolik.mp4" }],
+    hashtags: ["покрытие"], tags: [], contentHash: "1111111111111111", extra: {},
+  };
+  writeFileSync(state, JSON.stringify({ uploads: 0, publishAt: "", entry: queueEntry }));
+  const clip = path.join(dir, "rolik.mp4");
+  writeFileSync(clip, "байты ролика");
+  const receipt = path.join(dir, "mirror", "uploads", `${queueEntry.id}.json`);
+  const base = { ...process.env };
+  for (const k of ["DATA_DIR", "TG_BOT_TOKEN", "TG_GROUP_ID", "TG_RELAY_URL"]) delete base[k];
+  const run = (extra) => spawnSync(process.execPath, ["--import", pathToFileURL(path.join(here, "helpers", "yt-stub.mjs")).href, path.join(here, "..", "src", "video", "youtube-cli.mjs"), "--upload", "--id=rolik-1", `--file=${clip}`], {
+    encoding: "utf8",
+    env: { ...base, ZAVOD_ENV_FILE: path.join(dir, "нет-такого.env"), DATA_DIR: path.join(dir, "data"), MIRROR_DIR: path.join(dir, "mirror"), QUEUE_API_BASE: "https://zavod.test", ADMIN_API_TOKEN: "k", YOUTUBE_CLIENT_ID: "i", YOUTUBE_CLIENT_SECRET: "s", YOUTUBE_REFRESH_TOKEN: "r", YT_STUB_STATE: state, YT_STUB_EXTRA: extra },
+  });
+  const read = () => JSON.parse(readFileSync(state, "utf8"));
+
+  // Первый запуск: ролик загружен со сроком, а запись о его номере до сервера не дошла.
+  const first = run("fail");
+  assert.equal(first.status, 2, first.stderr);
+  assert.equal(read().uploads, 1);
+  assert.equal(read().publishAt, "", "срок выхода с ролика, о котором запись не знает, снят: сам он не откроется");
+  assert.match(first.stderr, /номер ролика не записался в очередь/);
+  assert.match(first.stderr, /второй раз ролик не загрузится/);
+  assert.equal(JSON.parse(readFileSync(receipt, "utf8")).videoId, "vvvvvvvvvvv");
+
+  // Повтор той же команды: второй ролик на канале не появляется, номер дозаписан.
+  const second = run("ok");
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /ролик уже загружен прошлым запуском/);
+  const after = read();
+  assert.equal(after.uploads, 1, "второй загрузки не было");
+  assert.deepEqual([after.entry.extra.youtubeId, after.entry.extra.youtubeHash], ["vvvvvvvvvvv", "1111111111111111"]);
+  assert.equal(existsSync(receipt), false, "квитанция убрана, когда номер записан");
+});

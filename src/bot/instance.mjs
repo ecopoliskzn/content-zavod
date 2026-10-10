@@ -10,13 +10,18 @@
 
 import path from "node:path";
 import { createBotInstance, createLeadStore } from "#bot";
-import { PROJECT_ROOT, dataPath, env } from "../lib/env.mjs";
+import { PROJECT_ROOT, dataPath, env, wrongUser } from "../lib/env.mjs";
 import { readJson } from "../lib/files.mjs";
 
 let instance = null;
 
 export function bot() {
   if (instance) return instance;
+  /* Движок пишет подписчиков и заявки своими средствами, мимо общего модуля записи.
+     Поэтому заслон от запуска под чужим пользователем стоит здесь, на входе: под root
+     движок не создаётся вовсе. */
+  const foreign = wrongUser();
+  if (foreign) throw Object.assign(new Error(foreign), { code: "ENV" });
   const texts = readJson(path.join(PROJECT_ROOT, "bot", "texts.json"), {});
   const materials = readJson(path.join(PROJECT_ROOT, "bot", "materials.json"), []);
   const core = createBotInstance({

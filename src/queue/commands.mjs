@@ -15,7 +15,7 @@ import { dueAt, human, mskDate, mskTime } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
 import { inbox, retireCard, submit } from "../bot/approval.mjs";
 import { afterChange as syncYoutube, sayAll, staleOnYoutube, syncAll } from "../video/schedule.mjs";
-import { STATUS_TITLE, normalize, preview, validate } from "./format.mjs";
+import { STATUS_TITLE, freshness, normalize, preview, validate } from "./format.mjs";
 import { record, rows as ledgerRows } from "./ledger.mjs";
 import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
 import { all, forceFromCopy, forceHanded, forceHeld, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
@@ -240,6 +240,8 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             // Каталог данных развёрнут из архива: расписание в нём старше копии.
             restored: isRestored(),
             busy: runnerBusy(),
+            // Время последней правки очереди и журнала: по нему видно, что сервер старше копии.
+            fresh: freshness(entries, ledgerRows()),
             statuses: Object.fromEntries(entries.map((x) => [x.id, x.status])),
             // Отпечатки текста одобренных записей: по ним компьютер видит, что запись после
             // копии исправили и одобрили заново, и прежний текст не выпускает.
@@ -269,7 +271,7 @@ export async function execute(cmd, args = {}, actor = "оператор") {
            2. Копия применяется, только если она новее того, что знает сервер (поле at).
               На живом сервере копия всегда старше либо равна, и команда ничего не меняет. */
         const rows = Array.isArray(args.entries) ? args.entries : [];
-        const done = { closed: [], handed: [], cancelled: [], withdrawn: [], progressed: [], logged: [], missing: [] };
+        const done = { closed: [], handed: [], cancelled: [], withdrawn: [], progressed: [], moved: [], logged: [], missing: [] };
         const hasRow = (id, status) => ledgerRows().some((r) => r.id === id && r.status === status);
         for (const c of rows) {
           if (!c?.id || !c.status || !c.at) continue;
@@ -322,6 +324,11 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             /* Тот же текст, запись ещё не закрыта: переносится сделанное. Сервер продолжит
                ветку с места обрыва и со сверкой, а не с первой реплики. */
             if (["published", "cancelled", "handed"].includes(s.status)) continue;
+            // Запись переставляли после архива. Согласие и текст те же, слот берётся из копии.
+            if (c.status === "approved" && s.status === "approved" && c.date && c.time && (c.date !== s.date || c.time !== s.time)) {
+              await reschedule(s.id, c.date, c.time, actor);
+              done.moved.push(s.name);
+            }
             const ahead = (c.done?.length ?? 0) > (s.done?.length ?? 0) || (c.attempts ?? 0) > (s.attempts ?? 0);
             if (c.status === "failed" && s.status === "approved") {
               // До аварии запись исчерпала попытки и ждала решения человека: ждёт его и теперь.
@@ -347,6 +354,7 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         say("сняты по копии", done.cancelled);
         say("согласие снято, нужно новое «да»", done.withdrawn);
         say("перенесено сделанное (сервер продолжит со сверкой)", done.progressed);
+        say("переставлены на слот из копии", done.moved);
         say("записано в журнал, самих записей на сервере нет", done.logged);
         if (done.missing.length) {
           lines.push(`на сервере нет записей, которые есть в копии: ${done.missing.length}. Поставьте их заново из файлов записей (npm run queue -- add --file=<файл>) и отправьте на согласование:`);
@@ -538,11 +546,16 @@ export async function execute(cmd, args = {}, actor = "оператор") {
            нельзя, промолчать тоже: возврат застрял бы навсегда, а запись, ждущая «да»,
            после согласования вышла бы второй раз. Поэтому факт пишется в журнал один раз,
            запись закрывается, а человек клиента узнаёт об этом сразу. */
-        const noConsent = Boolean(args.takeover) && ["review", "rework", "draft", "cancelled"].includes(e.status);
+        /* Сервер, поднятый из архива, знает о записи меньше компьютера: согласие могли дать
+           и текст могли поправить уже после архива. Его «ждёт согласования» и его отпечаток
+           текста в эту минуту ничего не доказывают, и тревога «вышла без согласия» была бы
+           ложной. Пока стоит отметка RESTORED, отметка с компьютера принимается как факт. */
+        const fromArchive = Boolean(args.takeover) && isRestored();
+        const noConsent = Boolean(args.takeover) && !fromArchive && ["review", "rework", "draft", "cancelled"].includes(e.status);
         /* Второй случай того же рода: согласие на записи есть, но на другой текст. После копии
            её вернули на правку, исправили и одобрили заново, а с компьютера ушёл прежний текст
            (сервер в это время был компьютеру недоступен, иначе сверка это остановила бы). */
-        const otherText = Boolean(args.takeover && args.contentHash && e.contentHash && args.contentHash !== e.contentHash) && !noConsent;
+        const otherText = Boolean(args.takeover && !fromArchive && args.contentHash && e.contentHash && args.contentHash !== e.contentHash) && !noConsent;
         const close = async (note) => { if (!["cancelled", "published"].includes(e.status)) await transition(e.id, "cancelled", { note }, actor); };
         const logged = (status) => ledgerRows().some((r) => r.id === e.id && r.status === status && r.withoutApproval);
 
@@ -596,7 +609,9 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             lines.push(`пакет ушёл с прежним текстом: ${e.channel} · ${e.name}. В рабочую группу ушло сообщение, сервер отправит пакет с исправленным текстом`);
             return { code: 0, lines };
           }
-          const handed = await forceHanded(e.id, { result: { ...(e.result || {}), manual: "пакет отправлен, ждёт ручной выкладки", ...(args.packageMessageId ? { packageMessageId: args.packageMessageId } : {}) }, handedAt: at, note: args.note || "пакет отправлен не через сервер" }, actor);
+          const fields = { result: { ...(e.result || {}), manual: "пакет отправлен, ждёт ручной выкладки", ...(args.packageMessageId ? { packageMessageId: args.packageMessageId } : {}) }, handedAt: at, note: args.note || "пакет отправлен не через сервер" };
+          // На сервере из архива запись может ещё «ждать согласования»: обычная отметка ей отказала бы.
+          const handed = fromArchive ? await forceFromCopy(e.id, "handed", fields, actor) : await forceHanded(e.id, fields, actor);
           record(handed, "handed", { at, by: actor });
           lines.push(`отмечена переданной на ручную выкладку: ${row(handed)}`);
           return { code: 0, lines, data: withoutIds(handed) };
@@ -612,8 +627,10 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         /* Уже отмечена: повтор команды строку в журнал не дописывает. По журналу считается
            суточный потолок площадки, и три повтора возврата «съедали» бы три выхода. */
         if (e.status === "published") { lines.push(`уже отмечена вышедшей: ${row(e)}`); return { code: 0, lines, data: withoutIds(e) }; }
-        const done = await forcePublished(e.id, { result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" }, publishedAt: at, note: otherText ? "вышла с компьютера оператора прежним текстом: после копии запись исправили и одобрили заново" : args.note || "вышла не через сервер" }, actor);
-        record(done, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor, ...(otherText ? { otherText: true } : {}) });
+        const closing = { result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" }, publishedAt: at, note: otherText ? "вышла с компьютера оператора прежним текстом: после копии запись исправили и одобрили заново" : args.note || "вышла не через сервер" };
+        // На сервере из архива запись может ещё «ждать согласования»: обычная отметка ей отказала бы.
+        const done = fromArchive ? await forceFromCopy(e.id, "published", closing, actor) : await forcePublished(e.id, closing, actor);
+        if (!ledgerRows().some((r) => r.id === e.id && r.status === "published")) record(done, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor, ...(otherText ? { otherText: true } : {}) });
         if (otherText) {
           // Публикация состоялась, второй не будет. Но согласован был другой текст: человек должен знать.
           await alert(`stray:${e.id}`, `<b>${h(title)}</b>: «${h(e.name)}» вышла во время аварии сервера прежним текстом. После копии запись исправили и одобрили заново, компьютер оператора об этом не знал.${args.link ? `\n${h(args.link)}` : ""}`, { action: "откройте публикацию и сравните с согласованным текстом. Править либо убирать её может владелец аккаунта на самой площадке" });

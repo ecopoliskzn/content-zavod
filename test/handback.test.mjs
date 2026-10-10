@@ -237,14 +237,27 @@ test("часть ветки вышла с компьютера, а сверка 
   assert.deepEqual(calls, []);
 });
 
-test("возврат на сервер из архива: вышедшее до аварии второй раз не выходит", async () => {
+test("возврат на сервер из архива: вышедшее до аварии второй раз не выходит, архиву компьютер не верит", async () => {
   fresh();
   const ids = {};
-  await asServer(async () => { ids.s = (await approved(thread("s-vyshla-na-servere", "2030-03-12", "14:30"))).id; });
-  // Ночной архив: запись в нём ещё одобрена.
+  const fixed = ["«t-ispravlena»: площадку в Казани сдали в срок, а через год пошли трещины.", "Причина нашлась в акте: толщину никто не мерил."];
+  await asServer(async () => {
+    ids.s = (await approved(thread("s-vyshla-na-servere", "2030-03-12", "14:30"))).id;
+    ids.t = (await approved(thread("t-ispravlena", "2030-03-13", "14:30"))).id;
+    // Эта запись в ночном архиве ещё ждёт согласования.
+    const { entry } = await store.put(thread("q-odobrena-posle-arhiva", "2030-03-12", "19:00"), "S1");
+    await approval.submit(entry.id, "S1");
+    ids.q = entry.id;
+  });
   const nightly = { queue: readFileSync(path.join(serverDir(), "queue.jsonl"), "utf8"), ledger: existsSync(path.join(serverDir(), "ledger.jsonl")) ? readFileSync(path.join(serverDir(), "ledger.jsonl"), "utf8") : "" };
-  // Днём сервер выпустил запись сам, копия на компьютере это знает.
-  assert.deepEqual((await asServer(() => runOnce({ now: T("2030-03-12", "14:30", 1) }))).published, ["s-vyshla-na-servere"]);
+  // День после архива: одна запись вышла с сервера, одну одобрили, одну исправили и одобрили заново.
+  await asServer(async () => {
+    assert.deepEqual((await runOnce({ now: T("2030-03-12", "14:30", 1) })).published, ["s-vyshla-na-servere"]);
+    await press(`q:ok:${ids.q}`);
+    await execute("add", { entries: [{ ...thread("t-ispravlena", "2030-03-13", "14:30"), posts: fixed }] }, "S1");
+    await approval.submit(ids.t, "S1");
+    await press(`q:ok:${ids.t}`);
+  });
   onPc();
   assert.equal((await mirror.pull()).ok, true);
   net.mode = "down";
@@ -255,21 +268,36 @@ test("возврат на сервер из архива: вышедшее до 
   writeFileSync(path.join(serverDir(), "ledger.jsonl"), nightly.ledger, "utf8");
   writeFileSync(path.join(serverDir(), "RESTORED"), JSON.stringify({ archived: "2030-03-12T00:30:00Z" }));
   writeFileSync(path.join(serverDir(), "HOLD"), JSON.stringify({ at: new Date().toISOString(), silentMin: 750 }));
-  assert.equal(remote(ids.s).status, "approved");
+  assert.deepEqual([remote(ids.s).status, remote(ids.q).status], ["approved", "review"]);
   net.mode = "up";
-  await runOnce({ now: T("2030-03-12", "16:00") }); // сверка: вернувшемуся серверу ставится отметка перехвата
 
+  /* Сверка с таким сервером. Его «ждёт согласования» и его прежний текст ничего не значат:
+     копия новее архива. Компьютер ставит отметку перехвата и своих записей не трогает. */
+  await runOnce({ now: T("2030-03-12", "16:00") });
+  assert.equal(await asServer(() => sw.stopState().takeover), true);
+  assert.deepEqual([local(ids.q).status, local(ids.t).status], ["approved", "approved"], "архив не отменил согласие и не снял исправленный текст");
+  calls.length = 0;
+  assert.deepEqual((await runOnce({ now: T("2030-03-12", "19:00", 1) })).published, ["q-odobrena-posle-arhiva"]);
+  assert.deepEqual((await runOnce({ now: T("2030-03-13", "14:30", 1) })).published, ["t-ispravlena"]);
+  assert.equal(calls.find((c) => c.name === "t-ispravlena").first, fixed[0], "вышел исправленный текст из копии");
+
+  sent.length = 0;
   const done = await mirror.handback({ waitMs: 200 });
   assert.equal(done.code, 0, done.lines.join("\n"));
-  assert.match(done.lines.join("\n"), /по копии расписания отмечены вышедшими: s-vyshla-na-servere/);
+  const text = done.lines.join("\n");
+  assert.match(text, /сервер старше копии расписания/);
+  assert.match(text, /по копии расписания отмечены вышедшими: s-vyshla-na-servere/);
+  // Ложной тревоги нет: согласие было, просто архив о нём не знал.
+  assert.doesNotMatch(text, /БЕЗ СОГЛАСИЯ|ПРЕЖНИЙ ТЕКСТ/);
+  assert.doesNotMatch(said(), /без согласия|хотя на сервере она была|прежним текстом/);
   await asServer(async () => {
-    assert.equal(store.get(ids.s).status, "published");
-    assert.equal(ledger.rows().filter((r) => r.id === ids.s && r.status === "published").length, 1);
+    assert.deepEqual([store.get(ids.s).status, store.get(ids.q).status, store.get(ids.t).status], ["published", "published", "published"]);
+    for (const id of [ids.s, ids.q, ids.t]) assert.equal(ledger.rows().filter((r) => r.id === id && r.status === "published").length, 1);
     assert.deepEqual([sw.stopState().stopped, sw.isRestored(), sw.isHeld()], [false, false, false]);
     calls.length = 0;
-    const run = await runOnce({ now: T("2030-03-12", "16:10") });
+    const run = await runOnce({ now: T("2030-03-13", "14:30", 10) });
     assert.deepEqual(run.published, []);
-    assert.deepEqual(calls, [], "запись, вышедшая до аварии, второй раз не вышла");
+    assert.deepEqual(calls, [], "ничего из вышедшего второй раз не вышло");
   });
 });
 
@@ -284,6 +312,7 @@ test("сервер из архива без перехвата: выпуск с�
     ids.e = (await make("e-ispravyat", "2030-03-14", "14:30")).id;
     ids.r = (await make("r-nachnut", "2030-03-12", "19:00", ["«r-nachnut»: площадку в Казани сдали в срок.", "Через год по ней пошли трещины.", "Причина нашлась в акте приёмки."])).id;
     ids.k = (await make("k-bez-peremen", "2030-03-15", "14:30")).id;
+    ids.m = (await make("m-perestavyat", "2030-03-15", "19:00")).id;
   });
   const nightly = { queue: readFileSync(path.join(serverDir(), "queue.jsonl"), "utf8"), ledger: existsSync(path.join(serverDir(), "ledger.jsonl")) ? readFileSync(path.join(serverDir(), "ledger.jsonl"), "utf8") : "" };
 
@@ -299,6 +328,8 @@ test("сервер из архива без перехвата: выпуск с�
     await store.transition(ids.r, "running", { startedAt: new Date().toISOString(), attempts: 1 }, "выпуск");
     await store.patch(ids.r, { done: ["r1"], result: { link: "https://www.threads.net/@eco/post/r1" } }, "выпуск");
     ids.n = (await make("n-novaya", "2030-03-16", "14:30")).id;
+    // Ещё одну запись утверждающий попросил отложить на неделю.
+    assert.equal((await execute("move", { ref: ids.m, date: "2030-03-22", time: "19:00" }, "оператор")).code, 0);
   });
   onPc();
   assert.equal((await mirror.pull()).ok, true);
@@ -338,10 +369,12 @@ test("сервер из архива без перехвата: выпуск с�
   assert.match(text, /согласие снято, нужно новое «да»: .*e-ispravyat/);
   assert.match(text, /перенесено сделанное \(сервер продолжит со сверкой\): r-nachnut/);
   assert.match(text, /на сервере нет записей, которые есть в копии: 1/);
+  assert.match(text, /переставлены на слот из копии: m-perestavyat/);
   assert.match(text, /n-novaya/);
 
   await asServer(async () => {
     assert.deepEqual(["p", "c", "w", "e", "r", "k"].map((k) => store.get(ids[k]).status), ["published", "cancelled", "review", "review", "approved", "approved"]);
+    assert.deepEqual([store.get(ids.m).status, store.get(ids.m).date], ["approved", "2030-03-22"], "отложенная запись не выйдет в прежний слот из архива");
     assert.equal(store.get(ids.n), null, "согласие из копии не восстанавливается: записи, которой нет в архиве, сверка не создаёт");
     assert.deepEqual([store.get(ids.r).done, store.get(ids.r).attempts], [["r1"], 1]);
     assert.equal(ledger.rows().filter((r) => r.id === ids.p && r.status === "published").length, 1);
@@ -414,4 +447,29 @@ test("«стоп», пришедший посреди прохода, остан
   assert.equal(store.get(b.id).status, "approved");
   // Бот не обещает «ничего»: идущая отправка довыйдет.
   assert.match(sent.find((s) => /Выпуск остановлен/.test(s.body.text || "")).body.text, /отправка которой уже началась, довыйдет/);
+});
+
+test("перехват: сервер вернулся старше копии и без отметки из архива — компьютер его статусам не верит", async () => {
+  fresh();
+  const ids = {};
+  await asServer(async () => { ids.q = (await approved(thread("q-odobrena", "2030-03-12", "19:00"))).id; });
+  onPc();
+  assert.equal((await mirror.pull()).ok, true);
+  net.mode = "down";
+  assert.equal((await withFlags(["yes", "server-stopped"], () => mirror.takeover({ now: T("2030-03-12", "14:00") }))).code, 0);
+  // Хостинг вернул диск сервера к снимку, где запись ещё ждала «да». Отметки из архива на нём нет.
+  await asServer(() => store.transition(ids.q, "review", { approval: undefined }, "снимок диска"));
+  // Копия свежее сервера на десять минут: в жизни разрыв измеряется часами.
+  const takeoverFilePath = takeoverFile();
+  const taken = JSON.parse(readFileSync(takeoverFilePath, "utf8"));
+  writeFileSync(takeoverFilePath, JSON.stringify({ ...taken, copyFresh: Date.now() + 10 * 60_000 }));
+  net.mode = "up";
+
+  const run = await runOnce({ now: T("2030-03-12", "19:00", 1) });
+  assert.equal(await asServer(() => sw.isRestored()), true, "сервер помечен: до сверки с копией он не выпускает");
+  assert.deepEqual(run.published, ["q-odobrena"], "одобренная по копии запись вышла, статус из снимка её не снял");
+  const done = await mirror.handback({ waitMs: 200 });
+  assert.equal(done.code, 0, done.lines.join("\n"));
+  assert.doesNotMatch(done.lines.join("\n"), /БЕЗ СОГЛАСИЯ/);
+  assert.equal(remote(ids.q).status, "published");
 });

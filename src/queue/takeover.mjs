@@ -58,7 +58,7 @@ export const holdFields = (note) => ({ status: "failed", takeoverHold: true, not
 export async function adoptServerState() {
   const r = await server("pulse", {}, 10_000);
   if (r.code !== 0 || !r.data?.statuses) return { reached: false };
-  const out = { reached: true, stopped: false, resumed: false, paused: false, unguarded: false, busy: Boolean(r.data.busy), withdrawn: [], edited: [], released: [], confirmed: [], held: [] };
+  const out = { reached: true, stopped: false, resumed: false, paused: false, unguarded: false, staleServer: false, busy: Boolean(r.data.busy), withdrawn: [], edited: [], released: [], confirmed: [], held: [] };
   const remoteStop = r.data.stop || {};
 
   // Слово человека: «стоп» принимается, «старт» тоже. Местную остановку, поставленную
@@ -81,6 +81,18 @@ export async function adoptServerState() {
   }
   // Отметки на живом сервере нет и поставить её не вышло: он выпускает сам.
   out.unguarded = !remoteStop.takeover && !out.paused;
+
+  /* Сервер старше копии: он поднят из архива либо откатан снимком диска. О том, что было
+     после архива, его статусы ничего не говорят, и принимать их нельзя. Компьютер снял бы
+     у себя запись с исправленным текстом, а серверу остался бы прежний, отклонённый.
+     Такой сервер получает отметку «восстановлен», а копия остаётся правдой до возврата. */
+  const taken = readJson(dataPath("TAKEOVER.json"), {}) || {};
+  const older = Boolean(taken.copyFresh && r.data.fresh && r.data.fresh < taken.copyFresh - 60_000);
+  if (r.data.restored || older) {
+    if (!r.data.restored) await server("rollback", { reason: "расписание на сервере старше копии на компьютере оператора" }, 10_000);
+    out.staleServer = true;
+    return out;
+  }
 
   for (const e of all()) {
     const remote = r.data.statuses[e.id];
@@ -140,6 +152,7 @@ export function sayAdopted(seen) {
   if (seen.stopped) parts.push("выпуск остановлен человеком");
   if (seen.resumed) parts.push("остановка человеком снята, выпуск продолжается");
   if (seen.paused) parts.push("сервер вернулся без отметки перехвата: отметка поставлена");
+  if (seen.staleServer) parts.push("сервер старше копии расписания (поднят из архива либо откатан): его статусы не принимаются, правдой остаётся копия. Нужен возврат: npm run mirror -- --handback");
   if (seen.withdrawn.length) parts.push(`согласие снято: ${seen.withdrawn.join(", ")}`);
   if (seen.edited.length) parts.push(`на сервере одобрен другой текст, с компьютера не выйдет: ${seen.edited.join(", ")}`);
   if (seen.confirmed.length) parts.push(`вышло на сервере до перехвата: ${seen.confirmed.join(", ")}`);

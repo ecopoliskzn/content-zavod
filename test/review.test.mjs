@@ -418,7 +418,7 @@ test("сверка при перехвате: сервер отдаёт руби
   await store.transition(entry.id, "approved", { done: ["p1"], result: { link: "https://www.threads.net/@eco/post/p1" } }, "выпуск");
   const pulse = await execute("pulse", {}, "оператор (дубль)");
   assert.equal(pulse.code, 0);
-  assert.deepEqual(Object.keys(pulse.data).sort(), ["busy", "hashes", "held", "progress", "restored", "statuses", "stop"]);
+  assert.deepEqual(Object.keys(pulse.data).sort(), ["busy", "fresh", "hashes", "held", "progress", "restored", "statuses", "stop"]);
   assert.equal(pulse.data.hashes[entry.id], store.get(entry.id).contentHash, "отпечаток одобренного текста: по нему компьютер видит правку после копии");
   assert.equal(pulse.data.statuses[entry.id], "approved");
   assert.deepEqual(pulse.data.progress[entry.id], { done: ["p1"], attempts: 1, result: { link: "https://www.threads.net/@eco/post/p1" } });

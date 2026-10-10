@@ -9,13 +9,16 @@
 // перезапуске. Поэтому продление запускается на хосте (cron), а не внутри контейнера.
 
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { envTarget, _reset } from "./env.mjs";
+import { envTarget, wrongUser, _reset } from "./env.mjs";
 
 /**
  * @param {Record<string, string>} values имя → значение
  * @param {string} [file] по умолчанию файл окружения этой машины: названный явно либо прочитанный
  */
 export function setEnv(values, file = envTarget()) {
+  // Файл окружения, переписанный под root, завод потом не прочитает: бот молчит до утра.
+  const foreign = wrongUser();
+  if (foreign) throw Object.assign(new Error(foreign), { code: "ENV" });
   const lines = existsSync(file) ? readFileSync(file, "utf8").split(/\r?\n/) : [];
   const left = new Map(Object.entries(values));
   const next = lines.map((line) => {

@@ -37,14 +37,14 @@
 // плейлисты. Значение ключа скрипт не печатает никогда.
 
 import { createServer } from "node:http";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { PROJECT_ROOT, env } from "../lib/env.mjs";
 import { setEnv } from "../lib/envfile.mjs";
 import { readJson, writeJson } from "../lib/files.mjs";
-import { request } from "../lib/http.mjs";
+import { request, sleep } from "../lib/http.mjs";
 import { dueAt } from "../lib/time.mjs";
-import { probe, status, upload } from "../channels/youtube.mjs";
+import { probe, setSchedule, status, upload } from "../channels/youtube.mjs";
 import { video as videoGate } from "../gates/rules.mjs";
 import { describeContext } from "./describe.mjs";
 import { composeDescription, pinnedComment, relations, sortByViews, swapRelations, withVideo } from "./series.mjs";
@@ -168,6 +168,54 @@ async function relink(registry, only = "") {
   return { changed, failed, skipped };
 }
 
+/*
+ * КВИТАНЦИЯ ЗАГРУЗКИ. Ролик загружен, а номер ролика ещё нужно записать в запись очереди
+ * на сервере. Если этот запрос оборвётся, запись о ролике не узнает: повтор команды
+ * загрузил бы второй ролик, а первый открылся бы сам по своему сроку, и ни «Снять», ни
+ * /stop_release на него бы не действовали. Поэтому номер ролика сначала пишется на диск
+ * этого компьютера, и только потом уходит на сервер. Повтор команды видит квитанцию и
+ * дозаписывает номер, а не грузит ролик заново.
+ */
+const RECEIPTS = () => path.resolve(env("MIRROR_DIR", path.join(PROJECT_ROOT, "mirror")), "uploads");
+const receiptFile = (entryId) => path.join(RECEIPTS(), `${entryId}.json`);
+const loadReceipt = (entryId) => readJson(receiptFile(entryId), null);
+const saveReceipt = (entryId, data) => { mkdirSync(RECEIPTS(), { recursive: true }); writeJson(receiptFile(entryId), data); };
+const dropReceipt = (entryId) => { try { unlinkSync(receiptFile(entryId)); } catch { /* уже убрана */ } };
+const STUDIO = "Студия YouTube → «Контент» → ролик → «Параметры доступа» → «Ограниченный доступ», без даты";
+
+/**
+ * Записать номер загруженного ролика в запись очереди. Три попытки; не вышло — срок
+ * выхода с ролика снимается тем же ключом: ролик без хозяина не должен открыться сам.
+ * @returns {Promise<{ code: number, lines?: string[], data?: object }>}
+ */
+async function register(entry, receipt) {
+  const link = `https://www.youtube.com/watch?v=${receipt.videoId}`;
+  let saved = { code: 2, lines: [] };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await sleep(2_000 * attempt);
+    saved = await queue("extra", { ref: entry.id, fields: { youtubeId: receipt.videoId, youtubePublishAt: receipt.publishAt || "", youtubeHash: receipt.contentHash } });
+    if (saved.code === 0 || saved.code === 1) break; // записано либо отказ по правилу: повтор не поможет
+  }
+  if (saved.code === 0) {
+    dropReceipt(entry.id);
+    console.log((saved.lines || []).join("\n"));
+    return saved;
+  }
+  console.error(`✗ номер ролика не записался в очередь: ${(saved.lines || []).join("; ") || "сервер не ответил"}`);
+  if (receipt.publishAt) {
+    const live = await status(receipt.videoId);
+    const off = live.kind === "ok" ? await setSchedule(live.raw, "") : { ok: false, error: live.error };
+    if (off.ok) {
+      saveReceipt(entry.id, { ...receipt, publishAt: "" });
+      console.error("срок выхода с ролика снят: пока запись о нём не знает, сам он не откроется");
+    } else {
+      console.error(`✗ срок выхода с ролика снять не удалось (${off.error}). YouTube откроет его сам ${receipt.publishAt}. Снимите дату руками: ${STUDIO}`);
+    }
+  }
+  console.error(`ролик лежит на YouTube закрытым: ${link}. Повторите эту же команду, когда сервер ответит: второй раз ролик не загрузится, дозапишется только номер, а срок выхода сервер поставит сам`);
+  return saved;
+}
+
 async function doUpload() {
   const ref = opt("id");
   const file = opt("file");
@@ -175,41 +223,53 @@ async function doUpload() {
   if (!existsSync(file)) { console.error(`нет файла: ${file}`); return 2; }
   const entry = await entryOf(ref);
   if (!["approved", "review"].includes(entry.status)) { console.error(`запись в статусе «${entry.status}»: загружается одобренное (или ждущее «да», тогда ролик останется закрытым до согласования)`); return 1; }
-  if (entry.extra?.youtubeId) { console.error(`ролик уже загружен: https://www.youtube.com/watch?v=${entry.extra.youtubeId}`); return 1; }
+  if (entry.extra?.youtubeId) { console.error(`ролик уже загружен: https://www.youtube.com/watch?v=${entry.extra.youtubeId}`); dropReceipt(entry.id); return 1; }
   let registry = loadRegistry();
   if (entry.series && !(registry.series || []).some((s) => s.key === entry.series)) { console.error(`в записи стоит серия «${entry.series}», а в content/youtube/series.json её нет: заведите серию или уберите поле`); return 1; }
-  const description = composeDescription(entry, context(registry));
-  if (description.length > 5000) { console.error(`описание с блоком ссылок ${description.length} знаков, предел YouTube 5000: сократите текст`); return 1; }
-  const due = dueAt(entry);
-  /* Дата выхода ставится только одобренной записи: неодобренный ролик сам не откроется.
-     И только с запасом в полчаса. Загрузка идёт минуты, и всё это время запись на сервере
-     ещё не знает номера ролика: если её снимут посреди загрузки, срок, решённый в начале,
-     простоит до первой сверки. С запасом сверка успевает; без него ролик загружается без
-     срока, и в слот его открывает сервер. */
-  const publishAt = entry.status === "approved" && due > Date.now() + 30 * 60_000 ? new Date(due).toISOString() : undefined;
-  console.log(`загружаю «${entry.title}»${publishAt ? `, выход ${entry.date} в ${entry.time} МСК` : entry.status === "approved" ? ", без даты выхода: до слота меньше получаса, ролик откроет сервер" : ", без даты выхода: запись ещё ждёт «да». Срок сервер поставит сам, когда её одобрят"}…`);
-  const res = await upload({ file, title: entry.title, description, tags: entry.tags || [], publishAt, privacy: "private" });
-  if (!res.ok) { console.error(`✗ ${res.error}`); return 1; }
-  console.log(`✓ загружено: https://www.youtube.com/watch?v=${res.id} · доступ: ${res.privacy}`);
-  if (res.warning) console.error(`⚠ ${res.warning}`);
-  // Вместе с номером ролика записывается отпечаток отправленного содержимого: по нему сервер
-  // видит, что на ролике лежит именно одобренный текст. Сервер тут же сверяет срок с
-  // записью: если её сняли, пока шла загрузка, срок снимается сразу, и строка ниже это скажет.
-  const saved = await queue("extra", { ref: entry.id, fields: { youtubeId: res.id, youtubePublishAt: publishAt || "", youtubeHash: entry.contentHash } });
-  console.log((saved.lines || []).join("\n"));
+
+  let receipt = loadReceipt(entry.id);
+  if (receipt?.videoId) {
+    // Прошлый запуск загрузил ролик, а номер до сервера не дошёл: второй раз не грузим.
+    console.log(`ролик уже загружен прошлым запуском: https://www.youtube.com/watch?v=${receipt.videoId}. Тогда номер не записался в очередь: дозаписываю`);
+  } else {
+    const description = composeDescription(entry, context(registry));
+    if (description.length > 5000) { console.error(`описание с блоком ссылок ${description.length} знаков, предел YouTube 5000: сократите текст`); return 1; }
+    const due = dueAt(entry);
+    /* Дата выхода ставится только одобренной записи: неодобренный ролик сам не откроется.
+       И только с запасом в полчаса. Загрузка идёт минуты, и всё это время запись на сервере
+       ещё не знает номера ролика: если её снимут посреди загрузки, срок, решённый в начале,
+       простоит до первой сверки. С запасом сверка успевает; без него ролик загружается без
+       срока, и в слот его открывает сервер. */
+    const publishAt = entry.status === "approved" && due > Date.now() + 30 * 60_000 ? new Date(due).toISOString() : undefined;
+    console.log(`загружаю «${entry.title}»${publishAt ? `, выход ${entry.date} в ${entry.time} МСК` : entry.status === "approved" ? ", без даты выхода: до слота меньше получаса, ролик откроет сервер" : ", без даты выхода: запись ещё ждёт «да». Срок сервер поставит сам, когда её одобрят"}…`);
+    const res = await upload({ file, title: entry.title, description, tags: entry.tags || [], publishAt, privacy: "private" });
+    if (!res.ok) { console.error(`✗ ${res.error}`); return 1; }
+    console.log(`✓ загружено: https://www.youtube.com/watch?v=${res.id} · доступ: ${res.privacy}`);
+    if (res.warning) console.error(`⚠ ${res.warning}`);
+    // Квитанция пишется ДО запроса к серверу. В ней и отпечаток отправленного текста.
+    receipt = { videoId: res.id, publishAt: publishAt || "", contentHash: entry.contentHash, name: entry.name, at: new Date().toISOString() };
+    saveReceipt(entry.id, receipt);
+  }
+  /* Вместе с номером ролика записывается отпечаток отправленного содержимого: по нему сервер
+     видит, что на ролике лежит именно одобренный текст. Сервер тут же сверяет срок с
+     записью: если её сняли, пока шла загрузка, срок снимается сразу, и строка скажет об этом. */
+  const saved = await register(entry, receipt);
+  if (saved.code !== 0) return saved.code || 2;
+  const videoId = receipt.videoId;
+  const publishAt = saved.data?.extra?.youtubePublishAt || receipt.publishAt || "";
   if (saved.data && saved.data.status !== entry.status) console.error(`⚠ пока шла загрузка, запись изменилась: была «${entry.status}», стала «${saved.data.status}». Ролик лежит закрытым; что с ним делать, решите с утверждающим`);
   if (opt("thumb")) {
-    const t = await setThumbnail(res.id, opt("thumb"));
+    const t = await setThumbnail(videoId, opt("thumb"));
     console.log(t.ok ? "✓ обложка поставлена" : `⚠ ${t.error}`);
   }
   if (entry.series) {
     // Срок выхода пишется в реестр: до него соседние ролики на этот не ссылаются, иначе
     // зритель по ссылке «следующая часть» попадёт на «видео недоступно».
-    registry = withVideo(registry, entry.series, { id: res.id, name: entry.name, title: entry.title, ...(publishAt ? { publishAt } : {}) });
+    registry = withVideo(registry, entry.series, { id: videoId, name: entry.name, title: entry.title, ...(publishAt ? { publishAt } : {}) });
     saveRegistry(registry);
     const s = registry.series.find((x) => x.key === entry.series);
     if (s.playlistId) {
-      const a = await addToPlaylist(s.playlistId, res.id);
+      const a = await addToPlaylist(s.playlistId, videoId);
       console.log(a.ok ? `✓ ролик добавлен в плейлист «${s.title}»` : `⚠ в плейлист не добавился: ${a.error}`);
     } else {
       console.log(`· у серии «${s.title}» ещё нет плейлиста: npm run yt -- --series-create --series=${s.key}`);
@@ -221,8 +281,8 @@ async function doUpload() {
     if (publishAt) console.log(`после выхода ролика (${entry.date} в ${entry.time} МСК) дайте остальным роликам серии ссылку на него: npm run yt -- --relink --series=${s.key}`);
   }
   console.log("\nЗакреплённый комментарий (после выхода ролика его ставит и закрепляет человек в Студии; текст придёт в рабочую группу):\n");
-  console.log(pinnedComment(entry, context(registry, res.id)));
-  return saved.code || 0;
+  console.log(pinnedComment(entry, context(registry, videoId)));
+  return 0;
 }
 
 async function main() {

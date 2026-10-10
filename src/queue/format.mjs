@@ -123,6 +123,16 @@ function content(e) {
 /** Отпечаток содержимого. Изменился после одобрения — запись снова идёт на согласование. */
 export const contentHash = (e) => fnv16(JSON.stringify(content(e)));
 
+/**
+ * Насколько свежо состояние: время последней правки очереди либо журнала, в миллисекундах.
+ * По нему видно, что сервер стал старше копии: его подняли из архива либо откатили снимком диска.
+ */
+export function freshness(queue = [], ledger = []) {
+  let max = 0;
+  for (const r of [...queue, ...ledger]) { const t = Date.parse(r?.at); if (t > max) max = t; }
+  return max;
+}
+
 /** Отпечаток «что и когда»: по нему дубль расписания понимает, отстала ли копия. */
 export const entryHash = (e) => fnv16(JSON.stringify([content(e), e.date, e.time]));
 
