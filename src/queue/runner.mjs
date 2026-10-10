@@ -44,8 +44,8 @@ import { ownsQueue, staleOnYoutube, syncAll as syncYoutube } from "../video/sche
 import { STATUS_TITLE, preview } from "./format.mjs";
 import { channelLoad, record } from "./ledger.mjs";
 import { all, compact, forcePublished, get, patch, transition } from "./store.mjs";
-import { isHeld, isTakeover, stopState } from "./switch.mjs";
-import { adoptServerState, sayAdopted } from "./takeover.mjs";
+import { isHeld, isRestored, isTakeover, stopState } from "./switch.mjs";
+import { adoptServerState, sayAdopted, takeoverDoubt } from "./takeover.mjs";
 
 const STUCK_MIN = 15;
 
@@ -54,7 +54,7 @@ const remember = (s) => writeJson(dataPath("state.json"), s);
 
 /**
  * Один проход выпуска.
- * @returns {Promise<{ published: string[], handed: string[], retry: string[], failed: string[], expired: string[], waiting: string[], digest: boolean, busy?: boolean, stopped?: boolean, held?: boolean }>}
+ * @returns {Promise<{ published: string[], handed: string[], retry: string[], failed: string[], expired: string[], waiting: string[], digest: boolean, busy?: boolean, stopped?: boolean, held?: boolean, restored?: boolean, idle?: string }>}
  *   handed — пакеты, ушедшие человеку на ручную выкладку: публикацией они ещё не стали
  */
 export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
@@ -82,8 +82,17 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     if (isTakeover()) {
       /* Перехват: перед проходом компьютер спрашивает сервер, не остановил ли человек
          выпуск и не снял ли записи после копии. Сервер молчит — идём по копии. */
-      const said = sayAdopted(await adoptServerState().catch(() => ({ reached: false })));
+      const seen = await adoptServerState().catch(() => ({ reached: false }));
+      const said = sayAdopted(seen);
       if (said) console.log(`${new Date().toISOString()} сверка с сервером: ${said}`);
+      /* Выпускает всегда кто-то один. Если неизвестно, не выпускает ли сервер сам (он жив и
+         без отметки перехвата либо возврат оборвался на последнем запросе), компьютер
+         этот проход пропускает. */
+      const doubt = takeoverDoubt(seen);
+      if (doubt) {
+        console.log(`${new Date().toISOString()} перехват: проход пропущен. ${doubt}`);
+        return { ...out, stopped: true, idle: doubt };
+      }
     }
     if (ownsQueue()) {
       /* Сроки роликов YouTube ведёт только хозяин очереди. Сверка стоит до рубильника
@@ -107,11 +116,23 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     }
     return { ...out, stopped: true };
   }
+  if (isRestored()) {
+    /* Каталог данных развёрнут из архива. Расписание в архиве старше, чем было в минуту
+       аварии: что вышло, что сняли и чему отозвали согласие после архива, сервер не знает.
+       Выпустить по такому расписанию значит задвоить вышедшее и выпустить снятое. Кнопки
+       здесь нет намеренно: снимает остановку только сверка с копией расписания. */
+    if (!dry) {
+      await alert("release:restored", "Сервер восстановлен из архива. Расписание в архиве старше, чем было в минуту аварии: что с тех пор вышло, что сняли и что одобрили, сервер не знает. Выпуск стоит, пока оператор не сверит сервер с копией расписания.", {
+        action: "перешлите это сообщение оператору. Его команда: npm run mirror -- --reconcile (если расписание вёл компьютер оператора: npm run mirror -- --handback)",
+      });
+    }
+    return { ...out, restored: true };
+  }
   if (isHeld()) {
     const hold = readJson(dataPath("HOLD"), {}) || {};
     if (!dry) {
       await alert("release:hold", `Сервер молчал ${hold.silentMin ?? "больше 30"} мин. и вернулся. Выпуск ждёт подтверждения: пока сервер молчал, расписание мог вести компьютер оператора, и вышедшее там сервер ещё не знает.`, {
-        action: "спросите оператора, перехватывал ли он расписание. Если нет, нажмите «Продолжить выпуск». Если да, оператор сначала вернёт вышедшее на сервер",
+        action: "спросите оператора, перехватывал ли он расписание и не восстанавливал ли сервер из архива либо снимка диска. Если нет, нажмите «Продолжить выпуск». Если да, оператор сначала вернёт серверу то, что произошло без него",
         buttons: [[{ text: "Продолжить выпуск", data: "r:go" }]],
       });
     }
@@ -200,6 +221,11 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
         continue;
       }
       if (dry) { out.published.push(entry.name); continue; }
+
+      /* «Стоп» мог прийти, пока шёл этот проход: первая запись ушла, вторая ещё нет. Бот
+         в эту минуту уже ответил человеку «ничего не выйдет», поэтому следующую запись
+         проход не берёт. */
+      if (stopState().stopped) { out.stopped = true; break; }
 
       let current;
       try {
@@ -383,7 +409,7 @@ if (direct && wrongUser() && !process.argv.includes("--dry")) {
     (r) => {
       const quiet = !r.published.length && !r.handed.length && !r.retry.length && !r.failed.length && !r.expired.length && !r.waiting.length && !r.digest;
       // Пустой проход в журнал не пишем: их двести в сутки.
-      if (!quiet || dry || r.busy || r.stopped || r.held) console.log(`${new Date().toISOString()} ${dry ? "проба " : ""}${JSON.stringify(r)}`);
+      if (!quiet || dry || r.busy || r.stopped || r.held || r.restored) console.log(`${new Date().toISOString()} ${dry ? "проба " : ""}${JSON.stringify(r)}`);
       process.exitCode = r.failed.length ? 1 : 0;
     },
     (e) => {

@@ -23,23 +23,21 @@
 //
 // Сервер не ответил — компьютер идёт по копии. Это и есть слепое окно перехвата.
 
+import { dataPath } from "../lib/env.mjs";
+import { readJson, writeJson } from "../lib/files.mjs";
 import { STATUS_TITLE } from "./format.mjs";
 import { server } from "./remote.mjs";
 import { all, forceHeld, forcePublished, patch, transition } from "./store.mjs";
-import { clearStop, setStop, stopState } from "./switch.mjs";
+import { ADOPTED_STOP, clearStop, setStop, stopState } from "./switch.mjs";
+
+export { ADOPTED_STOP };
 
 /** Кто придержал запись со слотом до перехвата и кто правит копию по ответу сервера. */
 export const HELD_BY = "перехват";
 export const SYNC_BY = "сверка с сервером";
 
-/** Причина местной остановки, принятой с сервера: по ней остановка и снимается сама. */
-export const ADOPTED_STOP = "выпуск остановлен человеком на сервере";
-
 /** Причина, с которой перехват ставит остановку серверу. */
 export const TAKEOVER_REASON = "перехват расписания компьютером оператора";
-
-/** Причина местной остановки на время возврата расписания серверу. */
-export const HANDBACK_STOP = "расписание возвращается серверу";
 
 const NO_CONSENT = ["cancelled", "review", "rework", "draft"];
 // «Просрочена» сюда не входит: сервер к такой записи не притрагивался, а правило шести
@@ -54,12 +52,13 @@ export const holdFields = (note) => ({ status: "failed", takeoverHold: true, not
 
 /**
  * Принять с сервера то, что изменилось после копии.
- * @returns {Promise<{ reached: boolean, stopped?: boolean, resumed?: boolean, paused?: boolean, busy?: boolean, withdrawn?: string[], edited?: string[], released?: string[], confirmed?: string[], held?: string[] }>}
+ * @returns {Promise<{ reached: boolean, stopped?: boolean, resumed?: boolean, paused?: boolean, unguarded?: boolean, busy?: boolean, withdrawn?: string[], edited?: string[], released?: string[], confirmed?: string[], held?: string[] }>}
+ *   unguarded — сервер жив, а отметки перехвата на нём нет: выпускать в этом проходе нельзя
  */
 export async function adoptServerState() {
   const r = await server("pulse", {}, 10_000);
   if (r.code !== 0 || !r.data?.statuses) return { reached: false };
-  const out = { reached: true, stopped: false, resumed: false, paused: false, busy: Boolean(r.data.busy), withdrawn: [], edited: [], released: [], confirmed: [], held: [] };
+  const out = { reached: true, stopped: false, resumed: false, paused: false, unguarded: false, busy: Boolean(r.data.busy), withdrawn: [], edited: [], released: [], confirmed: [], held: [] };
   const remoteStop = r.data.stop || {};
 
   // Слово человека: «стоп» принимается, «старт» тоже. Местную остановку, поставленную
@@ -76,10 +75,12 @@ export async function adoptServerState() {
   /* Сервер вернулся и о перехвате не знает: без отметки он начнёт выпускать сам. Посреди
      возврата отметку не ставим: возврат как раз её снял, а файл перехвата на компьютере
      мог ещё не исчезнуть (команда оборвалась на последнем шаге). */
-  if (!remoteStop.takeover && mine.reason !== HANDBACK_STOP) {
+  if (!remoteStop.takeover && !mine.handback) {
     const paused = await server("pause", { reason: TAKEOVER_REASON, takeover: true, ongoing: true }, 10_000);
     out.paused = paused.code === 0;
   }
+  // Отметки на живом сервере нет и поставить её не вышло: он выпускает сам.
+  out.unguarded = !remoteStop.takeover && !out.paused;
 
   for (const e of all()) {
     const remote = r.data.statuses[e.id];
@@ -97,8 +98,10 @@ export async function adoptServerState() {
       out.confirmed.push(e.name);
     } else if (UNFINISHED.includes(remote)) {
       /* Сервер запись начал и не закончил. Что из неё уже на площадке, знает только он и
-         сама площадка: с компьютера её выпускает человек, посмотрев глазами. */
-      if (!held) {
+         сама площадка: с компьютера её выпускает человек, посмотрев глазами. Если человек
+         уже посмотрел и вернул запись в расписание (humanMoved), его решение не отменяется:
+         иначе команда «переставить» молча не действовала бы, и запись не вышла бы никогда. */
+      if (!held && !e.humanMoved) {
         await forceHeld(e.id, { ...holdFields(`на сервере запись «${STATUS_TITLE[remote] || remote}»: сервер начал её и не закончил. Проверьте площадку глазами`), ...(progress ? { done: progress.done, result: progress.result || e.result } : {}) }, HELD_BY);
         out.held.push(e.name);
       }
@@ -143,4 +146,26 @@ export function sayAdopted(seen) {
   if (seen.released.length) parts.push(`возвращено в расписание: ${seen.released.join(", ")}`);
   if (seen.held.length) parts.push(`придержано, сервер начал и не закончил: ${seen.held.join(", ")}`);
   return parts.join("; ");
+}
+
+/**
+ * Можно ли компьютеру выпускать в этом проходе. Пустая строка — можно; иначе причина.
+ *
+ * Два случая, когда нельзя, и оба про одно: неизвестно, не выпускает ли сервер сам.
+ *   · сервер ответил, отметки перехвата на нём нет, и поставить её не удалось;
+ *   · возврат оборвался на последнем запросе (сервер мог включиться, ответ потерялся),
+ *     и связи с сервером с тех пор нет.
+ * Во втором случае ждать можно долго, поэтому причина называет, что делать.
+ */
+export function takeoverDoubt(seen) {
+  const file = dataPath("TAKEOVER.json");
+  const state = readJson(file, {}) || {};
+  if (seen?.reached) {
+    if (seen.unguarded) return "сервер жив, а отметки перехвата на нём нет и поставить её не удалось: выпускать могли бы обе машины. Компьютер попробует снова при следующем проходе";
+    // Отметка на сервере подтверждена: сомнение после оборванного возврата снято.
+    if (state.serverMayRun) writeJson(file, { ...state, serverMayRun: false });
+    return "";
+  }
+  if (state.serverMayRun) return "возврат оборвался на последнем запросе: сервер мог включить выпуск, а связи с ним нет. Откройте /health сервера с телефона. Сервер жив: ничего не делайте и повторите возврат, когда связь вернётся. Сервер лежит либо выпуск на нём остановлен: npm run queue -- resume --local --server-stopped";
+  return "";
 }

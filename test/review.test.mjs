@@ -177,7 +177,7 @@ test("у пакета на ручную выкладку свой статус �
 
 test("в рубильнике две независимые отметки: слово человека и перехват друг друга не затирают", () => {
   clearStop({ all: true });
-  assert.deepEqual(stopState(), { stopped: false, human: false, takeover: false, by: "", at: "", reason: "" });
+  assert.deepEqual(stopState(), { stopped: false, human: false, takeover: false, handback: false, by: "", at: "", reason: "" });
   setStop({ by: "Анна", reason: "команда /stop_release" });
   assert.deepEqual([stopState().stopped, stopState().human, stopState().takeover], [true, true, false]);
   // Перехват поверх остановки человеком: слово человека остаётся, и оно же стоит первым.

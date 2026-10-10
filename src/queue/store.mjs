@@ -157,8 +157,27 @@ export async function reschedule(id, date, time, by) {
     if (bad.length) throw new RuleError(bad.join("; "));
     // Просроченная и упавшая после перестановки снова ждут своего слота.
     const status = ["expired", "failed"].includes(was.status) && was.approval ? "approved" : was.status;
-    // Запись, придержанную перехватом, человек посмотрел и переставил: отметка снимается.
-    return write({ ...next, status, attempts: status === "approved" && was.status !== "approved" ? 0 : was.attempts, ...(status !== was.status ? { takeoverHold: undefined } : {}) }, by);
+    /* Упавшую либо придержанную перехватом запись человек посмотрел и вернул в расписание.
+       Отметка «придержана» снимается, а решение человека запоминается (humanMoved): сверка
+       с сервером при перехвате такую запись заново не придерживает, иначе команда
+       «переставить» молча отменялась бы на следующем проходе. */
+    return write({ ...next, status, attempts: status === "approved" && was.status !== "approved" ? 0 : was.attempts, ...(status !== was.status ? { takeoverHold: undefined, humanMoved: true } : {}) }, by);
+  });
+}
+
+/**
+ * Привести запись к тому, что о ней знает копия расписания: «вышла», «передана» либо
+ * «снята». Нужна сверке после восстановления сервера из архива: в архиве запись ещё
+ * одобрена либо ждёт «да», а на самом деле она вышла или снята до аварии. В обход таблицы
+ * переходов и только в сторону закрытия: выпустить что-либо эта функция не может.
+ */
+export async function forceFromCopy(id, to, fields = {}, by) {
+  if (!["published", "handed", "cancelled"].includes(to)) throw new RuleError(`по копии запись закрывается, а не переводится в «${to}»`);
+  return withLock(() => {
+    const was = get(id);
+    if (!was) throw new RuleError(`записи ${id} нет в очереди`);
+    if (isFinal(was.status) || was.status === to) return was;
+    return write({ ...was, ...fields, status: to }, by);
   });
 }
 

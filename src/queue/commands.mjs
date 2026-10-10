@@ -17,7 +17,7 @@ import { STATUS_TITLE, normalize, preview, validate } from "./format.mjs";
 import { record, rows as ledgerRows } from "./ledger.mjs";
 import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
 import { all, forceHanded, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
-import { clearHold, clearStop, isHeld, isTakeover, runnerBusy, setStop, stopState } from "./switch.mjs";
+import { ADOPTED_STOP, clearHold, clearStop, isHeld, isTakeover, runnerBusy, setStop, stopState } from "./switch.mjs";
 
 const byDue = (a, b) => dueAt(a) - dueAt(b);
 
@@ -341,6 +341,18 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           lines.push(now.human ? `перехват снят, но выпуск на сервере остаётся остановленным: его остановил человек${now.by ? ` (${now.by})` : ""}. Включает команда /start_release в рабочей группе` : "выпуск на сервере включён");
           lines.push(...await youtubeAfterSwitch());
           return { code: 0, lines };
+        }
+        if (isTakeover()) {
+          /* Команда с флагом --local на компьютере оператора: отменить возврат либо снять
+             свою остановку и вести расписание дальше. Слово человека, принятое с сервера,
+             она не снимает: иначе после оборванного возврата «стоп» клиента терялся. */
+          clearStop({ handback: true });
+          if (was.human && was.reason === ADOPTED_STOP && !args.force) {
+            return { code: 0, lines: [`возврат отменён, но выпуск остаётся остановленным: его остановил человек на сервере${was.by ? ` (${was.by})` : ""}. Включает его команда /start_release в рабочей группе, компьютер примет её при сверке. Снять остановку здесь, не дожидаясь: npm run queue -- resume --local --force`] };
+          }
+          clearStop();
+          clearHold();
+          return { code: 0, lines: ["выпуск на этом компьютере включён: перехват расписания продолжается"] };
         }
         // Остановку ради перехвата снимает только возврат: иначе сервер и компьютер
         // оператора выпускали бы одно и то же.

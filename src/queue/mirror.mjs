@@ -46,8 +46,8 @@ import { alert, resolve } from "../lib/notify.mjs";
 import { dueAt, mskDate, mskTime } from "../lib/time.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
 import { base, server } from "./remote.mjs";
-import { clearHold, clearStop, isTakeover, setStop } from "./switch.mjs";
-import { HANDBACK_STOP, HELD_BY, SYNC_BY, TAKEOVER_REASON, adoptServerState, holdFields, sayAdopted } from "./takeover.mjs";
+import { clearHold, clearStop, isTakeover, setStop, stopState } from "./switch.mjs";
+import { HELD_BY, SYNC_BY, TAKEOVER_REASON, adoptServerState, holdFields, sayAdopted } from "./takeover.mjs";
 
 const flag = (name) => process.argv.includes(`--${name}`);
 const mirrorDir = () => path.resolve(env("MIRROR_DIR", path.join(PROJECT_ROOT, "mirror")));
@@ -282,11 +282,12 @@ export async function handback({ waitMs = 120_000 } = {}) {
 
   const pulse = await server("pulse", {}, 15_000);
   if (pulse.code !== 0 || !pulse.data?.statuses) {
-    return { code: 2, lines: [...(pulse.lines || []), "сервер не готов принять расписание: возврат не начат, выпуск на этом компьютере продолжается"] };
+    return { code: 2, lines: [...(pulse.lines || []), stopState().stopped ? "сервер не готов принять расписание: возврат не начат. Выпуск на этом компьютере при этом стоит: его остановил прошлый заход возврата либо человек. Продолжить перехват: npm run queue -- resume --local" : "сервер не готов принять расписание: возврат не начат, выпуск на этом компьютере продолжается"] };
   }
   const remote = pulse.data.statuses;
 
-  setStop({ by: "возврат расписания", reason: HANDBACK_STOP });
+  // Своя отметка: слово человека, принятое с сервера, возврат не затирает.
+  setStop({ by: "возврат расписания", reason: "расписание возвращается серверу", handback: true });
   const release = await holdRunner(waitMs);
   if (!release) {
     return { code: 1, lines: ["на этом компьютере сейчас идёт проход выпуска: возврат не начат. Новый проход уже не начнётся (местный выпуск остановлен). Дождитесь конца идущего и повторите: npm run mirror -- --handback", "если возврат отменяется и расписание нужно вести дальше: npm run queue -- resume --local"] };

@@ -196,7 +196,7 @@ test("возврат: серверу передаётся вышедшее, па
   assert.match(broken.lines.join("\n"), /Выпуск на сервере НЕ включён/);
   assert.equal(existsSync(path.join(PC, "TAKEOVER.json")), true, "перехват не снят");
   assert.equal(await asServer(() => stopState().takeover), true, "сервер по-прежнему стоит");
-  assert.equal(asPc(() => stopState().human), true, "и компьютер на время возврата остановлен");
+  assert.equal(asPc(() => stopState().handback), true, "и компьютер на время возврата остановлен своей отметкой, слово человека не затёрто");
   assert.equal((await runOnce({ now: T("2030-03-15", "19:00", 6) })).stopped, true);
 
   net.budget = Infinity;
