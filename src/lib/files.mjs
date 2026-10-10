@@ -23,7 +23,11 @@ import { dataDir, wrongUser } from "./env.mjs";
 let foreign = null;
 function guard(file) {
   if (foreign === null) foreign = wrongUser();
-  if (foreign && path.resolve(file).startsWith(dataDir())) throw Object.assign(new Error(foreign), { code: "ENV" });
+  if (!foreign) return;
+  // Каталог сверяется целиком, а не по началу строки: соседний «…-data-old» заслон не задевает.
+  const dir = dataDir();
+  const full = path.resolve(file);
+  if (full === dir || full.startsWith(dir + path.sep)) throw Object.assign(new Error(foreign), { code: "ENV" });
 }
 
 /** Для тестов: подставить ответ «не тот пользователь»; null возвращает настоящую проверку. */

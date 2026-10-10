@@ -17,14 +17,19 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-/** Где искать файл окружения. Первый найденный побеждает, остальные не читаются. */
-const CANDIDATES = [
-  process.env.ZAVOD_ENV_FILE,
-  path.join(process.cwd(), ".env.local"),
-  path.join(ROOT, ".env.local"),
-  "/opt/ecopolis-data/.env",
-  "/opt/ecopolis-zavod/.env",
-].filter(Boolean);
+/*
+ * Где искать файл окружения. Первый найденный побеждает, остальные не читаются.
+ *
+ * ФАЙЛ, НАЗВАННЫЙ ЯВНО (ZAVOD_ENV_FILE), ЕДИНСТВЕННЫЙ. Нет его — окружение пустое, и дальше
+ * по списку загрузчик не идёт. Раньше шёл: тесты называют несуществующий файл, чтобы
+ * отгородиться от настоящих ключей, а на компьютере оператора загрузчик молча брал его
+ * боевой `.env.local`. С адресом сервера оттуда тесты выпуска работали бы как дубль
+ * расписания, а запись ключа из теста попала бы в боевой файл.
+ */
+const EXPLICIT = process.env.ZAVOD_ENV_FILE || "";
+const CANDIDATES = EXPLICIT
+  ? [EXPLICIT]
+  : [path.join(process.cwd(), ".env.local"), path.join(ROOT, ".env.local"), "/opt/ecopolis-data/.env", "/opt/ecopolis-zavod/.env"];
 
 let loaded = null;
 let loadedFrom = "";
@@ -109,6 +114,12 @@ export function list(name) {
 export function envFile() {
   load();
   return loadedFrom;
+}
+
+/** Куда записывать ключи: файл, названный явно; иначе прочитанный; иначе `.env.local` в корне проекта. */
+export function envTarget() {
+  load();
+  return EXPLICIT || loadedFrom || path.join(ROOT, ".env.local");
 }
 
 /** Корень проекта и каталог данных. Данные лежат отдельно от кода и переживают выкладку. */

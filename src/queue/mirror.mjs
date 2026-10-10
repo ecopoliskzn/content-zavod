@@ -298,10 +298,19 @@ export async function handback({ waitMs = 120_000 } = {}) {
     if (res.code !== 0) return "";
     if ((res.lines || []).some((l) => /без согласия/.test(l))) return " — БЕЗ СОГЛАСИЯ: на сервере запись была снята или ждала «да». В рабочую группу ушло сообщение";
     if ((res.lines || []).some((l) => /с прежним текстом/.test(l))) return " — ПРЕЖНИЙ ТЕКСТ: на сервере запись исправили и одобрили заново. В рабочую группу ушло сообщение";
+    const orphan = (res.lines || []).find((l) => /записи нет на сервере/.test(l));
+    if (orphan) return ` — НА СЕРВЕРЕ ЗАПИСИ НЕТ: он поднят из архива старше копии. ${orphan.split(". ").slice(1).join(". ")}`;
     return "";
   };
   let local = new Map();
   const hashOf = (id) => local.get(String(id))?.contentHash || "";
+  /* Краткие сведения о записи. Сервер, поднятый из архива, записи может не знать вовсе:
+     по этим полям он запишет публикацию в журнал, а не ответит отказом. */
+  const brief = (id, r = {}) => {
+    const e = local.get(String(id)) || {};
+    const [date = "", time = ""] = String(r.slot || "").split(" ");
+    return { channel: e.channel || r.channel || "", kind: e.kind || r.kind || "", name: e.name || r.name || "", material: e.material || r.material || "", date: e.date || date, time: e.time || time };
+  };
   try {
     // Читается под замком прохода: в эту минуту очередь на компьютере никто не меняет.
     local = latestById(dataPath("queue.jsonl"));
@@ -315,7 +324,7 @@ export async function handback({ waitMs = 120_000 } = {}) {
     }
 
     for (const r of published.values()) {
-      const res = await server("mark", { ref: r.id, link: r.link || "", externalId: r.externalId || "", at: r.at, note: "вышла при перехвате расписания", takeover: true, contentHash: hashOf(r.id) });
+      const res = await server("mark", { ref: r.id, link: r.link || "", externalId: r.externalId || "", at: r.at, note: "вышла при перехвате расписания", takeover: true, contentHash: hashOf(r.id), entry: brief(r.id, r) });
       row(res, `${r.channel} · ${r.name}${stray(res)}`);
       if (res.code === 0) sent.published++;
     }
@@ -324,7 +333,7 @@ export async function handback({ waitMs = 120_000 } = {}) {
     for (const r of handed.values()) {
       if (published.has(r.id)) continue;
       const e = local.get(String(r.id));
-      const res = await server("mark", { ref: r.id, handed: true, packageMessageId: e?.result?.packageMessageId || null, at: r.at, note: "пакет отправлен при перехвате расписания", takeover: true, contentHash: hashOf(r.id) });
+      const res = await server("mark", { ref: r.id, handed: true, packageMessageId: e?.result?.packageMessageId || null, at: r.at, note: "пакет отправлен при перехвате расписания", takeover: true, contentHash: hashOf(r.id), entry: brief(r.id, r) });
       row(res, `${r.channel} · ${r.name} (пакет на ручную выкладку)${stray(res)}`);
       if (res.code === 0) sent.handed++;
     }
@@ -334,7 +343,7 @@ export async function handback({ waitMs = 120_000 } = {}) {
       if (["running", "approved", "failed"].includes(e.status) && startedHere && !e.takeoverHold) {
         /* Компьютер запись начал и не закончил: часть ветки вышла либо отправка оборвалась.
            Сервер продолжит с этого места и со сверкой, а не с первой реплики. */
-        const res = await server("mark", { ref: e.id, partial: true, done: e.done || [], result: e.result || {}, takeover: true, contentHash: e.contentHash || "", note: "начата компьютером оператора при перехвате: продолжается со сверкой" });
+        const res = await server("mark", { ref: e.id, partial: true, done: e.done || [], result: e.result || {}, takeover: true, contentHash: e.contentHash || "", entry: brief(e.id), note: "начата компьютером оператора при перехвате: продолжается со сверкой" });
         row(res, `${e.channel} · ${e.name} (начата и не закончена, вышло частей: ${e.done?.length ?? 0})${stray(res)}`);
         if (res.code === 0) sent.partial++;
       } else if (e.status === "cancelled" && e.by !== SYNC_BY && Date.parse(e.at) >= Date.parse(state.since) && ["approved", "failed", "expired"].includes(remote[e.id])) {
@@ -346,6 +355,15 @@ export async function handback({ waitMs = 120_000 } = {}) {
         // Сервер начал запись до остановки: снять её программа не может, он её допустит.
         lines.push(`! ${e.channel} · ${e.name}: на компьютере снята, а на сервере она «выходит» с минуты до остановки. После возврата сервер сверится с площадкой и допустит её. Откройте площадку: вышедшее убирает владелец аккаунта`);
       }
+    }
+    /* Сервер поднят из архива старше копии: записей, поставленных после архива, на нём нет.
+       Вышедшее записано в его журнал выше. То, что ждало выхода либо согласования, вернуть
+       может только человек: согласие на эти записи пропало вместе с сервером. */
+    const lost = [...local.values()].filter((e) => remote[e.id] === undefined && !published.has(e.id) && !handed.has(e.id) && !(e.done?.length) && ["draft", "rework", "review", "approved", "failed", "expired"].includes(e.status));
+    if (lost.length) {
+      lines.push("", `на сервере нет записей, которые есть на компьютере: ${lost.length}. Так бывает, когда сервер поднят из архива старше копии.`);
+      for (const e of lost) lines.push(`  ${e.channel} · ${e.name} · ${e.date} ${e.time} · на компьютере «${STATUS_TITLE[e.status] || e.status}»`);
+      lines.push("поставьте их заново из файлов записей (npm run queue -- add --file=<файл>) и отправьте на согласование: согласие, данное до аварии, пропало вместе с сервером");
     }
     if (failed) {
       lines.push(`не передано записей: ${failed}. Выпуск на сервере НЕ включён: иначе они выйдут второй раз. Местный выпуск тоже остановлен. Повторите команду`);

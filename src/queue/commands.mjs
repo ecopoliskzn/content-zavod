@@ -358,6 +358,28 @@ export async function execute(cmd, args = {}, actor = "оператор") {
       case "mark": {
         // Запись вышла не через сервер (перехват расписания, ручная выкладка): сообщаем
         // серверу, иначе он выпустит её второй раз.
+        /* Сервер поднят из архива, который старше копии на компьютере оператора: записи,
+           поставленной после архива, на нём нет вовсе. Возврат расписания на такой записи
+           останавливался отказом и закончиться не мог. Публикация при этом была: она
+           пишется в журнал (по нему считаются потолки площадки и снимаются цифры). Сама
+           запись в очередь не возвращается: вышедшей она там не нужна, а одобренной её
+           делает только человек клиента. */
+        if (args.takeover && args.entry && !findAll(args.ref, args.channel).length) {
+          const lost = args.entry;
+          if (!channelNames().includes(String(lost.channel))) throw Object.assign(new Error(`записи «${args.ref}» в очереди нет, а площадка «${lost.channel}» заводу не известна`), { code: "RULE" });
+          const ghost = { id: String(args.ref), channel: String(lost.channel), kind: String(lost.kind || ""), name: String(lost.name || ""), material: String(lost.material || ""), date: String(lost.date || ""), time: String(lost.time || "") };
+          const status = args.partial ? "" : args.handed ? "handed" : "published";
+          if (!status) {
+            lines.push(`записи нет на сервере: ${ghost.channel} · ${ghost.name}. Она начата на компьютере оператора, и продолжить её серверу нечем: хвост дописывается руками`);
+            return { code: 0, lines };
+          }
+          // Повтор возврата вторую строку не пишет.
+          if (!ledgerRows().some((r) => r.id === ghost.id && r.status === status && r.orphan)) {
+            record(ghost, status, { at: args.at || new Date().toISOString(), by: actor, orphan: true, ...(status === "published" ? { externalId: args.externalId || "", link: args.link || "" } : {}) });
+          }
+          lines.push(`записи нет на сервере: ${ghost.channel} · ${ghost.name}. ${status === "handed" ? "Пакет на ручную выкладку записан" : "Публикация записана"} в журнал`);
+          return { code: 0, lines };
+        }
         const e = find(args.ref, args.channel);
         const at = args.at || new Date().toISOString();
         const title = channelCfg(e.channel).title;

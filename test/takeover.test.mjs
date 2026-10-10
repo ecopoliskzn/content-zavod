@@ -355,6 +355,53 @@ test("запись исправили и одобрили заново посл�
   assert.deepEqual(calls.map((c) => `${c.name} · ${c.where}`), ["p-ispravyat · сервер"]);
 });
 
+test("сервер поднят из архива старше копии: возврат не застревает, вышедшее записано в журнал, пропавшее названо", async () => {
+  await asServer(async () => {
+    ids.x = (await approved(thread("x-vyshla-bez-servera", "2030-06-03", "14:30"))).id;
+    ids.z = (await approved({ channel: "dzen", kind: "article", name: "z-paket-bez-servera", material: "blog:primer", date: "2030-06-06", time: "11:00", title: "Как принять покрытие у подрядчика", text: "Приёмку покрытия ведут по акту, а не на глаз. ".repeat(20) })).id;
+    ids.v = (await approved(thread("v-zhdala-vyhoda", "2030-06-10", "14:30"))).id;
+  });
+  onPc();
+  assert.equal((await pull()).ok, true);
+
+  // Сервер пропал и поднят заново из вчерашнего архива: трёх свежих записей на нём нет.
+  const queueFile = path.join(SERVER, "queue.jsonl");
+  const fresh = [ids.x, ids.z, ids.v];
+  const kept = readFileSync(queueFile, "utf8").split("\n").filter((l) => l.trim() && !fresh.includes(JSON.parse(l).id));
+  writeFileSync(queueFile, kept.join("\n") + "\n");
+
+  net.mode = "down";
+  const took = await withFlags(["yes", "server-stopped"], () => takeover({ now: T("2030-06-03", "14:00") }));
+  assert.equal(took.code, 0, took.lines.join("\n"));
+  assert.deepEqual((await runOnce({ now: T("2030-06-03", "14:30", 1) })).published, ["x-vyshla-bez-servera"]);
+  assert.deepEqual((await runOnce({ now: T("2030-06-06", "11:00", 1) })).handed, ["z-paket-bez-servera"]);
+
+  net.mode = "up";
+  const done = await handback({ waitMs: 200 });
+  assert.equal(done.code, 0, done.lines.join("\n"));
+  const text = done.lines.join("\n");
+  assert.match(text, /x-vyshla-bez-servera — НА СЕРВЕРЕ ЗАПИСИ НЕТ.*Публикация записана в журнал/);
+  assert.match(text, /z-paket-bez-servera \(пакет на ручную выкладку\) — НА СЕРВЕРЕ ЗАПИСИ НЕТ.*Пакет на ручную выкладку записан в журнал/);
+  // Запись, которая ждала выхода, вернуть может только человек: согласие пропало вместе с сервером.
+  assert.match(text, /на сервере нет записей, которые есть на компьютере: 1/);
+  assert.match(text, /v-zhdala-vyhoda/);
+  assert.equal(existsSync(path.join(PC, "TAKEOVER.json")), false);
+
+  await asServer(async () => {
+    assert.equal(stopState().stopped, false);
+    assert.equal(store.get(ids.x), null, "вышедшая запись в очередь не возвращается, одобренная тем более");
+    const rows = ledger.rows().filter((r) => r.orphan);
+    assert.deepEqual(rows.map((r) => `${r.name} · ${r.status}`).sort(), ["x-vyshla-bez-servera · published", "z-paket-bez-servera · handed"]);
+    assert.match(rows.find((r) => r.status === "published").link, /x-vyshla-bez-servera/);
+    // Повтор той же отметки строку не задваивает.
+    const again = await execute("mark", { ref: ids.x, link: "https://x", takeover: true, entry: { channel: "threads", kind: "thread", name: "x-vyshla-bez-servera" } }, "оператор (дубль)");
+    assert.equal(again.code, 0);
+    assert.equal(ledger.rows().filter((r) => r.id === ids.x && r.orphan).length, 1);
+    // Без сведений о записи команда по-прежнему отказывает по правилу: руками так не отмечают.
+    assert.equal((await execute("mark", { ref: "нет-такой", link: "https://x" }, "оператор")).code, 1);
+  });
+});
+
 test("по последней копии выпуск остановлен человеком: при молчащем сервере перехвата нет даже с подтверждением", async () => {
   await asServer(() => execute("pause", { reason: "ждём решения клиента" }, "оператор"));
   onPc();

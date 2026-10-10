@@ -102,3 +102,24 @@ test("приём ключей: строки вписаны в файл окру�
   assert.doesNotMatch(text, new RegExp(IG), "старое значение заменено, а не дописано вторым");
   assert.equal((text.match(/^IG_TOKEN=/gm) || []).length, 1);
 });
+
+test("файл окружения, названный явно, единственный: если его нет, соседний .env.local не читается и не пишется", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { pathToFileURL, fileURLToPath } = await import("node:url");
+  const dir = mkdtempSync(path.join(os.tmpdir(), "zavod-envdir-"));
+  // Так выглядит компьютер оператора: в каталоге запуска лежит боевой файл с ключами.
+  writeFileSync(path.join(dir, ".env.local"), "PROBE_KEY=из-боевого-файла\n");
+  const envModule = pathToFileURL(path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "src", "lib", "env.mjs")).href;
+  const code = `import { env, envTarget } from ${JSON.stringify(envModule)}; console.log(JSON.stringify([env("PROBE_KEY"), envTarget()]));`;
+  const base = { ...process.env };
+  delete base.ZAVOD_ENV_FILE;
+  delete base.PROBE_KEY;
+  const run = (extra) => JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", code], { cwd: dir, env: { ...base, ...extra }, encoding: "utf8" }));
+  // Тест назвал несуществующий файл, чтобы отгородиться от настоящих ключей.
+  const missing = path.join(dir, "нет-такого.env");
+  assert.deepEqual(run({ ZAVOD_ENV_FILE: missing }), ["", missing]);
+  // Без явного файла всё по-прежнему: читается файл из каталога запуска, в него же и пишется.
+  const [value, target] = run({});
+  assert.equal(value, "из-боевого-файла");
+  assert.equal(path.basename(target), ".env.local");
+});
