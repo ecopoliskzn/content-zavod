@@ -125,6 +125,17 @@ async function redraw(entry, footer, buttons) {
 }
 
 /**
+ * Текст записи изменили после отправки карточки: прежняя карточка больше не действует.
+ * С неё снимаются кнопки и дописывается, что решение ждёт новой. Нажатие под ней бот и
+ * так не примет; здесь убирается сама возможность перепутать.
+ * @param {object} before запись, какой она была до правки (с номером своей карточки)
+ */
+export async function retireCard(before) {
+  if (!before?.approval?.card?.messageId) return;
+  await redraw(before, "✏️ Текст записи изменён: эта карточка больше не действует. Новая придёт следом в эту тему.", null).catch((e) => console.error("[approval] прежняя карточка не обновилась:", e?.message || e));
+}
+
+/**
  * Нажатие кнопки под карточкой. Возвращает true, если нажатие наше (q:…).
  * @param {{ id: string, data: string, from: object, message?: object }} cb
  */
@@ -140,6 +151,18 @@ export async function handleCallback(cb) {
   if (!entry) { await answerCallback(cb.id, "Этой записи уже нет в очереди.", true); return true; }
   const name = who(cb.from);
   const actor = `tg:${cb.from.id}`;
+
+  /* «Да» относится к тексту, который человек видит над кнопкой. Запись могли поправить и
+     отправить заново: в теме тогда две карточки, и под первой висит прежний текст. Нажатие
+     «Одобрить» под ней одобрило бы текст, которого утверждающий не читал. Поэтому решение
+     о тексте принимается только под текущей карточкой записи. «Снять» и «Отозвать» это
+     правило не трогает: они ничего не выпускают, а «Снять» стоит ещё и под тревогами. */
+  const pressed = Number(cb.message?.message_id) || 0;
+  const card = Number(entry.approval?.card?.messageId) || 0;
+  if ((action === "ok" || action === "fix") && pressed && card && pressed !== card) {
+    await answerCallback(cb.id, "Эта карточка устарела: текст записи с тех пор изменили. Решение принимается под новой карточкой, она ниже в этой теме.", true);
+    return true;
+  }
 
   try {
     if (action === "ok") {

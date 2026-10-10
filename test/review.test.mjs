@@ -418,7 +418,7 @@ test("сверка при перехвате: сервер отдаёт руби
   await store.transition(entry.id, "approved", { done: ["p1"], result: { link: "https://www.threads.net/@eco/post/p1" } }, "выпуск");
   const pulse = await execute("pulse", {}, "оператор (дубль)");
   assert.equal(pulse.code, 0);
-  assert.deepEqual(Object.keys(pulse.data).sort(), ["busy", "hashes", "held", "progress", "statuses", "stop"]);
+  assert.deepEqual(Object.keys(pulse.data).sort(), ["busy", "hashes", "held", "progress", "restored", "statuses", "stop"]);
   assert.equal(pulse.data.hashes[entry.id], store.get(entry.id).contentHash, "отпечаток одобренного текста: по нему компьютер видит правку после копии");
   assert.equal(pulse.data.statuses[entry.id], "approved");
   assert.deepEqual(pulse.data.progress[entry.id], { done: ["p1"], attempts: 1, result: { link: "https://www.threads.net/@eco/post/p1" } });
@@ -623,4 +623,28 @@ test("запись в каталог данных под чужим пользо
   } finally {
     files._setForeign(null);
   }
+});
+
+/* ── Рубильник: файл есть, значит, выпуск стоит ──────────────────────────── */
+
+test("файл STOP, в котором не разобрать отметок, всё равно останавливает выпуск", () => {
+  const file = path.join(DATA, "STOP");
+  clearStop({ all: true });
+  // Пустой, «{}», «[]», слово, положенное руками: всё это «стоп» человека.
+  for (const text of ["", "{}", "[]", "null", "стоп", "{\"comment\":123}"]) {
+    writeFileSync(file, text);
+    assert.deepEqual([stopState().stopped, stopState().human, stopState().takeover], [true, true, false], `содержимое: ${JSON.stringify(text)}`);
+  }
+  // Файл прежнего вида: одна отметка с причиной и признаком перехвата.
+  writeFileSync(file, JSON.stringify({ at: "2026-10-10T10:00:00Z", by: "Анна", reason: "команда /stop_release", takeover: false }));
+  assert.deepEqual([stopState().human, stopState().takeover, stopState().by], [true, false, "Анна"]);
+  writeFileSync(file, JSON.stringify({ at: "2026-10-10T10:00:00Z", by: "оператор (дубль)", reason: "перехват", takeover: true }));
+  assert.deepEqual([stopState().human, stopState().takeover], [false, true]);
+  // Третья отметка, возврата, живёт рядом с двумя другими и снимается отдельно.
+  clearStop({ all: true });
+  setStop({ by: "Анна", reason: "команда /stop_release" });
+  setStop({ by: "возврат расписания", reason: "расписание возвращается серверу", handback: true });
+  assert.deepEqual([stopState().human, stopState().handback, stopState().by], [true, true, "Анна"]);
+  assert.deepEqual([clearStop({ handback: true }).human, stopState().handback], [true, false]);
+  clearStop({ all: true });
 });

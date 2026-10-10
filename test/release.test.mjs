@@ -400,3 +400,37 @@ test("ролик на другой площадке ждёт премьеры н
   assert.equal(store.get(rt.id).status, "published");
   assert.equal(rutubeCalls, 1);
 });
+
+test("«Одобрить» под устаревшей карточкой не одобряет текст, которого утверждающий не читал", async () => {
+  const { execute } = await import("../src/queue/commands.mjs");
+  const raw = thread("kartochka-dvazhdy", { date: "2030-04-30", time: "14:30" });
+  const { entry } = await store.put(raw, "S1");
+  const first = await submit(entry.id, "S1");
+  const oldCard = first.approval.card.messageId;
+  // Оператор поправил текст, пока запись ждала «да», и отправил заново: в теме две карточки.
+  sent.length = 0;
+  const edited = await execute("add", { entries: [{ ...raw, posts: ["«kartochka-dvazhdy»: второй текст, его под первой карточкой не было.", "Причина нашлась в акте: толщину никто не мерил."] }] }, "S1");
+  assert.match(edited.lines.join("\n"), /возвращена в черновики/);
+  assert.match(edited.lines.join("\n"), /прежняя карточка в рабочей группе снята/);
+  const retired = sent.find((s) => s.method === "editMessageText" && s.body.message_id === oldCard);
+  assert.ok(retired, "с прежней карточки сняты кнопки");
+  assert.match(retired.body.text, /эта карточка больше не действует/);
+  assert.deepEqual(retired.body.reply_markup, { inline_keyboard: [] });
+  const second = await submit(entry.id, "S1");
+  const newCard = second.approval.card.messageId;
+  assert.notEqual(newCard, oldCard);
+
+  const tap = (data, messageId) => handleCallback({ id: "cb", data, from: { id: 42, first_name: "Анна" }, message: { message_id: messageId, chat: { id: -1001 } } });
+  sent.length = 0;
+  await tap(`q:ok:${entry.id}`, oldCard);
+  assert.equal(store.get(entry.id).status, "review", "нажатие под первой карточкой согласием не стало");
+  assert.match(sent.find((s) => s.method === "answerCallbackQuery").body.text, /карточка устарела/);
+  await tap(`q:fix:${entry.id}`, oldCard);
+  assert.equal(store.get(entry.id).fixAsked, undefined, "и просьбой о правке тоже");
+  // Под текущей карточкой решение принимается как обычно.
+  await tap(`q:ok:${entry.id}`, newCard);
+  assert.equal(store.get(entry.id).status, "approved");
+  // «Снять» работает из любого сообщения: оно ничего не выпускает и стоит под тревогами.
+  await tap(`q:no:${entry.id}`, oldCard);
+  assert.equal(store.get(entry.id).status, "cancelled");
+});

@@ -111,6 +111,11 @@ export function clearHold() {
  */
 export const isRestored = () => existsSync(dataPath("RESTORED"));
 
+/** Поставить отметку «расписание старше копии»: выпуск встаёт до сверки. */
+export function setRestored(info = {}) {
+  writeAtomic(dataPath("RESTORED"), JSON.stringify({ at: new Date().toISOString(), ...info }));
+}
+
 export function clearRestored() {
   if (existsSync(dataPath("RESTORED"))) rmSync(dataPath("RESTORED"));
 }

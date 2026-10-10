@@ -98,12 +98,32 @@ export function renderSchedule(entries, now = Date.now(), titles = {}, meta = {}
   return L.join("\n") + "\n";
 }
 
-/** Снять копию. */
-export async function pull() {
+/** Насколько свежо состояние: время последней правки очереди либо журнала. Чистая функция. */
+export function freshness(queue = [], ledger = []) {
+  let max = 0;
+  for (const r of [...queue, ...ledger]) { const t = Date.parse(r?.at); if (t > max) max = t; }
+  return max;
+}
+
+/** Снять копию. Допуск на часы нужен только тестам: в жизни архив старше копии на часы. */
+export async function pull({ toleranceMs = 60_000 } = {}) {
   const out = await server("export", {}, 60_000);
   if (out.code !== 0 || !out.data) return { ok: false, error: (out.lines || []).join("; ") || "сервер не отдал копию" };
   const d = out.data;
   mkdirSync(mirrorDir(), { recursive: true });
+  /* КОПИЮ НЕЛЬЗЯ ЗАТЕРЕТЬ БОЛЕЕ СТАРОЙ. Сервер, восстановленный из архива либо из снимка
+     диска, отдаёт расписание суточной давности. Если принять его как обычную копию,
+     пропадёт единственное место, где записано, что вышло и что сняли после архива.
+     Поэтому снимок старше копии откладывается в сторону, а копия остаётся как была. */
+  const old = existsSync(mirrorPath("queue.json")) ? { queue: readJson(mirrorPath("queue.json"), []) || [], ledger: readJson(mirrorPath("ledger.json"), []) || [] } : null;
+  if (d.restored || (old && freshness(d.queue, d.ledger) < freshness(old.queue, old.ledger) - toleranceMs)) {
+    mkdirSync(mirrorPath("rollback"), { recursive: true });
+    writeAtomic(mirrorPath("rollback", "queue.json"), JSON.stringify(d.queue, null, 1));
+    writeAtomic(mirrorPath("rollback", "ledger.json"), JSON.stringify(d.ledger, null, 1));
+    const st = readJson(mirrorPath("state.json"), {}) || {};
+    writeJson(mirrorPath("state.json"), { ...st, rolledBackAt: st.rolledBackAt || new Date().toISOString(), serverRestored: Boolean(d.restored) });
+    return { ok: false, rolledBack: true, error: "сервер отдал расписание старше копии: похоже, он восстановлен из архива либо из снимка диска. Копия не тронута. Сверьте сервер с ней: npm run mirror -- --reconcile" };
+  }
   writeAtomic(mirrorPath("queue.json"), JSON.stringify(d.queue, null, 1));
   writeAtomic(mirrorPath("ledger.json"), JSON.stringify(d.ledger, null, 1));
   // Остальные части снимка: сырьё для сессий Codex и для витрины Obsidian. Персональных
@@ -144,6 +164,13 @@ export async function watch() {
   if (!verdict.key) return { ok: true };
   await alert(verdict.key, verdict.text, { action: "перешлите это сообщение оператору. Если сервер не поднимется за час, оператор переведёт расписание на свой компьютер" });
   return { ok: false, ...verdict };
+}
+
+/** Сервер отдал расписание старше копии: остановить выпуск на нём до сверки и сказать людям. */
+export async function rolledBack() {
+  // Команда только останавливает. Если отметка из архива на сервере уже стоит, она ничего не меняет.
+  await server("rollback", { reason: "расписание на сервере старше копии на компьютере оператора" }, 15_000);
+  await alert("server:rolledback", "Сервер отдал расписание старше, чем копия на компьютере оператора: похоже, он восстановлен из архива либо из снимка диска. Что вышло и что сняли после архива, он не знает. Выпуск на нём остановлен до сверки с копией.", { action: "перешлите это сообщение оператору. Его команда: npm run mirror -- --reconcile. Кнопку «Продолжить выпуск» до этого не нажимать" });
 }
 
 /**
@@ -191,7 +218,11 @@ export async function takeover({ now = Date.now() } = {}) {
   }
   const serverPaused = paused.code === 0;
   if (!serverPaused) {
-    if (before.stoppedByHuman) return { code: 1, lines: [`сервер не ответил, а по последней копии (${before.pulledAt ? stamp(before.pulledAt) : "время неизвестно"}) выпуск остановлен человеком. Перехватывать нечего: расписание стоит по его решению. Включает его команда /start_release в рабочей группе, когда сервер вернётся`] };
+    /* По копии выпуск остановил человек. Сервер лежит, и команду /start_release принять
+       некому: если утверждающий разрешил запуск словами в группе, оператор подтверждает
+       это флагом. Без подтверждения перехвата нет. */
+    if (before.stoppedByHuman && !flag("start-confirmed")) return { code: 1, lines: [`сервер не ответил, а по последней копии (${before.pulledAt ? stamp(before.pulledAt) : "время неизвестно"}) выпуск остановлен человеком. Перехватывать нечего: расписание стоит по его решению. Включает его команда /start_release в рабочей группе, когда сервер вернётся`, "утверждающий уже разрешил запуск словами в рабочей группе, а сервер лежит: повторите с флагом --start-confirmed"] };
+    if (before.stoppedByHuman) lines.push("по последней копии выпуск был остановлен человеком. Запуск подтверждён оператором со слов утверждающего (--start-confirmed)");
     if (!flag("server-stopped")) return { code: 1, lines: SERVER_STOP_HOWTO };
     lines.push("сервер не ответил. Выпуск на нём остановлен со слов оператора (--server-stopped)");
   } else {
@@ -211,7 +242,8 @@ export async function takeover({ now = Date.now() } = {}) {
   const risky = atRisk(copy, now);
   const riskyIds = new Set(risky.map((e) => e.id));
   const note = "слот наступил до перехвата: сервер мог выпустить запись перед остановкой. Проверьте площадку глазами";
-  const entries = copy.map((e) => (riskyIds.has(e.id) ? { ...e, ...holdFields(note), at: since, by: HELD_BY } : e));
+  // heldFrom и heldAt: какой запись была в копии. По ним возврат расскажет серверу из архива, что она была начата.
+  const entries = copy.map((e) => (riskyIds.has(e.id) ? { ...e, ...holdFields(note), heldFrom: e.status, heldAt: e.at, at: since, by: HELD_BY } : e));
   writeAtomic(local, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
   const ledger = existsSync(mirrorPath("ledger.json")) ? JSON.parse(readFileSync(mirrorPath("ledger.json"), "utf8")) : [];
   writeAtomic(dataPath("ledger.jsonl"), ledger.map((r) => JSON.stringify(r)).join("\n") + (ledger.length ? "\n" : ""));
@@ -262,6 +294,13 @@ async function holdRunner(waitMs) {
   }
 }
 
+/** Что копия знает о записи: ровно то, что нужно серверу для сверки. Текста записи здесь нет. */
+const known = (e) => ({
+  id: e.id, status: e.status, at: e.at, contentHash: e.contentHash || "", done: e.done || [], attempts: e.attempts ?? 0, result: e.result || null,
+  publishedAt: e.publishedAt || "", handedAt: e.handedAt || "", note: e.note || "",
+  channel: e.channel, kind: e.kind, name: e.name, material: e.material || "", date: e.date, time: e.time,
+});
+
 /**
  * Возврат: сервер узнаёт, что вышло без него, и снова ведёт расписание.
  *
@@ -271,7 +310,10 @@ async function holdRunner(waitMs) {
  *      запись, вышедшая в эти секунды, серверу не передалась бы и вышла бы второй раз;
  *   3. серверу передаётся всё, что сделал компьютер: вышедшее, пакеты на ручную выкладку,
  *      начатое и не законченное, снятое оператором;
- *   4. только после этого на сервере снимается отметка перехвата. Остановку человеком она
+ *   4. сервер сверяется с тем, что копия знала до перехвата. Для живого сервера это пустой
+ *      шаг. Сервер, поднятый из архива, знает меньше копии: без сверки он выпустил бы
+ *      второй раз то, что вышло после архива, и выпустил бы снятое;
+ *   5. только после этого на сервере снимается отметка перехвата. Остановку человеком она
  *      не снимает.
  * Команда повторяема: сервер одну и ту же запись дважды в журнал не пишет.
  */
@@ -341,18 +383,25 @@ export async function handback({ waitMs = 120_000 } = {}) {
     for (const e of local.values()) {
       if (published.has(e.id) || handed.has(e.id)) continue;
       const startedHere = e.startedAt && Date.parse(e.startedAt) >= Date.parse(state.since);
-      if (["running", "approved", "failed"].includes(e.status) && startedHere && !e.takeoverHold) {
+      const fresh = Date.parse(e.at) >= Date.parse(state.since);
+      /* Сверка сняла запись уже после того, как с компьютера вышла её часть (согласие
+         отозвали либо текст исправили в те минуты, пока ветка ждала повтора). Серверу о
+         вышедшей части нужно сказать: иначе после нового «да» он выпустит ветку с первой
+         реплики, а вышедшее начало останется на площадке, и никто о нём не узнает. */
+      const begun = (e.done?.length ?? 0) > 0 || Boolean(e.result?.tgSending);
+      const droppedBySync = e.status === "cancelled" && e.by === SYNC_BY && begun;
+      if (startedHere && !e.takeoverHold && (["running", "approved", "failed"].includes(e.status) || droppedBySync)) {
         /* Компьютер запись начал и не закончил: часть ветки вышла либо отправка оборвалась.
            Сервер продолжит с этого места и со сверкой, а не с первой реплики. */
         const res = await server("mark", { ref: e.id, partial: true, done: e.done || [], result: e.result || {}, takeover: true, contentHash: e.contentHash || "", entry: brief(e.id), note: "начата компьютером оператора при перехвате: продолжается со сверкой" });
         row(res, `${e.channel} · ${e.name} (начата и не закончена, вышло частей: ${e.done?.length ?? 0})${stray(res)}`);
         if (res.code === 0) sent.partial++;
-      } else if (e.status === "cancelled" && e.by !== SYNC_BY && Date.parse(e.at) >= Date.parse(state.since) && ["approved", "failed", "expired"].includes(remote[e.id])) {
+      } else if (e.status === "cancelled" && e.by !== SYNC_BY && fresh && ["approved", "failed", "expired"].includes(remote[e.id])) {
         // Оператор снял запись на компьютере по просьбе утверждающего: сервер о снятии не знает.
         const res = await server("cancel", { ref: e.id, reason: `снята на компьютере оператора при перехвате расписания${e.note ? `: ${String(e.note).slice(0, 200)}` : ""}` });
         row(res, `${e.channel} · ${e.name} (снята при перехвате)`);
         if (res.code === 0) sent.cancelled++;
-      } else if (e.status === "cancelled" && e.by !== SYNC_BY && Date.parse(e.at) >= Date.parse(state.since) && remote[e.id] === "running") {
+      } else if (e.status === "cancelled" && e.by !== SYNC_BY && fresh && remote[e.id] === "running") {
         // Сервер начал запись до остановки: снять её программа не может, он её допустит.
         lines.push(`! ${e.channel} · ${e.name}: на компьютере снята, а на сервере она «выходит» с минуты до остановки. После возврата сервер сверится с площадкой и допустит её. Откройте площадку: вышедшее убирает владелец аккаунта`);
       }
@@ -371,9 +420,43 @@ export async function handback({ waitMs = 120_000 } = {}) {
       lines.push("если сервер снова лёг и расписание нужно вести дальше: npm run queue -- resume --local");
       return { code: 2, lines };
     }
+
+    /* Сверка с копией: то, что копия знала до перехвата. Записи, которых компьютер не
+       касался, идут как есть; записи, придержанные перехватом и так и не разобранные,
+       идут в том виде, в каком их знала копия (сервер мог начать их перед остановкой). */
+    const since = Date.parse(state.since);
+    const fromCopy = [];
+    for (const e of local.values()) {
+      if (Date.parse(e.at) < since) fromCopy.push(known(e));
+      else if (e.status === "failed" && e.takeoverHold && e.heldFrom && e.heldAt) fromCopy.push(known({ ...e, status: e.heldFrom, at: e.heldAt }));
+    }
+    const rec = await server("reconcile", { entries: fromCopy, copyAt: state.copyFrom || "" }, 60_000);
+    if (rec.code !== 0) {
+      lines.push(`сверка сервера с копией расписания не прошла: ${(rec.lines || []).join("; ")}. Выпуск на сервере НЕ включён. Повторите команду`);
+      return { code: 2, lines };
+    }
+    const d = rec.data || {};
+    const say = (title, list) => { if (list?.length) lines.push(`по копии расписания ${title}: ${list.join(", ")}`); };
+    say("отмечены вышедшими", d.closed);
+    say("отмечены переданными на ручную выкладку", d.handed);
+    say("сняты", d.cancelled);
+    say("лишились согласия и ждут нового «да»", d.withdrawn);
+    say("получили отметку о начатой отправке", d.progressed);
+    say("записаны в журнал сервера", d.logged);
+
     // handback: остановку ради перехвата сервер снимает только этой командой.
     const resumed = await server("resume", { handback: true });
     if (resumed.code !== 0) {
+      if (resumed.network) {
+        /* Ответ на последний запрос не пришёл. Сервер мог его исполнить и уже выпускает:
+           считать, что он стоит, нельзя. Выпуск на компьютере не продолжится, пока сервер
+           не подтвердит отметку перехвата либо оператор не скажет, что сервер остановлен. */
+        writeJson(dataPath("TAKEOVER.json"), { ...state, serverMayRun: true });
+        lines.push("всё передано, но ответ на последний запрос не пришёл: неизвестно, включил ли сервер выпуск. Считайте, что включил. Выпуск на этом компьютере остановлен и сам не продолжится");
+        lines.push("связь вернулась: повторите npm run mirror -- --handback, команда закончит возврат");
+        lines.push("сервер лежит либо выпуск на нём остановлен, а расписание нужно вести дальше: npm run queue -- resume --local --server-stopped");
+        return { code: 2, lines };
+      }
       lines.push(`всё передано, но отметка перехвата на сервере не снята: ${(resumed.lines || []).join("; ")}. Повторите команду`);
       return { code: 2, lines };
     }
@@ -387,18 +470,43 @@ export async function handback({ waitMs = 120_000 } = {}) {
   }
 }
 
+/**
+ * Сверить сервер с копией расписания. Нужна после восстановления сервера из архива либо
+ * из снимка диска, когда расписание компьютер не перехватывал.
+ *
+ * Архив снимается раз в сутки, копия раз в четверть часа. Сервер из архива не знает, что
+ * вышло, что сняли и чему отозвали согласие после архива, и выпустил бы всё это заново.
+ * Сверка только закрывает и придерживает: согласие из копии она не восстанавливает.
+ */
+export async function reconcile() {
+  if (isTakeover()) return { code: 1, lines: ["расписание сейчас ведёт этот компьютер: сверку с копией делает возврат, npm run mirror -- --handback"] };
+  if (!existsSync(mirrorPath("queue.json"))) return { code: 2, lines: ["копии расписания нет (mirror/queue.json): сверять не с чем"] };
+  const copy = readJson(mirrorPath("queue.json"), []) || [];
+  const state = readJson(mirrorPath("state.json"), {}) || {};
+  const res = await server("reconcile", { entries: copy.map(known), stoppedByHuman: Boolean(state.stoppedByHuman), copyAt: state.pulledAt || "" }, 60_000);
+  if (res.code !== 0) return { code: res.code || 2, lines: [...(res.lines || []), "сверка не прошла: выпуск на сервере остаётся как был. Копия не тронута"] };
+  // Сверка прошла: следующая копия снимается обычным порядком.
+  const { rolledBackAt, serverRestored, ...rest } = state;
+  writeJson(mirrorPath("state.json"), rest);
+  rmSync(mirrorPath("rollback"), { recursive: true, force: true });
+  resolve("server:rolledback");
+  return { code: 0, lines: [`сервер сверен с копией расписания${state.pulledAt ? ` от ${stamp(state.pulledAt)}` : ""}`, ...(res.lines || []), "снимите свежую копию: npm run mirror"] };
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   let code = 0;
   try {
     if (flag("takeover")) { const r = await takeover(); r.lines.forEach((l) => console.log(l)); code = r.code; }
     else if (flag("handback")) { const r = await handback(); r.lines.forEach((l) => console.log(l)); code = r.code; }
+    else if (flag("reconcile")) { const r = await reconcile(); r.lines.forEach((l) => console.log(l)); code = r.code; }
     else if (flag("watch")) {
       const copy = await pull();
       // Когда сервер перестал отдавать копию: по этой отметке перехват называет слепое окно.
-      if (!copy.ok) { const st = readJson(mirrorPath("state.json"), null); if (st && !st.failSince) writeJson(mirrorPath("state.json"), { ...st, failSince: new Date().toISOString() }); }
+      if (!copy.ok && !copy.rolledBack) { const st = readJson(mirrorPath("state.json"), null); if (st && !st.failSince) writeJson(mirrorPath("state.json"), { ...st, failSince: new Date().toISOString() }); }
+      if (copy.rolledBack) await rolledBack();
       const r = await watch();
       if (!r.ok || !copy.ok) console.log(`${new Date().toISOString()} сторож: ${r.ok ? "сервер жив" : r.text}${copy.ok ? "" : `; копия не снята: ${copy.error}`}`);
-      code = r.ok ? 0 : 1;
+      code = r.ok && !copy.rolledBack ? 0 : 1;
     } else {
       const r = await pull();
       if (r.ok) console.log(`${new Date().toISOString()} копия снята: записей ${r.entries}${r.stopped ? ", выпуск на сервере остановлен" : ""}${r.held ? ", выпуск ждёт кнопки после простоя" : ""}`);

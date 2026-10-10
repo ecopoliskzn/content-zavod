@@ -11,7 +11,7 @@ import { STATUS_TITLE, preview } from "../queue/format.mjs";
 import { record } from "../queue/ledger.mjs";
 import { digest, morning } from "../queue/runner.mjs";
 import { all, get, patch, transition } from "../queue/store.mjs";
-import { clearHold, clearStop, isHeld, setStop, stopState } from "../queue/switch.mjs";
+import { clearHold, clearStop, isHeld, isRestored, runnerBusy, setStop, stopState } from "../queue/switch.mjs";
 import { setStatus as setNewsStatus } from "../news/inbox.mjs";
 import { setStatus as setCommentStatus } from "../comments/collect.mjs";
 import { sayAll, syncAll } from "../video/schedule.mjs";
@@ -25,6 +25,7 @@ async function youtubeAfterSwitch() {
 }
 
 const TAKEOVER_NOTE = "Расписание сейчас ведёт компьютер оператора: сервер остановлен на время аварии. Включит его оператор, когда вернёт серверу вышедшее. Команда /start_release сейчас дала бы двух выпускающих и задвоенные посты.";
+const RESTORED_NOTE = "Расписание в архиве старше настоящего: что вышло и что сняли после архива, сервер не знает. Выпуск начнётся, когда оператор сверит сервер с копией расписания. Кнопка «Продолжить выпуск» до этого не действует.";
 // Компьютер оператора спрашивает сервер перед каждым проходом, раз в пять минут.
 const TAKEOVER_LAG = "Расписание сейчас ведёт компьютер оператора. О вашей команде он узнаёт при сверке с сервером, в пределах пяти минут: запись, чей слот наступает прямо сейчас, ещё может выйти.";
 
@@ -60,7 +61,9 @@ export async function handleCommand(message) {
       // Состояние рубильников стоит первой строкой: «почему ничего не выходит» — самый
       // частый вопрос, и ответ на него должен быть виден с телефона.
       const stop = stopState();
-      const state = stop.human && stop.takeover
+      const state = isRestored()
+        ? `🧯 <b>Сервер восстановлен из архива.</b> ${RESTORED_NOTE}\n\n`
+        : stop.human && stop.takeover
         ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release. Расписание при этом перехвачено компьютером оператора: после команды выпуск продолжит он.\n\n"
         : stop.takeover
           ? `⏸ <b>Выпуск на сервере остановлен.</b> ${TAKEOVER_NOTE}\n\n`
@@ -89,7 +92,9 @@ export async function handleCommand(message) {
       // Ролики YouTube с датой выхода сервер не выпускает: их открывает сам YouTube.
       // Поэтому остановка снимает с них срок, и «ничего не выйдет» говорится по результату.
       const yt = await youtubeAfterSwitch();
-      const said = taken ? `${TAKEOVER_LAG} Включает выпуск команда /start_release.` : "Сервер ничего не выпустит, пока не придёт команда /start_release.";
+      // Отправку, которая идёт в эту самую минуту, оборвать нельзя: говорим об этом, а не обещаем «ничего».
+      const inFlight = runnerBusy() ? " Запись, отправка которой уже началась, довыйдет; следующую сервер не возьмёт." : "";
+      const said = taken ? `${TAKEOVER_LAG} Включает выпуск команда /start_release.` : `Сервер ничего не выпустит, пока не придёт команда /start_release.${inFlight}`;
       await reply(`⏸ Выпуск остановлен. ${said}${yt ? `\n\n${h(yt)}` : ""}`);
       return true;
     }
@@ -106,7 +111,9 @@ export async function handleCommand(message) {
       const yt = await youtubeAfterSwitch();
       const said = now.takeover
         ? "▶️ Остановка снята. Расписание всё ещё ведёт компьютер оператора: выпуск продолжит он, после ближайшей сверки с сервером. На сервере выпуск включит оператор, когда вернёт ему вышедшее."
-        : "▶️ Выпуск включён. Одобренное пойдёт по расписанию; опоздавшее выйдет по одному, не пачкой.";
+        : isRestored()
+          ? `▶️ Остановка снята, но выпуск пока стоит. ${RESTORED_NOTE}`
+          : "▶️ Выпуск включён. Одобренное пойдёт по расписанию; опоздавшее выйдет по одному, не пачкой.";
       await reply(`${said}${yt ? `\n\n${h(yt)}` : ""}`);
       return true;
     }
@@ -130,6 +137,8 @@ export async function handleCallback(cb) {
     // Расписание ведёт компьютер оператора: кнопка под старым сообщением не должна
     // включить второго выпускающего.
     if (stopState().takeover) { await answerCallback(cb.id, "Расписание сейчас ведёт компьютер оператора. Выпуск на сервере включит оператор.", true); return true; }
+    // Сервер из архива: расписание в нём старше настоящего. Кнопка задвоила бы вышедшее.
+    if (isRestored()) { await answerCallback(cb.id, "Сервер восстановлен из архива: сначала оператор сверяет его с копией расписания. Кнопка до этого не действует.", true); return true; }
     clearHold();
     resolveAlert("release:hold");
     await answerCallback(cb.id, "Выпуск продолжен.");

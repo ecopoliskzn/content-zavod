@@ -8,16 +8,18 @@
 // Смешаете — оператор побежит чинить сервер там, где ему просто отказали.
 
 import { channel as channelCfg, channelNames } from "../lib/config.mjs";
-import { alert, h, resolve as resolveAlert } from "../lib/notify.mjs";
+import { dataPath } from "../lib/env.mjs";
+import { readJson, writeJson } from "../lib/files.mjs";
+import { alert, h, report, resolve as resolveAlert } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskTime } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
-import { inbox, submit } from "../bot/approval.mjs";
+import { inbox, retireCard, submit } from "../bot/approval.mjs";
 import { afterChange as syncYoutube, sayAll, staleOnYoutube, syncAll } from "../video/schedule.mjs";
 import { STATUS_TITLE, normalize, preview, validate } from "./format.mjs";
 import { record, rows as ledgerRows } from "./ledger.mjs";
 import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
-import { all, forceHanded, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
-import { ADOPTED_STOP, clearHold, clearStop, isHeld, isTakeover, runnerBusy, setStop, stopState } from "./switch.mjs";
+import { all, forceFromCopy, forceHanded, forceHeld, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
+import { ADOPTED_STOP, clearHold, clearRestored, clearStop, isHeld, isRestored, isTakeover, runnerBusy, setRestored, setStop, stopState } from "./switch.mjs";
 
 const byDue = (a, b) => dueAt(a) - dueAt(b);
 
@@ -87,9 +89,15 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             const premiere = premiereOf(queue, e);
             if (premiere && dueAt(e) <= premiere) lines.push(`внимание: этот же ролик выходит на YouTube ${mskDate(premiere)} в ${mskTime(premiere)}, а здесь стоит раньше. YouTube идёт первым: поставьте запись без --date и --time, слот подберётся сам`);
           }
+          const before = get(e.id);
           const { entry, result } = await put(e, actor);
           const verdict = check(entry);
           lines.push(`${result}: ${row(entry)}`);
+          // Текст изменили после отправки на согласование: прежняя карточка в группе снимается.
+          if (result === "возвращена в черновики" && before?.approval?.card?.messageId) {
+            await retireCard(before);
+            lines.push("  прежняя карточка в рабочей группе снята: решение принимается под новой, после npm run queue -- submit");
+          }
           for (const b of verdict.block) lines.push(`  ⛔ ${b}`);
           for (const w of verdict.warn) lines.push(`  ⚠ ${w}`);
           // Текст одобренного ролика изменили: согласия больше нет, срок на YouTube снимается.
@@ -229,6 +237,8 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           data: {
             stop: stopState(),
             held: isHeld(),
+            // Каталог данных развёрнут из архива: расписание в нём старше копии.
+            restored: isRestored(),
             busy: runnerBusy(),
             statuses: Object.fromEntries(entries.map((x) => [x.id, x.status])),
             // Отпечатки текста одобренных записей: по ним компьютер видит, что запись после
@@ -237,6 +247,124 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             progress: Object.fromEntries(open.map((x) => [x.id, { done: x.done || [], attempts: x.attempts ?? 0, result: x.result || null }])),
           },
         };
+      }
+      case "rollback": {
+        /* Сторож на компьютере оператора увидел, что расписание на сервере стало старше
+           копии: сервер восстановлен из архива либо из снимка диска. Выпуск встаёт до
+           сверки с копией. Команда только останавливает: выпустить что-либо она не может. */
+        setRestored({ by: actor, reason: String(args.reason || "расписание на сервере старше копии на компьютере оператора") });
+        lines.push("выпуск на сервере остановлен до сверки с копией расписания: npm run mirror -- --reconcile");
+        return { code: 0, lines };
+      }
+      case "reconcile": {
+        /* Сверка с копией расписания после восстановления сервера из архива.
+           Архив снимается раз в сутки, копия раз в четверть часа: копия знает то, чего в
+           архиве нет. Что вышло, что передано человеку, что сняли, чему отозвали согласие,
+           какой текст одобрен, сколько реплик ветки уже на площадке.
+
+           ДВА ПРАВИЛА, НА КОТОРЫХ ВСЁ ДЕРЖИТСЯ.
+           1. Сверка только закрывает и придерживает. Выпустить запись либо вернуть ей
+              согласие она не может: одобренной запись делает только кнопка в рабочей
+              группе. Поэтому команду безопасно принять в любую минуту.
+           2. Копия применяется, только если она новее того, что знает сервер (поле at).
+              На живом сервере копия всегда старше либо равна, и команда ничего не меняет. */
+        const rows = Array.isArray(args.entries) ? args.entries : [];
+        const done = { closed: [], handed: [], cancelled: [], withdrawn: [], progressed: [], logged: [], missing: [] };
+        const hasRow = (id, status) => ledgerRows().some((r) => r.id === id && r.status === status);
+        for (const c of rows) {
+          if (!c?.id || !c.status || !c.at) continue;
+          const s = get(c.id);
+          const brief = { id: String(c.id), channel: String(c.channel || s?.channel || ""), kind: String(c.kind || s?.kind || ""), name: String(c.name || s?.name || ""), material: String(c.material || s?.material || ""), date: String(c.date || s?.date || ""), time: String(c.time || s?.time || "") };
+          const when = c.publishedAt || c.handedAt || c.at;
+          if (!s) {
+            // Записи в архиве нет вовсе: она поставлена после него.
+            if (c.status === "published" || c.status === "handed") {
+              if (channelNames().includes(brief.channel) && !hasRow(brief.id, c.status)) {
+                record(brief, c.status, { at: when, by: actor, orphan: true, ...(c.status === "published" ? { externalId: c.result?.id || "", link: c.result?.link || "" } : {}) });
+                done.logged.push(brief.name);
+              }
+            } else if (c.status !== "cancelled") {
+              done.missing.push(`${brief.channel} · ${brief.name} · ${brief.date} ${brief.time} · в копии «${STATUS_TITLE[c.status] || c.status}»`);
+            }
+            continue;
+          }
+          if (!(Date.parse(c.at) > Date.parse(s.at))) continue; // сервер знает не меньше копии
+          const result = { ...(s.result || {}), ...(c.result || {}) };
+          if (c.status === "published") {
+            if (s.status === "published") continue;
+            const now = await forceFromCopy(s.id, "published", { result, done: c.done?.length ? c.done : s.done, publishedAt: when, note: "по копии расписания: вышла до аварии сервера" }, actor);
+            if (now.status === "published") {
+              if (!hasRow(s.id, "published")) record(now, "published", { externalId: result.id || "", link: result.link || "", at: when, by: actor, fromCopy: true });
+              done.closed.push(s.name);
+            }
+          } else if (c.status === "handed") {
+            if (["handed", "published", "cancelled"].includes(s.status)) continue;
+            const now = await forceFromCopy(s.id, "handed", { result: { ...result, manual: result.manual || "пакет отправлен, ждёт ручной выкладки" }, handedAt: when, note: "по копии расписания: пакет ушёл сотруднику до аварии сервера" }, actor);
+            if (!hasRow(s.id, "handed")) record(now, "handed", { at: when, by: actor, fromCopy: true });
+            done.handed.push(s.name);
+          } else if (c.status === "cancelled") {
+            if (["cancelled", "published"].includes(s.status)) continue;
+            await forceFromCopy(s.id, "cancelled", { note: `по копии расписания: снята до аварии сервера${c.note ? ` (${String(c.note).slice(0, 160)})` : ""}` }, actor);
+            done.cancelled.push(s.name);
+          } else if (["draft", "rework", "review"].includes(c.status) || (c.status === "approved" && c.contentHash && s.contentHash !== c.contentHash)) {
+            /* В копии согласия на этой записи нет либо оно дано другому тексту, а в архиве
+               она одобрена. Согласие снимается: новое «да» человек скажет сам. */
+            const why = c.status === "approved" ? "по копии расписания: одобрен был другой текст этой записи" : `по копии расписания: запись «${STATUS_TITLE[c.status] || c.status}», согласия на ней нет`;
+            if (s.status === "approved") {
+              await transition(s.id, "review", { approval: { card: s.approval?.card }, note: why }, actor);
+              done.withdrawn.push(s.name);
+            } else if (["failed", "expired"].includes(s.status) && s.approval?.at) {
+              // Кнопка «В ближайший слот» вернула бы такой записи статус «одобрена».
+              await patch(s.id, { approval: { card: s.approval?.card }, note: why }, actor);
+              done.withdrawn.push(s.name);
+            }
+          } else {
+            /* Тот же текст, запись ещё не закрыта: переносится сделанное. Сервер продолжит
+               ветку с места обрыва и со сверкой, а не с первой реплики. */
+            if (["published", "cancelled", "handed"].includes(s.status)) continue;
+            const ahead = (c.done?.length ?? 0) > (s.done?.length ?? 0) || (c.attempts ?? 0) > (s.attempts ?? 0);
+            if (c.status === "failed" && s.status === "approved") {
+              // До аварии запись исчерпала попытки и ждала решения человека: ждёт его и теперь.
+              await forceHeld(s.id, { done: c.done?.length ? c.done : s.done, result, attempts: Math.max(s.attempts ?? 0, c.attempts ?? 0, 1), note: c.note || "по копии расписания: до аварии сервера запись не вышла с трёх попыток" }, actor);
+              done.progressed.push(s.name);
+            } else if (ahead) {
+              await patch(s.id, { done: c.done?.length ? c.done : s.done, result, attempts: Math.max(s.attempts ?? 0, c.attempts ?? 0, 1), note: "по копии расписания: начата до аварии сервера, продолжается со сверкой" }, actor);
+              done.progressed.push(s.name);
+            }
+          }
+        }
+        // «Стоп» человека, которого нет в архиве: принимается. «Старт» из копии не берётся.
+        if (args.stoppedByHuman && !stopState().human) {
+          setStop({ by: "", reason: "по копии расписания выпуск был остановлен человеком" });
+          lines.push("по копии выпуск был остановлен человеком: остановка возвращена. Включает её команда /start_release");
+        }
+        const wasRestored = isRestored();
+        clearRestored();
+        resolveAlert("release:restored");
+        const say = (title, list) => { if (list.length) lines.push(`${title}: ${list.join(", ")}`); };
+        say("отмечены вышедшими по копии", done.closed);
+        say("отмечены переданными на ручную выкладку", done.handed);
+        say("сняты по копии", done.cancelled);
+        say("согласие снято, нужно новое «да»", done.withdrawn);
+        say("перенесено сделанное (сервер продолжит со сверкой)", done.progressed);
+        say("записано в журнал, самих записей на сервере нет", done.logged);
+        if (done.missing.length) {
+          lines.push(`на сервере нет записей, которые есть в копии: ${done.missing.length}. Поставьте их заново из файлов записей (npm run queue -- add --file=<файл>) и отправьте на согласование:`);
+          for (const m of done.missing) lines.push(`  ${m}`);
+        }
+        const changed = Object.values(done).some((l) => l.length);
+        if (!changed) lines.push("сервер знает не меньше копии: менять нечего");
+        if (wasRestored) {
+          // Удержание после простоя отвечало на тот же вопрос, что и сверка.
+          clearHold();
+          resolveAlert("release:hold");
+          lines.push("отметка «восстановлен из архива» снята: выпуск на сервере идёт по расписанию");
+        }
+        lines.push(...await youtubeAfterSwitch());
+        if (changed || wasRestored) {
+          await report(`<b>Сервер сверен с копией расписания</b>${args.copyAt ? ` от ${h(String(args.copyAt).slice(0, 16).replace("T", " "))} UTC` : ""}.\n${lines.map((l) => h(l)).join("\n")}\n\nСогласия, данные после последней копии, не восстановлены: такие записи ждут «Одобрить».`);
+        }
+        return { code: 0, lines, data: done };
       }
       case "slots": {
         // Ближайшие свободные слоты по рабочей сетке. --kind=video покажет строку сетки для видео.
@@ -346,6 +474,14 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           /* Команда с флагом --local на компьютере оператора: отменить возврат либо снять
              свою остановку и вести расписание дальше. Слово человека, принятое с сервера,
              она не снимает: иначе после оборванного возврата «стоп» клиента терялся. */
+          /* Возврат оборвался на последнем запросе: сервер мог включить выпуск, а ответ
+             потерялся. Продолжить перехват можно, только зная, что сервер не выпускает. */
+          const file = dataPath("TAKEOVER.json");
+          const taken = readJson(file, {}) || {};
+          if (taken.serverMayRun && !args["server-stopped"]) {
+            return { code: 1, lines: ["возврат оборвался на последнем запросе: сервер мог включить выпуск, и тогда выпускающих станет двое. Откройте /health сервера с телефона. Сервер жив: ничего не делайте и повторите npm run mirror -- --handback, когда вернётся связь. Сервер лежит либо выпуск на нём остановлен: npm run queue -- resume --local --server-stopped"] };
+          }
+          if (taken.serverMayRun) writeJson(file, { ...taken, serverMayRun: false });
           clearStop({ handback: true });
           if (was.human && was.reason === ADOPTED_STOP && !args.force) {
             return { code: 0, lines: [`возврат отменён, но выпуск остаётся остановленным: его остановил человек на сервере${was.by ? ` (${was.by})` : ""}. Включает его команда /start_release в рабочей группе, компьютер примет её при сверке. Снять остановку здесь, не дожидаясь: npm run queue -- resume --local --force`] };
@@ -429,6 +565,12 @@ export async function execute(cmd, args = {}, actor = "оператор") {
             return { code: 0, lines };
           }
           // Прежним текстом не вышло ничего: сервер выпустит исправленную запись сам, с начала.
+          if (otherText && args.result?.tgSending) {
+            // Отправка в канал началась и не подтвердилась: пост мог выйти прежним текстом.
+            await alert(`stray:${e.id}`, `<b>${h(title)}</b>: «${h(e.name)}» могла выйти во время аварии сервера прежним текстом: отправка с компьютера оператора оборвалась без ответа. После копии запись исправили и одобрили заново.`, { action: "откройте канал. Если прежний пост там есть, его убирает владелец канала; исправленный выйдет своим порядком" });
+            lines.push(`могла выйти с прежним текстом: ${e.channel} · ${e.name}. В рабочую группу ушло сообщение, исправленный текст выйдет своим порядком`);
+            return { code: 0, lines };
+          }
           if (otherText) { lines.push(`не вышла: ${e.channel} · ${e.name}. На сервере одобрен исправленный текст, он выйдет своим порядком`); return { code: 0, lines }; }
           if (["published", "handed"].includes(e.status)) { lines.push(`уже «${was}»: ${row(e)}`); return { code: 0, lines }; }
           const saved = await patch(e.id, { done: doneParts.length ? doneParts : e.done, result: { ...(e.result || {}), ...(args.result || {}) }, attempts: Math.max(e.attempts ?? 0, 1), note: args.note || "начата не на сервере: продолжается со сверкой" }, actor);
@@ -482,7 +624,7 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         return { code: 0, lines, data: withoutIds(done) };
       }
       default:
-        return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, comments, export, keys, pulse, pause, resume, mark`] };
+        return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, comments, export, keys, pulse, pause, resume, mark, reconcile, rollback`] };
     }
   } catch (e) {
     return { code: e.code === "RULE" ? 1 : 2, lines: [...lines, e.message || String(e)] };
