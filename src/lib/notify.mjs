@@ -25,6 +25,7 @@ const TOPIC_ENV = {
   alerts: "TG_TOPIC_ALERTS",
   news: "TG_TOPIC_NEWS",
   packages: "TG_TOPIC_PACKAGES",
+  comments: "TG_TOPIC_COMMENTS",
 };
 
 export const groupId = () => env("TG_GROUP_ID");

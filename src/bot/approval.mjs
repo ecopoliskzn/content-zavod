@@ -39,7 +39,10 @@ const UNDO = (id) => [[{ text: "↩️ Отозвать согласие", data:
 /** Текст карточки: содержимое как на площадке плюс всё, что нужно для решения. */
 export function cardText(entry, verdict = { block: [], warn: [] }, footer = "") {
   const cfg = channelCfg(entry.channel);
-  const rows = [`<b>На согласование · ${h(cfg.title)}</b>`, `Слот: ${human(entry)} · материал: ${h(entry.material || "не указан")}`];
+  const isReply = entry.kind === "reply";
+  const rows = isReply
+    ? [`<b>На согласование · ответ на комментарий · ${h(cfg.title)}</b>`, entry.context ? `Комментарий: «${h(String(entry.context).slice(0, 600))}»` : ""].filter(Boolean)
+    : [`<b>На согласование · ${h(cfg.title)}</b>`, `Слот: ${human(entry)} · материал: ${h(entry.material || "не указан")}`];
   if (cfg.access === "restricted") rows.push("<i>Площадка с ограниченным доступом: только разбор и польза, без цен и призывов купить.</i>");
   rows.push("");
   if (entry.kind === "thread") {
@@ -112,13 +115,13 @@ export async function handleCallback(cb) {
       const verdict = check(entry);
       if (verdict.block.length) { await answerCallback(cb.id, `Проверка не пускает: ${verdict.block[0].slice(0, 150)}`, true); return true; }
       let moved = "";
-      if (dueAt(entry) < Date.now() + 15 * 60_000) {
+      if (entry.kind !== "reply" && dueAt(entry) < Date.now() + 15 * 60_000) {
         const slot = nextSlot(channelCfg(entry.channel), all().filter((e) => e.channel === entry.channel), Date.now(), entry.id);
         if (slot) { await reschedule(entry.id, slot.date, slot.time, actor); moved = " Прежний слот прошёл, поставил в ближайший свободный."; }
       }
       const approved = await transition(entry.id, "approved", { approval: { ...(entry.approval || {}), by: cb.from.id, name, at: new Date().toISOString() }, fixAsked: undefined }, actor);
       await answerCallback(cb.id, "Одобрено.");
-      await redraw(approved, `✅ Одобрил(а) ${h(name)}. Выйдет ${human(approved)}.${moved}`, UNDO(entry.id));
+      await redraw(approved, entry.kind === "reply" ? `✅ Одобрил(а) ${h(name)}. Текст ответа придёт в тему «Выложить руками» в течение пяти минут.` : `✅ Одобрил(а) ${h(name)}. Выйдет ${human(approved)}.${moved}`, UNDO(entry.id));
     } else if (action === "fix") {
       if (!["review", "approved"].includes(entry.status)) { await answerCallback(cb.id, `Запись сейчас «${STATUS_TITLE[entry.status]}».`, true); return true; }
       await patch(entry.id, { fixAsked: { by: cb.from.id, name, at: new Date().toISOString() } }, actor);

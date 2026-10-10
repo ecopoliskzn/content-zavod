@@ -13,6 +13,7 @@ import { record } from "../queue/ledger.mjs";
 import { digest, morning } from "../queue/runner.mjs";
 import { all, get, patch } from "../queue/store.mjs";
 import { setStatus as setNewsStatus } from "../news/inbox.mjs";
+import { setStatus as setCommentStatus } from "../comments/collect.mjs";
 
 const isApprover = (id) => list("APPROVER_IDS").includes(String(id));
 const who = (from) => [from?.first_name, from?.last_name].filter(Boolean).join(" ") || from?.username || String(from?.id || "");
@@ -103,7 +104,15 @@ export async function handleCallback(cb) {
     const entry = get(manual[1]);
     if (!entry) { await answerCallback(cb.id, "Записи нет в очереди.", true); return true; }
     await patch(entry.id, { result: { ...(entry.result || {}), manual: `выложил(а) ${who(cb.from)}` } }, `tg:${cb.from.id}`);
-    record(entry, "published", { link: entry.result?.link || "", by: who(cb.from) });
+    if (entry.kind === "reply") {
+      // Ответ на комментарий — не публикация по сетке: в журнале у него свой статус, а
+      // сам комментарий помечается отвеченным.
+      record(entry, "replied", { link: entry.link || "", by: who(cb.from) });
+      const commentId = String(entry.material || "").replace(/^comment:/, "");
+      if (commentId) setCommentStatus(commentId, "answered", who(cb.from));
+    } else {
+      record(entry, "published", { link: entry.result?.link || "", by: who(cb.from) });
+    }
     await answerCallback(cb.id, "Отмечено как вышедшее. Ссылку можно прислать ответом на это сообщение.");
     if (cb.message) await editMessageText(cb.message.chat.id, cb.message.message_id, `${h(cb.message.text || "")}\n\n✅ Выложил(а) ${h(who(cb.from))}`, { reply_markup: { inline_keyboard: [] } });
     return true;

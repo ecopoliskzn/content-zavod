@@ -158,6 +158,43 @@ test("после простоя опоздавшие идут по одной, �
   assert.deepEqual(run.waiting, ["dogon-2"]);
 });
 
+test("ответ на комментарий: уходит сотруднику без ожидания слота, «Отвечено» закрывает комментарий", async () => {
+  const comments = await import("../src/comments/collect.mjs");
+  const staff = await import("../src/bot/staff.mjs");
+  const { appendJsonl } = await import("../src/lib/files.mjs");
+  appendJsonl(path.join(DATA, "comments.jsonl"), { id: "youtube:abc", platform: "youtube", at: "2030-03-19T20:00:00.000Z", text: "Какая толщина нужна под качели?", link: "https://www.youtube.com/watch?v=x&lc=abc", status: "new" });
+  const slot = { date: "2030-03-20", time: "03:10" }; // ночь: обычную запись выпуск бы придержал до утра
+  const text = "Под качели слой считают по высоте падения: чем выше сиденье, тем он толще.";
+  const { entry } = await store.put({ channel: "youtube", kind: "reply", name: "otvet-kacheli", material: "comment:youtube:abc", ...slot, text, link: "https://www.youtube.com/watch?v=x&lc=abc", context: "Какая толщина нужна под качели?" }, "S6");
+  sent.length = 0;
+  await submit(entry.id, "S6");
+  const card = sent.find((s) => s.method === "sendMessage");
+  assert.match(card.body.text, /ответ на комментарий · YouTube/);
+  assert.match(card.body.text, /Какая толщина нужна под качели\?/);
+  await press(`q:ok:${entry.id}`);
+  assert.deepEqual({ date: store.get(entry.id).date, time: store.get(entry.id).time }, slot, "ответ в сетку площадки не переставляется");
+
+  sent.length = 0;
+  calls.length = 0;
+  const run = await runOnce({ now: dueAt(slot) + 60_000 });
+  assert.ok(run.published.includes("otvet-kacheli"));
+  const pack = sent.find((s) => /Ответить на комментарий/.test(s.body.text || ""));
+  assert.ok(pack, "сотрудник получает пакет: ссылка на комментарий и что сделать");
+  assert.match(pack.body.text, /lc=abc/);
+  assert.equal(pack.body.reply_markup.inline_keyboard[0][0].callback_data, `d:done:${entry.id}`);
+  assert.ok(sent.some((s) => s.body.text === text), "текст ответа идёт отдельным сообщением: его копируют целиком");
+  assert.equal(calls.length, 0, "на площадку завод сам ничего не пишет");
+  // В журнале ответ не считается публикацией: потолок площадки он не съедает.
+  assert.deepEqual(ledger.rows().filter((r) => r.id === entry.id).map((r) => r.status), ["handed"]);
+  assert.equal(ledger.published({ channel: "youtube" }).length, 0);
+
+  await staff.handleCallback({ id: "cb", data: `d:done:${entry.id}`, from: { id: 42, first_name: "Анна" }, message: { chat: { id: -1001 }, message_id: 5, text: "пакет" } });
+  assert.deepEqual(comments.byStatus("answered").map((c) => c.id), ["youtube:abc"]);
+  assert.equal(comments.byStatus("new").length, 0);
+  assert.ok(ledger.rows().some((r) => r.id === entry.id && r.status === "replied"));
+  assert.equal(comments.setStatus("нет-такого", "skipped"), false);
+});
+
 test("файл STOP останавливает выпуск целиком", async () => {
   writeFileSync(path.join(DATA, "STOP"), "перехват");
   const run = await runOnce({ now: at(500) });

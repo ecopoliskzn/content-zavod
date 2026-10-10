@@ -96,13 +96,19 @@ export function speech(entry, ctx = {}) {
   if (sup) warn.push(`речь: превосходная степень «${sup[0].trim()}». Закон о рекламе требует подтверждения таких слов: либо цифра и источник, либо убрать`);
   if ((text.match(/!/g) || []).length > 2) warn.push("речь: больше двух восклицательных знаков");
 
+  /* Кодовое слово бота живёт только в Instagram: там его ловит бот и отвечает в директ.
+     На любой другой площадке человек напишет слово и не получит ничего: это худшее, чем
+     может кончиться просмотр. Ищем слово ЗАГЛАВНЫМИ: «приёмка» строчными — обычное слово. */
+  if (entry.channel !== "instagram") {
+    for (const w of ctx.codeWords || []) {
+      if (re(esc(w), "u").test(text)) block.push(`речь: кодовое слово бота «${w}» на площадке ${entry.channel}. Слова работают только в Instagram, здесь на него никто не ответит: дайте прямую ссылку`);
+    }
+  }
+
   if (entry.kind === "thread") {
     const posts = entry.posts || [];
     if (HASHTAG.test(text)) block.push("речь: хэштег в Threads. Площадка их не раздаёт, текст выглядит как реклама");
     if (EMOJI.test(text)) block.push("речь: эмодзи в ветке");
-    for (const w of ctx.codeWords || []) {
-      if (re(esc(w), "u").test(text)) block.push(`речь: кодовое слово бота «${w}» в Threads. Слова работают только в Instagram, здесь на него никто не ответит`);
-    }
     const first = posts[0] || "";
     const firstSentence = first.split(/(?<=[.!?…])\s/)[0] || first;
     if (posts.length === 1) warn.push("речь: одиночный пост. По нашему замеру у ветки из двух и более реплик медиана просмотров вдвое выше");
@@ -216,10 +222,55 @@ export function facts(entry) {
   return { block, warn };
 }
 
+/* ── 5. Ролик: название, описание, подпись ─────────────────────────────────── */
+
+// Правила взяты с нашего канала: 96 коротких роликов и разбор, почему часть не полетела.
+const TITLE_NUMBER = /\d[\d\s.,]{0,6}\d|\b\d\b%?/gu;
+const DATED = /(?<!\d)\d{1,2}(?:\s?[–-]\s?\d{1,2})?\s+(?:января|февраля|марта|апреля|мая|июня|июля|августа|сентября|октября|ноября|декабря)/iu;
+const withoutLinks = (t) => String(t || "").replace(/https?:\/\/\S+/gu, "");
+const numberTokens = (t) => new Set((withoutLinks(t).match(TITLE_NUMBER) || []).map((x) => x.trim()).filter((x) => x.length > 1));
+
+/**
+ * Числа из названия, повторённые в первой строке описания. Первая строка — единственное,
+ * что видно без разворачивания; если в ней уже стоит ответ из названия, смотреть незачем.
+ * Сравниваются только числа: название компании или объекта законно повторяется.
+ */
+export function spoilers(title, description) {
+  const firstLine = String(description || "").split(/\r?\n/).find((l) => l.trim()) || "";
+  const inTitle = numberTokens(title);
+  const inFirst = numberTokens(firstLine);
+  return { firstLine, common: [...inTitle].filter((x) => inFirst.has(x)) };
+}
+
+export function video(entry) {
+  const block = [];
+  const warn = [];
+  if (!["video", "short", "reel"].includes(entry.kind)) return { block, warn };
+  const text = String(entry.text || "");
+  if (entry.channel === "instagram") {
+    const first = text.split("\n")[0] || "";
+    if (first.length > 60) warn.push(`ролик: первая строка подписи ${first.length} знаков. В ленте видно около сорока: первая строка короткая и самостоятельная`);
+    if (/https?:\/\//.test(text)) warn.push("ролик: ссылка в подписи Instagram не нажимается. Материал отдаёт кодовое слово");
+    return { block, warn };
+  }
+  const { common } = spoilers(entry.title, text);
+  if (common.length) block.push(`ролик: первая строка описания повторяет число из названия (${common.join(", ")}). Её видно без разворачивания, и готовый ответ в ней убивает желание смотреть`);
+  if ((entry.title || "").length > 80) warn.push(`ролик: название ${entry.title.length} знаков. В ленте видно первые шестьдесят–семьдесят`);
+  if (/^(?:как|почему|зачем|что такое|топ|\d+\s+(?:способ|совет|причин|ошиб))/iu.test((entry.title || "").trim())) warn.push("ролик: название похоже на тему или список. Сильнее работает событие или поступок: что произошло, с кем и чем кончилось");
+  if (!entry.goSlug && !entry.botKey && !/https?:\/\//.test(text)) warn.push("ролик: в описании нет прямой ссылки. Укажите в записи goSlug (ссылка на материал) или botKey (ссылка в бота): зрителю некуда идти");
+  const dated = text.match(DATED);
+  if (dated && !entry.event) warn.push(`ролик: в описании дата («${dated[0]}»). Ролик живёт на канале годами, дата протухнет. Если это событие, поставьте в записи event: true`);
+  const tags = entry.hashtags || [];
+  if (tags.length > 5) warn.push(`ролик: хэштегов ${tags.length}, достаточно пяти`);
+  if (entry.channel === "youtube" && !tags.length) warn.push("ролик: нет хэштегов (поле hashtags, до пяти)");
+  if (/(?:^|\n)\s*#[\p{L}\d_]+/u.test(text)) warn.push("ролик: хэштеги в самом тексте. Перенесите их в поле hashtags: блок ссылок и хэштегов под текстом собирает программа");
+  return { block, warn };
+}
+
 /** Все проверки разом. */
 export function checkAll(entry, ctx = {}) {
   const out = { block: [], warn: [] };
-  for (const r of [ready(entry), speech(entry, ctx), adlaw(entry, ctx), facts(entry)]) {
+  for (const r of [ready(entry), speech(entry, ctx), adlaw(entry, ctx), facts(entry), video(entry)]) {
     out.block.push(...r.block);
     out.warn.push(...r.warn);
   }

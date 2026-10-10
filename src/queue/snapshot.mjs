@@ -81,6 +81,17 @@ export function questions(events, limit = 100) {
   return out.slice(-limit);
 }
 
+/**
+ * Комментарии под публикациями для снимка. Автора сборщик не хранит, но человек мог сам
+ * написать в комментарии телефон или почту: текст проходит ту же чистку, что и вопросы.
+ * Полный текст остаётся на сервере и в карточке рабочей группы, где его видит сотрудник.
+ */
+export function publicComments(rows, limit = 400) {
+  const last = new Map();
+  for (const c of rows) if (c && c.id) last.set(c.id, c);
+  return [...last.values()].slice(-limit).map((c) => ({ id: c.id, platform: c.platform, at: c.at, status: c.status, link: c.link, post: c.post, text: mask(c.text).slice(0, 600) }));
+}
+
 function weeklyReports(limit = 8) {
   const dir = dataPath("reports", "weekly");
   if (!existsSync(dir)) return [];
@@ -113,6 +124,8 @@ export function snapshot(now = Date.now()) {
       now,
     }),
     questions: questions(readJsonl(dataPath("leads", "tg-events.jsonl")).slice(-3000)),
+    // Комментарии под публикациями: текст, площадка, ссылка. Авторов сборщик не хранит вовсе.
+    comments: publicComments(readJsonl(dataPath("comments.jsonl"))),
     reports: weeklyReports(),
     tokens: tokenTable(now).map((t) => ({ name: t.name, set: t.set, daysLeft: t.daysLeft, status: t.status })),
     alerts: Object.entries(alerts).map(([key, at]) => ({ key, at: new Date(at).toISOString() })),

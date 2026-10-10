@@ -29,6 +29,7 @@ import { dataPath, env, _reset } from "../lib/env.mjs";
 import { setEnv } from "../lib/envfile.mjs";
 import { lock } from "../lib/files.mjs";
 import { form, request, sleep as realSleep } from "../lib/http.mjs";
+import { describe } from "../video/describe.mjs";
 import { sendPackage } from "./manual.mjs";
 
 export const name = "vk";
@@ -122,8 +123,10 @@ async function findOnWall(text, token) {
 /**
  * @param {{ kind: string, text?: string, title?: string, link?: string, media?: Array<{type:string,url:string}>, result?: object }} entry
  */
-export async function publish(entry, ctx = {}) {
+export async function publish(raw, ctx = {}) {
   if (!groupId()) return { ok: false, retry: false, error: "нет VK_GROUP_ID" };
+  // У ролика под текстом стоит блок ссылок с меткой площадки: тот же, что у YouTube.
+  const entry = raw.kind === "video" ? { ...raw, text: describe(raw) } : raw;
   const media = entry.media || [];
   const user = await userToken();
   const community = env("VK_GROUP_TOKEN");

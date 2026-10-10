@@ -34,6 +34,7 @@ export const REGISTRY = [
   { name: "TG_TOPIC_ALERTS", where: ["server", "operator"], secret: false, need: "optional", what: "номер темы «Тревоги»" },
   { name: "TG_TOPIC_NEWS", where: ["server"], secret: false, need: "optional", what: "номер темы «Новости»" },
   { name: "TG_TOPIC_PACKAGES", where: ["server"], secret: false, need: "optional", what: "номер темы «Выложить руками» (Дзен)" },
+  { name: "TG_TOPIC_COMMENTS", where: ["server"], secret: false, need: "optional", what: "номер темы «Комментарии»: сводка новых комментариев и ответы на согласование" },
   { name: "APPROVER_IDS", where: ["server"], secret: false, need: "core", what: "числовые id Telegram тех, чьё «Одобрить» считается согласием клиента" },
   { name: "STAFF_IDS", where: ["server"], secret: false, need: "optional", what: "id сотрудников, которым доступны кнопки заявок" },
   { name: "TG_CHANNEL", where: ["server", "operator"], secret: false, need: "channel:telegram", what: "канал клиента: @имя или -100…; бот в нём администратор" },
@@ -41,6 +42,7 @@ export const REGISTRY = [
   // ── Threads ──────────────────────────────────────────────────────────────
   { name: "THREADS_TOKEN", where: ["server", "operator"], secret: true, need: "channel:threads", expires: "THREADS_TOKEN_EXPIRES", what: "маркер аккаунта Threads на 60 дней, продлевается сам" },
   { name: "THREADS_USER_ID", where: ["server", "operator"], secret: false, need: "channel:threads", what: "номер аккаунта Threads" },
+  { name: "THREADS_USERNAME", where: ["server"], secret: false, need: "optional", what: "имя аккаунта Threads без @: чтобы сборщик комментариев не считал собственные ответы чужими" },
   { name: "THREADS_TOKEN_EXPIRES", where: ["server", "operator"], secret: false, need: "channel:threads", what: "дата, когда маркер истечёт (ГГГГ-ММ-ДД): её ведёт продление" },
 
   // ── Instagram ────────────────────────────────────────────────────────────

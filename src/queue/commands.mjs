@@ -10,7 +10,7 @@
 import { existsSync, rmSync, writeFileSync } from "node:fs";
 import { channel as channelCfg, channelNames } from "../lib/config.mjs";
 import { dataPath } from "../lib/env.mjs";
-import { dueAt, human } from "../lib/time.mjs";
+import { dueAt, human, mskDate, mskTime } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
 import { inbox, submit } from "../bot/approval.mjs";
 import { STATUS_TITLE, normalize, preview, validate } from "./format.mjs";
@@ -47,6 +47,11 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const entries = Array.isArray(args.entries) ? args.entries : [args.entries];
         for (const raw of entries) {
           const e = normalize(raw);
+          if (e.kind === "reply" && (!e.date || !e.time)) {
+            // Ответ не ждёт слота площадки: уходит сотруднику сразу после согласования.
+            const soon = Date.now() + 10 * 60_000;
+            Object.assign(e, { date: mskDate(soon), time: mskTime(soon) });
+          }
           if (!e.date || !e.time) {
             const slot = nextSlot(channelCfg(e.channel), all().filter((x) => x.channel === e.channel), Date.now(), e.id);
             if (!slot) throw Object.assign(new Error(`у площадки ${e.channel} нет свободных слотов на месяц вперёд`), { code: "RULE" });
@@ -174,6 +179,22 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const { fingerprints } = await import("../tokens/check.mjs");
         return { code: 0, lines: [], data: fingerprints() };
       }
+      case "comments": {
+        // Комментарии под публикациями: список по статусу либо отметка «отвечать не нужно».
+        const api = await import("../comments/collect.mjs");
+        if (args.ref && args.status) {
+          const ok = api.setStatus(args.ref, String(args.status), actor);
+          lines.push(ok ? `комментарий ${args.ref}: ${args.status}` : `комментария ${args.ref} нет`);
+          return { code: ok ? 0 : 1, lines };
+        }
+        // Ответ уходит на компьютер оператора: текст отдаём с той же чисткой, что и в снимке.
+        // Телефон, который человек сам написал под роликом, с сервера не уезжает.
+        const { publicComments } = await import("./snapshot.mjs");
+        const found = publicComments(api.byStatus(String(args.status || "new")).sort((a, b) => String(b.at).localeCompare(String(a.at))).slice(0, Number(args.count) || 40));
+        if (!found.length) lines.push("комментариев с таким статусом нет");
+        for (const c of found) lines.push(`${c.id}  ${String(c.at).slice(0, 10)}  ${c.platform}\n  «${String(c.text).replace(/\s+/g, " ").slice(0, 200)}»\n  ${c.link}`);
+        return { code: 0, lines, data: found };
+      }
       case "news": {
         // Ящик новостей: список по статусу либо отметка «использована» после постановки материала.
         const inboxApi = await import("../news/inbox.mjs");
@@ -209,7 +230,7 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         return { code: 0, lines, data: done };
       }
       default:
-        return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, export, keys, pause, resume, mark`] };
+        return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, comments, export, keys, pause, resume, mark`] };
     }
   } catch (e) {
     return { code: e.code === "RULE" ? 1 : 2, lines: [...lines, e.message || String(e)] };

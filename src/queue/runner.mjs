@@ -31,6 +31,7 @@ import { lock, readJson, writeJson } from "../lib/files.mjs";
 import { alert, h, report, resolve, toGroup } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskHour } from "../lib/time.mjs";
 import { adapter } from "../channels/index.mjs";
+import { sendReply } from "../channels/manual.mjs";
 import { check } from "../gates/index.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
 import { channelLoad, record } from "./ledger.mjs";
@@ -98,8 +99,11 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       const attempts = entry.attempts ?? 0;
       const lateMin = (now - due) / 60_000;
       const cfg = channelCfg(entry.channel);
+      // Ответ на комментарий — не публикация по сетке: он уходит сотруднику пакетом сразу
+      // после согласования, не считается в потолок площадки и не «просрочивается».
+      const isReply = entry.kind === "reply";
 
-      if (lateMin > rules.lateLimitHours * 60 && !(entry.done?.length)) {
+      if (!isReply && lateMin > rules.lateLimitHours * 60 && !(entry.done?.length)) {
         out.expired.push(entry.name);
         if (!dry) {
           await transition(entry.id, "expired", { note: `просрочена на ${(lateMin / 60).toFixed(1)} ч` }, "выпуск");
@@ -113,7 +117,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
 
       const load = channelLoad(entry.channel, now);
       // Догон после простоя и потолки площадки. Повтор и продолжение сюда не относятся.
-      if (attempts === 0 && !stuck) {
+      if (attempts === 0 && !stuck && !isReply) {
         const lateCatchUp = lateMin > rules.lateAfterMin && (night || now - load.last < rules.catchUpGapMin * 60_000);
         const tooSoon = cfg.minGapMin && now - load.last < cfg.minGapMin * 60_000;
         const dayFull = cfg.perDay && load.lastDay >= cfg.perDay;
@@ -121,8 +125,9 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       }
 
       /* Вторая застава: проверки прямо перед выпуском. Здесь останавливают только две
-         из четырёх: готовность (заглушка в тексте) и реклама. Речь и факты человек уже
-         видел в карточке и сказал «да»; останавливать ими одобренное нельзя. У нас новая
+         из пяти: готовность (заглушка в тексте) и реклама. Речь, факты и замечания к
+         ролику человек уже видел в карточке и сказал «да»; останавливать ими одобренное
+         нельзя. У нас новая
          проверка фактов однажды за день сняла шесть одобренных постов, и ни один из них
          не был плохим. */
       const verdict = check(entry, now);
@@ -147,7 +152,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
         throw e;
       }
 
-      const mod = await adapter(entry.channel);
+      const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : await adapter(entry.channel);
       let result;
       try {
         result = await mod.publish(current, {

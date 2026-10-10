@@ -1,0 +1,19 @@
+# Конец строки везде LF. Код уезжает на Linux архивом (git archive), а архив на Windows
+# собирается с теми переносами, которые git считает «рабочими». Скрипт bash или crontab
+# с переносами Windows на сервере не запускается: «bash\r: No such file or directory».
+* text=auto eol=lf
+
+# Обёртки для Windows читает cmd.exe: ему нужны свои переносы.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# Двоичное не трогаем.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.mp4 binary
+*.mov binary
+*.pdf binary
+*.ttf binary
+*.woff2 binary

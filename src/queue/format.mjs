@@ -102,9 +102,16 @@ export function entryId(channel, name) {
   return fnv16(`${clean(channel)}:${clean(name).toLowerCase()}`);
 }
 
-/** Содержимое записи: всё, что увидит читатель. */
+/**
+ * Содержимое записи: всё, что увидит читатель. Хэштеги и ссылки ролика (goSlug, botKey,
+ * article) сюда входят: их видно в описании. Серия и «смотрите также» не входят: это
+ * связи между роликами, они меняются с выходом каждой новой части и согласия не требуют.
+ */
 function content(e) {
-  return [e.channel, e.kind, e.title || "", e.text || "", e.posts || [], (e.media || []).map((m) => [m.type, m.url, m.cover || ""]), e.buttons || [], e.link || "", e.tags || []];
+  const base = [e.channel, e.kind, e.title || "", e.text || "", e.posts || [], (e.media || []).map((m) => [m.type, m.url, m.cover || ""]), e.buttons || [], e.link || "", e.tags || []];
+  const video = [e.hashtags || [], e.goSlug || "", e.botKey || "", e.article || ""];
+  // Поля ролика добавляются, только когда они заданы: у записей без них отпечаток прежний.
+  return video.some((v) => (Array.isArray(v) ? v.length : v)) ? [...base, video] : base;
 }
 
 /** Отпечаток содержимого. Изменился после одобрения — запись снова идёт на согласование. */
@@ -146,7 +153,7 @@ export function validate(e) {
   const bad = [];
   if (!/^[0-9a-f]{16}$/.test(e.id || "")) bad.push("номер записи: нужно 16 шестнадцатеричных знаков");
   if (!KINDS[e.channel]) bad.push(`площадка «${e.channel}»: такой нет (есть ${Object.keys(KINDS).join(", ")})`);
-  else if (!KINDS[e.channel].includes(e.kind)) bad.push(`вид «${e.kind}» на площадке ${e.channel} не выходит (можно ${KINDS[e.channel].join(", ")})`);
+  else if (e.kind !== "reply" && !KINDS[e.channel].includes(e.kind)) bad.push(`вид «${e.kind}» на площадке ${e.channel} не выходит (можно ${KINDS[e.channel].join(", ")})`);
   if (!e.name) bad.push("нет имени записи");
   if (!e.material) bad.push("нет поля material: из чего сделан материал (статья, новость, интервью)");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(e.date || "") || !/^\d{2}:\d{2}$/.test(e.time || "") || !Number.isFinite(Date.parse(`${e.date}T${e.time}:00+03:00`))) {
@@ -200,6 +207,13 @@ export function validate(e) {
     case "carousel": {
       if (images < 2 || images > 10) bad.push(`в карусели ${images} картинок, нужно от 2 до 10`);
       if (videos) bad.push("карусель собираем из картинок");
+      break;
+    }
+    case "reply": {
+      // Ответ компании на комментарий: такая же публикация, поэтому идёт через согласование.
+      if (!e.text) bad.push("у ответа нет текста");
+      if ((e.text || "").length > 1000) bad.push(`ответ ${e.text.length} знаков: это уже статья, а не ответ. Предел 1000`);
+      if (!isHttps(e.link)) bad.push("у ответа нет ссылки на комментарий (поле link)");
       break;
     }
     case "story": {

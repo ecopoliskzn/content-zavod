@@ -15,6 +15,28 @@ import { h, toGroup } from "../lib/notify.mjs";
 import { human } from "../lib/time.mjs";
 
 /**
+ * Ответ на комментарий: согласованный текст и ссылка на комментарий уходят сотруднику.
+ * Ответить программой завод не берётся: десять ответов, отправленных конвейером, читаются
+ * как конвейер, а на вопрос человека должен ответить человек с аккаунта компании.
+ */
+export async function sendReply(entry, { onState } = {}) {
+  if (entry.result?.packageMessageId) return { ok: true, manual: true, note: "ответ отправлен сотруднику ранее" };
+  const cfg = channelCfg(entry.channel);
+  const head = await toGroup("packages", [
+    `💬 <b>Ответить на комментарий · ${h(cfg.title)}</b>`,
+    entry.context ? `Комментарий: «${h(String(entry.context).slice(0, 600))}»` : "",
+    "",
+    `1. Откройте комментарий: ${h(entry.link)}`,
+    "2. Ответьте с аккаунта компании текстом из следующего сообщения.",
+    "3. Нажмите «Отвечено».",
+  ].filter((x) => x !== "").join("\n"), { buttons: [[{ text: "✅ Отвечено", data: `d:done:${entry.id}` }]] });
+  if (!head.ok) return { ok: false, error: `ответ не ушёл в группу: ${head.error}`, retry: true };
+  if (onState) await onState({ packageMessageId: head.messageId });
+  await toGroup("packages", h(entry.text || ""), { extra: { reply_parameters: { message_id: head.messageId } } });
+  return { ok: true, manual: true, note: "ответ отправлен сотруднику" };
+}
+
+/**
  * @param {object} entry запись очереди
  * @param {{ steps: string[], onState?: Function, why?: string }} opts steps — что сделать человеку, по шагам
  * @returns {Promise<{ ok: boolean, manual?: boolean, note?: string, error?: string, retry?: boolean }>}

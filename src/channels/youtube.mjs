@@ -54,10 +54,41 @@ export async function accessToken() {
   return { kind: "ok", token: cached.token };
 }
 
-async function api(pathAndQuery, init = {}) {
+/** Вызов Data API с правами владельца канала. Им же пользуются инструменты серий и описаний. */
+export async function api(pathAndQuery, init = {}) {
   const t = await accessToken();
   if (t.kind !== "ok") return { kind: t.kind, error: t.error, data: null };
   return request(`${API}/${pathAndQuery}`, { ...init, headers: { authorization: `Bearer ${t.token}`, ...(init.headers || {}) }, retries: init.retries ?? 1 });
+}
+
+/**
+ * Досмотр и подписки с ролика: Analytics API, только с входом владельца канала.
+ *
+ * Просмотры отвечают на вопрос «сколько показали», досмотр — «удержал ли ролик». Для
+ * решения, что снимать дальше, нужен второй. Данные сервис отдаёт с опозданием на
+ * двое-трое суток, поэтому конец окна берётся с запасом в три дня: спросив «по сегодня»,
+ * получили бы нули у свежих роликов и решили бы, что ролик провалился.
+ * @param {string[]} ids номера роликов, до 200 за вызов
+ * @returns {Promise<{ kind: string, error?: string, until?: string, byId?: Map<string, { minutes: number, avgSec: number, watchPct: number, subs: number }> }>}
+ */
+export async function analytics(ids) {
+  const t = await accessToken();
+  if (t.kind !== "ok") return { kind: t.kind, error: t.error };
+  const until = new Date(Date.now() - 3 * 86_400_000).toISOString().slice(0, 10);
+  const byId = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const q = new URLSearchParams({
+      ids: "channel==MINE", startDate: "2015-01-01", endDate: until, dimensions: "video", maxResults: "200",
+      filters: `video==${ids.slice(i, i + 200).join(",")}`,
+      metrics: "views,estimatedMinutesWatched,averageViewDuration,averageViewPercentage,subscribersGained",
+    });
+    const r = await request(`https://youtubeanalytics.googleapis.com/v2/reports?${q}`, { headers: { authorization: `Bearer ${t.token}` }, retries: 1 });
+    if (r.kind !== "ok") return { kind: r.kind, error: r.error };
+    for (const [id, , minutes, avgSec, pct, subs] of r.data?.rows || []) {
+      byId.set(id, { minutes: Math.round(Number(minutes) || 0), avgSec: Math.round(Number(avgSec) || 0), watchPct: Number((Number(pct) || 0).toFixed(1)), subs: Number(subs) || 0 });
+    }
+  }
+  return { kind: "ok", until, byId };
 }
 
 /**
@@ -114,37 +145,82 @@ async function makePublic(video) {
  * Слот наступил: сверяем, что ролик открыт. Номер ролика лежит в entry.extra.youtubeId,
  * его туда кладёт видео-сессия после загрузки.
  */
-export async function publish(entry) {
+export async function publish(entry, ctx = {}) {
   const id = entry.extra?.youtubeId || entry.result?.youtubeId;
   if (!id) return { ok: false, retry: false, error: "ролик не загружен на YouTube. Загрузка идёт с компьютера оператора: npm run yt -- --upload --id=<номер записи> --file=<путь>" };
   const s = await status(id);
   if (s.kind !== "ok") return { ok: false, error: `YouTube не отвечает про ролик: ${s.error}`, retry: s.kind === "network" };
   const link = `https://www.youtube.com/watch?v=${id}`;
   if (s.upload === "rejected" || s.upload === "failed") return { ok: false, retry: false, error: `YouTube отклонил ролик: ${s.rejection || s.upload}` };
-  if (s.privacy === "public") return { ok: true, id, link };
-  if (s.publishAt && Date.parse(s.publishAt) > Date.now() + 2 * 60_000) return { ok: false, retry: true, error: `YouTube откроет ролик сам в ${s.publishAt}, пока рано` };
-  const opened = await makePublic(s.raw);
-  if (opened.kind !== "ok") return { ok: false, error: `ролик не открылся: ${opened.error}`, retry: opened.kind === "network" };
-  await sleep(3_000);
-  const check = await status(id);
-  if (check.kind === "ok" && check.privacy !== "public") return { ok: false, retry: false, error: "YouTube оставил ролик закрытым: проект Google не прошёл проверку. Откройте ролик руками в Студии и подайте проект на аудит" };
+  if (s.privacy !== "public") {
+    if (s.publishAt && Date.parse(s.publishAt) > Date.now() + 2 * 60_000) return { ok: false, retry: true, error: `YouTube откроет ролик сам в ${s.publishAt}, пока рано` };
+    const opened = await makePublic(s.raw);
+    if (opened.kind !== "ok") return { ok: false, error: `ролик не открылся: ${opened.error}`, retry: opened.kind === "network" };
+    await sleep(3_000);
+    const check = await status(id);
+    if (check.kind === "ok" && check.privacy !== "public") return { ok: false, retry: false, error: "YouTube оставил ролик закрытым: проект Google не прошёл проверку. Откройте ролик руками в Студии и подайте проект на аудит" };
+  }
+  await askPin(entry, link, ctx);
   return { ok: true, id, link };
 }
 
-/** Просмотры, отметки и комментарии пачкой до 50 роликов. */
+/**
+ * Закреплённый комментарий: один из трёх переходов у короткого ролика (два других —
+ * плейлист и обложка). Закрепить комментарий программа не может, это делает человек в
+ * Студии. Текст приходит ему в рабочую группу в момент выхода ролика. Один раз на запись.
+ */
+async function askPin(entry, link, ctx) {
+  if (entry.result?.pinAsked || entry.pin === false) return;
+  try {
+    const { pinText } = await import("../video/describe.mjs");
+    const { h, toGroup } = await import("../lib/notify.mjs");
+    const text = pinText(entry);
+    const sent = await toGroup("packages", `📌 <b>Закрепить комментарий · YouTube</b>\nРолик вышел: ${h(link)}\n\n1. Откройте ролик с аккаунта канала.\n2. Оставьте комментарий с текстом из следующего сообщения.\n3. Нажмите на три точки у комментария и выберите «Закрепить».`);
+    if (sent.ok) {
+      await toGroup("packages", h(text), { extra: { reply_parameters: { message_id: sent.messageId } } });
+      if (ctx.onState) await ctx.onState({ pinAsked: true });
+    }
+  } catch (e) {
+    // Просьба о комментарии не должна ронять выпуск: ролик уже вышел.
+    console.error("[youtube] просьба закрепить комментарий не ушла:", e?.message || e);
+  }
+}
+
+/** Номер ролика из номера публикации или из ссылки. */
+export function videoId(value) {
+  const s = String(value || "");
+  if (/^[\w-]{11}$/.test(s)) return s;
+  return s.match(/(?:v=|youtu\.be\/|shorts\/)([\w-]{11})/)?.[1] || "";
+}
+
+/**
+ * Цифры роликов: просмотры, отметки и комментарии пачкой до 50, плюс досмотр и подписки
+ * с ролика, если есть вход владельца канала. Без него остаются только просмотры: для
+ * вопроса «о чём снимать дальше» этого мало, поэтому вход берётся с правом на аналитику.
+ */
 export async function metrics(items) {
   const out = [];
-  for (let i = 0; i < items.length; i += 50) {
-    const ids = items.slice(i, i + 50).map((x) => x.externalId);
+  const pairs = items.map((x) => ({ externalId: x.externalId, id: videoId(x.externalId) || videoId(x.link) }));
+  const known = pairs.filter((p) => p.id);
+  for (const p of pairs) if (!p.id) out.push({ externalId: p.externalId, error: "нет номера ролика", kind: "refused" });
+  const rows = new Map();
+  for (let i = 0; i < known.length; i += 50) {
+    const ids = known.slice(i, i + 50).map((x) => x.id);
     const key = env("YOUTUBE_API_KEY");
     const r = key ? await request(`${API}/videos?part=statistics&id=${ids.join(",")}&key=${encodeURIComponent(key)}`, { retries: 1 }) : await api(`videos?part=statistics&id=${ids.join(",")}`);
-    if (r.kind !== "ok") { for (const id of ids) out.push({ externalId: id, error: r.error, kind: r.kind }); continue; }
+    if (r.kind !== "ok") { for (const id of ids) rows.set(id, { error: r.error, kind: r.kind }); continue; }
     const byId = new Map((r.data?.items || []).map((v) => [v.id, v.statistics]));
     for (const id of ids) {
       const st = byId.get(id);
-      out.push(st ? { externalId: id, views: Number(st.viewCount) || 0, likes: Number(st.likeCount) || 0, comments: Number(st.commentCount) || 0 } : { externalId: id, error: "ролик не найден", kind: "refused" });
+      rows.set(id, st ? { views: Number(st.viewCount) || 0, likes: Number(st.likeCount) || 0, comments: Number(st.commentCount) || 0 } : { error: "ролик не найден", kind: "refused" });
     }
   }
+  // Досмотр не обязателен: нет входа или сервис не ответил — цифры просмотров всё равно уходят.
+  if (env("YOUTUBE_REFRESH_TOKEN") && known.length) {
+    const a = await analytics(known.map((x) => x.id)).catch((e) => ({ kind: "network", error: String(e?.message || e) }));
+    if (a.kind === "ok") for (const [id, v] of a.byId) if (rows.has(id) && !rows.get(id).error) Object.assign(rows.get(id), { watchPct: v.watchPct, avgSec: v.avgSec, subs: v.subs, analyticsUntil: a.until });
+  }
+  for (const p of known) out.push({ externalId: p.externalId, ...rows.get(p.id) });
   return out;
 }
 

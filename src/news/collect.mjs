@@ -55,12 +55,24 @@ async function read(source) {
   return parseFeed(body);
 }
 
+/**
+ * Проходит ли новость в ящик. Чистая функция: запись, вес источника и словарь на вход.
+ * Три условия: сработало хотя бы одно слово ниши; сумма весов с весом источника не ниже
+ * порога; среди сработавших правил есть якорь темы. Без якоря «травма» и «Казань» дают
+ * новость про футболиста, а не про покрытия.
+ * @returns {{ pass: boolean, score: number, tags: string[] }}
+ */
+export function rate(raw, sourceWeight, dict) {
+  const rated = score(raw, dict.rules || []);
+  const total = rated.score + (sourceWeight || 0);
+  const anchors = Array.isArray(dict.anchors) ? dict.anchors : [];
+  const pass = rated.score >= 1 && total >= (Number(dict.threshold) || THRESHOLD) && (!anchors.length || rated.tags.some((t) => anchors.includes(t)));
+  return { pass, score: total, tags: rated.tags };
+}
+
 export async function collect({ dry = false, only = "" } = {}) {
   const sources = (readJson(path.join(DIR, "sources.json"), { sources: [] })?.sources || []).filter((s) => s.enabled !== false && (!only || s.id === only));
   const dict = readJson(path.join(DIR, "dictionary.json"), { rules: [] }) || { rules: [] };
-  const dictionary = dict.rules || [];
-  const threshold = Number(dict.threshold) || THRESHOLD;
-  const anchors = Array.isArray(dict.anchors) ? dict.anchors : [];
   const health = readJson(dataPath("news", "health.json"), {}) || {};
   const fresh = [];
   const now = Date.now();
@@ -74,13 +86,9 @@ export async function collect({ dry = false, only = "" } = {}) {
         const id = createHash("sha1").update(url).digest("hex").slice(0, 16);
         if (known(id)) continue;
         if (raw.published && now - Date.parse(raw.published) > MAX_AGE_DAYS * 86_400_000) continue;
-        const rated = score(raw, dictionary);
-        const total = rated.score + (source.weight || 0);
-        if (rated.score < 1 || total < threshold) continue; // без единого слова ниши вес источника не спасает
-        // Якорь темы обязателен: «травма» и «Казань» без площадки или покрытия — это
-        // новость про футболиста, а не про нас.
-        if (anchors.length && !rated.tags.some((t) => anchors.includes(t))) continue;
-        const item = { id, source: source.id, sourceTitle: source.title, title: raw.title, url, published: raw.published || "", summary: raw.summary || "", score: total, tags: rated.tags, ...(raw.views ? { views: raw.views } : {}) };
+        const rated = rate(raw, source.weight, dict);
+        if (!rated.pass) continue;
+        const item = { id, source: source.id, sourceTitle: source.title, title: raw.title, url, published: raw.published || "", summary: raw.summary || "", score: rated.score, tags: rated.tags, ...(raw.views ? { views: raw.views } : {}) };
         fresh.push(item);
         if (!dry) add(item);
       }

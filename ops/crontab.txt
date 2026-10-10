@@ -34,6 +34,9 @@ LOG=/var/log/zavod
 # Цифры по вышедшему. 07:10 по Москве. Не чаще раза в сутки: частое чтение площадки закрывают.
 10 4 * * *         flock -n /tmp/zavod-metrics.lock $NODE $APP/src/metrics/pull.mjs >> $LOG/metrics.log 2>&1
 
+# Комментарии под публикациями: 08:00 и 15:00 по Москве, сводка в группу.
+0 5,12 * * *       flock -n /tmp/zavod-comments.lock $NODE $APP/src/comments/collect.mjs --send >> $LOG/comments.log 2>&1
+
 # Недельный отчёт в группу. Понедельник, 09:00 по Москве.
 0 6 * * 1          $NODE $APP/src/metrics/weekly.mjs --send >> $LOG/weekly.log 2>&1
 

@@ -23,6 +23,7 @@
 
 import { env } from "../lib/env.mjs";
 import { json, request, sleep as realSleep } from "../lib/http.mjs";
+import { describe } from "../video/describe.mjs";
 import { sendPackage } from "./manual.mjs";
 
 export const name = "rutube";
@@ -49,9 +50,11 @@ export async function publish(entry, ctx = {}) {
   const sleep = ctx.sleep || realSleep;
   const video = (entry.media || []).find((m) => m.type === "video");
   if (!video) return { ok: false, retry: false, error: "в записи нет ролика" };
+  // Описание то же, что уйдёт на YouTube: согласованный текст и блок ссылок с меткой площадки.
+  const description = describe(entry);
 
   if (!env("RUTUBE_TOKEN")) {
-    return sendPackage(entry, {
+    return sendPackage({ ...entry, text: description }, {
       onState: ctx.onState,
       why: "Ключа Rutube у завода пока нет: ролик загружает человек.",
       steps: [
@@ -67,7 +70,7 @@ export async function publish(entry, ctx = {}) {
   let id = entry.result?.rutubeId || "";
   if (!id) {
     const created = await request(`${API}/video/`, {
-      ...json({ url: video.url, title: entry.title, description: entry.text || "", is_hidden: false, category_id: Number(env("RUTUBE_CATEGORY", "67")) }, auth()),
+      ...json({ url: video.url, title: entry.title, description, is_hidden: false, category_id: Number(env("RUTUBE_CATEGORY", "67")) }, auth()),
       timeoutMs: 60_000,
     });
     if (created.kind !== "ok") {
