@@ -7,7 +7,7 @@
 //   npm run yt -- --desc --id=<запись>                  показать описание, которое уйдёт на канал
 //   npm run yt -- --upload --id=<запись> --file=<путь> [--thumb=<обложка>]
 //   npm run yt -- --status --video=<номер ролика>
-//   npm run yt -- --update --id=<запись>                переписать название и описание вышедшего ролика
+//   npm run yt -- --update --id=<запись>                отправить на ролик название и описание записи, изменённые после загрузки
 //   npm run yt -- --relink [--series=<ключ>]            обновить ссылки на соседние ролики в описаниях серии
 //   npm run yt -- --restore --video=<номер>             вернуть описание, каким оно было до первой правки завода
 //   npm run yt -- --series                              серии и что в них
@@ -181,15 +181,23 @@ async function doUpload() {
   const description = composeDescription(entry, context(registry));
   if (description.length > 5000) { console.error(`описание с блоком ссылок ${description.length} знаков, предел YouTube 5000: сократите текст`); return 1; }
   const due = dueAt(entry);
-  // Дата выхода ставится только одобренной записи: неодобренный ролик сам не откроется.
-  const publishAt = entry.status === "approved" && due > Date.now() + 10 * 60_000 ? new Date(due).toISOString() : undefined;
-  console.log(`загружаю «${entry.title}»${publishAt ? `, выход ${entry.date} в ${entry.time} МСК` : entry.status === "approved" ? ", без даты выхода: до слота меньше десяти минут, ролик откроет сервер" : ", без даты выхода: запись ещё ждёт «да». Срок сервер поставит сам, когда её одобрят"}…`);
+  /* Дата выхода ставится только одобренной записи: неодобренный ролик сам не откроется.
+     И только с запасом в полчаса. Загрузка идёт минуты, и всё это время запись на сервере
+     ещё не знает номера ролика: если её снимут посреди загрузки, срок, решённый в начале,
+     простоит до первой сверки. С запасом сверка успевает; без него ролик загружается без
+     срока, и в слот его открывает сервер. */
+  const publishAt = entry.status === "approved" && due > Date.now() + 30 * 60_000 ? new Date(due).toISOString() : undefined;
+  console.log(`загружаю «${entry.title}»${publishAt ? `, выход ${entry.date} в ${entry.time} МСК` : entry.status === "approved" ? ", без даты выхода: до слота меньше получаса, ролик откроет сервер" : ", без даты выхода: запись ещё ждёт «да». Срок сервер поставит сам, когда её одобрят"}…`);
   const res = await upload({ file, title: entry.title, description, tags: entry.tags || [], publishAt, privacy: "private" });
   if (!res.ok) { console.error(`✗ ${res.error}`); return 1; }
   console.log(`✓ загружено: https://www.youtube.com/watch?v=${res.id} · доступ: ${res.privacy}`);
   if (res.warning) console.error(`⚠ ${res.warning}`);
-  const saved = await queue("extra", { ref: entry.id, fields: { youtubeId: res.id, youtubePublishAt: publishAt || "" } });
+  // Вместе с номером ролика записывается отпечаток отправленного содержимого: по нему сервер
+  // видит, что на ролике лежит именно одобренный текст. Сервер тут же сверяет срок с
+  // записью: если её сняли, пока шла загрузка, срок снимается сразу, и строка ниже это скажет.
+  const saved = await queue("extra", { ref: entry.id, fields: { youtubeId: res.id, youtubePublishAt: publishAt || "", youtubeHash: entry.contentHash } });
   console.log((saved.lines || []).join("\n"));
+  if (saved.data && saved.data.status !== entry.status) console.error(`⚠ пока шла загрузка, запись изменилась: была «${entry.status}», стала «${saved.data.status}». Ролик лежит закрытым; что с ним делать, решите с утверждающим`);
   if (opt("thumb")) {
     const t = await setThumbnail(res.id, opt("thumb"));
     console.log(t.ok ? "✓ обложка поставлена" : `⚠ ${t.error}`);
@@ -245,10 +253,21 @@ async function main() {
     const entry = await entryOf(opt("id"));
     const id = entry.extra?.youtubeId;
     if (!id) { console.error("у записи нет номера ролика: она ещё не загружена"); return 1; }
+    /* Текст, которому человек клиента ещё не сказал «да», на открытый ролик не уходит.
+       На закрытый можно: его никто не видит, а срок выхода появится только после «Одобрить». */
+    const live = await status(id);
+    if (live.kind === "ok" && live.privacy === "public" && !["approved", "published"].includes(entry.status)) { console.error(`ролик уже открыт на YouTube, а запись «${entry.status}»: неодобренный текст на открытый ролик не отправляется. Сначала согласование`); return 1; }
     const registry = loadRegistry();
     const r = await updateSnippet(id, { title: entry.title, description: composeDescription(entry, context(registry, id)), tags: entry.tags || [] });
     console.log(r.ok ? (r.changed ? `✓ обновлено: ${r.title}` : "без изменений: на канале уже так") : `✗ ${r.error}`);
-    return r.ok ? 0 : 1;
+    if (!r.ok) return 1;
+    /* Отпечаток того, что теперь лежит на ролике. Пока он не равен отпечатку одобренной
+       записи, сервер не ставит ролику срок и не открывает его: после правки на YouTube
+       оставались бы прежние, отклонённые название и описание. */
+    const saved = await queue("extra", { ref: entry.id, fields: { youtubeHash: entry.contentHash } });
+    console.log((saved.lines || []).join("\n"));
+    if (entry.status !== "approved") console.log(`запись сейчас «${entry.status}»: срок выхода появится после «Одобрить»`);
+    return saved.code || 0;
   }
 
   if (flag("relink")) {

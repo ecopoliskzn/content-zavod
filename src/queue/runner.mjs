@@ -30,21 +30,22 @@
 //
 // Запуск руками:  node src/queue/runner.mjs [--dry]
 
-import { existsSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { config, channel as channelCfg } from "../lib/config.mjs";
-import { dataPath, wrongUser } from "../lib/env.mjs";
+import { dataPath, env, wrongUser } from "../lib/env.mjs";
 import { lock, readJson, writeJson } from "../lib/files.mjs";
 import { alert, h, report, resolve, toGroup } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskHour } from "../lib/time.mjs";
 import { adapter } from "../channels/index.mjs";
 import { sendReply } from "../channels/manual.mjs";
 import { check } from "../gates/index.mjs";
-import { syncAll as syncYoutube } from "../video/schedule.mjs";
+import { ownsQueue, staleOnYoutube, syncAll as syncYoutube } from "../video/schedule.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
 import { channelLoad, record } from "./ledger.mjs";
 import { all, compact, forcePublished, get, patch, transition } from "./store.mjs";
 import { isHeld, isTakeover, stopState } from "./switch.mjs";
+import { adoptServerState, sayAdopted } from "./takeover.mjs";
 
 const STUCK_MIN = 15;
 
@@ -60,6 +61,11 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
   const out = { published: [], handed: [], retry: [], failed: [], expired: [], waiting: [], digest: false };
   const rules = config().release;
 
+  /* На компьютере оператора лежит копия очереди, а не очередь. Выпускать по ней можно
+     только при перехвате расписания. Задача аварийного выпуска, забытая включённой после
+     возврата, иначе шла бы по устаревшей копии. */
+  if (env("QUEUE_API_BASE") && !isTakeover()) return { ...out, stopped: true, idle: "на компьютере оператора выпуск идёт только при перехвате расписания" };
+
   /* Пульс пишется на каждом проходе, даже при остановке: по нему сторож на компьютере
      оператора понимает, что сервер жив, а сам выпуск видит, что молчал. Считается по
      настоящим часам, а не по параметру now: простой — это про реальное время. */
@@ -73,19 +79,31 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     if (rules.outageHoldMin && silentMin > rules.outageHoldMin && !isHeld() && !stopState().stopped && !isTakeover()) {
       writeFileSync(dataPath("HOLD"), JSON.stringify({ at: new Date().toISOString(), silentMin: Math.round(silentMin) }), "utf8");
     }
-    /* Сроки роликов YouTube. Сверка стоит до рубильника намеренно: при остановке
-       выпуска срок с роликов как раз и нужно снять. Сбой сверки выпуск не роняет. */
-    await precheckYoutube(now).catch((e) => console.error(`${new Date().toISOString()} проверка роликов YouTube перед выпуском не прошла: ${e?.message || e}`));
-    await syncYoutube({ now }).catch((e) => console.error(`${new Date().toISOString()} сверка сроков YouTube не прошла: ${e?.message || e}`));
+    if (isTakeover()) {
+      /* Перехват: перед проходом компьютер спрашивает сервер, не остановил ли человек
+         выпуск и не снял ли записи после копии. Сервер молчит — идём по копии. */
+      const said = sayAdopted(await adoptServerState().catch(() => ({ reached: false })));
+      if (said) console.log(`${new Date().toISOString()} сверка с сервером: ${said}`);
+    }
+    if (ownsQueue()) {
+      /* Сроки роликов YouTube ведёт только хозяин очереди. Сверка стоит до рубильника
+         намеренно: при остановке выпуска срок с роликов как раз и нужно снять. Сбой
+         сверки выпуск не роняет. */
+      await precheckYoutube(now).catch((e) => console.error(`${new Date().toISOString()} проверка роликов YouTube перед выпуском не прошла: ${e?.message || e}`));
+      await syncYoutube({ now }).catch((e) => console.error(`${new Date().toISOString()} сверка сроков YouTube не прошла: ${e?.message || e}`));
+    }
   }
 
   const stop = stopState();
   if (stop.stopped) {
-    if (!dry) {
-      // Остановка ради перехвата: команду /start_release человеку не предлагаем. Она
-      // включила бы сервер, пока расписание ведёт компьютер оператора: два выпускающих.
-      if (stop.takeover) await alert("release:stop", "Выпуск на сервере остановлен: расписание временно ведёт компьютер оператора.", { action: "ничего включать не нужно. Выпуск на сервере вернёт оператор, когда передаст серверу вышедшее. Если это сообщение приходит второй день, напишите оператору" });
-      else await alert("release:stop", `Выпуск остановлен${stop.by ? `: ${h(stop.by)}` : ""}${stop.reason ? ` (${h(stop.reason)})` : ""}. По расписанию ничего не выходит.`, { action: "если остановка не нужна, отправьте в эту группу команду /start_release" });
+    // Компьютер оператора при перехвате об остановке не пишет: о ней уже сказал сервер,
+    // с которого она принята, а местную остановку оператор поставил сам.
+    if (!dry && !isTakeover()) {
+      /* Остановил человек: напоминаем, чем включить. Остановка только ради перехвата:
+         команду /start_release не предлагаем, она тут ничего не включит, а расписание
+         в это время ведёт компьютер оператора. */
+      if (stop.human) await alert("release:stop", `Выпуск остановлен${stop.by ? `: ${h(stop.by)}` : ""}${stop.reason ? ` (${h(stop.reason)})` : ""}. По расписанию ничего не выходит.${stop.takeover ? " Расписание при этом перехвачено компьютером оператора: он остановится при ближайшей сверке с сервером." : ""}`, { action: "если остановка не нужна, отправьте в эту группу команду /start_release" });
+      else await alert("release:stop", "Выпуск на сервере остановлен: расписание временно ведёт компьютер оператора.", { action: "ничего включать не нужно. Выпуск на сервере вернёт оператор, когда передаст серверу вышедшее. Если это сообщение приходит второй день, напишите оператору" });
     }
     return { ...out, stopped: true };
   }
@@ -244,7 +262,9 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     }
 
     if (!dry) {
-      await nudges(now);
+      // При перехвате о согласовании не напоминаем: новое «да» компьютер не принимает,
+      // и просьба «нажмите „Одобрить“» обещала бы выход, которого не будет.
+      if (!isTakeover()) await nudges(now);
       const s = state();
       const day = mskDate(now);
       if (hour >= rules.morningHour && hour < 12 && s.morningDay !== day) {
@@ -314,6 +334,10 @@ export function morning(entries, now) {
   }
   const rework = entries.filter((e) => e.status === "rework");
   if (rework.length) rows.push("", `На правке у оператора: ${rework.length}.`);
+  // Запись одобрена после правки, а на ролике ещё прежние название и описание: до команды
+  // оператора ролик закрыт и в слот не выйдет. Молчать об этом до минуты слота нельзя.
+  const stale = entries.filter((e) => e.status === "approved" && staleOnYoutube(e)).sort(byDue);
+  if (stale.length) rows.push("", `<b>Одобрены, но на YouTube лежит прежний текст: ${stale.length}</b>`, ...stale.map((e) => `${e.date.slice(8, 10)}.${e.date.slice(5, 7)} ${line(e)}`), "Оператор отправляет на ролик новый текст командой; до этого ролик закрыт и в слот не выйдет.");
   rows.push(...handedRows(entries));
   return rows.join("\n");
 }

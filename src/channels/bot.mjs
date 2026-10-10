@@ -15,6 +15,11 @@
 // следующему. Оборвалась на середине — повторный проход продолжит с того же места и
 // никому не отправит дважды.
 //
+// СЕТЕВОЙ СБОЙ НА ОДНОМ ЧЕЛОВЕКЕ. Дошло ли сообщение, после обрыва неизвестно. Людям
+// обещано не больше двух сообщений в месяц, поэтому из двух ошибок выбрана меньшая:
+// такому человеку рассылка не повторяется, а в итоге он посчитан как «не подтверждено».
+// Внутреннего повтора у отправки нет по той же причине.
+//
 // Человек, заблокировавший бота, помечается и из следующих рассылок исключается: бот,
 // который стучится к заблокировавшим, быстро получает ограничения от Telegram.
 
@@ -30,6 +35,8 @@ const MONTH_LIMIT = 2;
 const FOOTER = "\n\n<i>Отказаться от сообщений: /stop</i>";
 
 const logFile = (id) => dataPath("leads", `broadcast-${id}.jsonl`);
+// Сбои, при которых запрос до Telegram не дошёл вовсе: соединения не было.
+const NOT_SENT = /ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ENETUNREACH|EHOSTUNREACH/;
 
 /** Кому можно писать: согласие дано, бот не остановлен и не заблокирован. Чистая функция. */
 export function recipients(subscribers) {
@@ -55,7 +62,7 @@ export async function publish(entry, ctx = {}) {
   let network = 0;
   for (const s of list) {
     if (already.has(String(s.id))) continue;
-    const res = await tg("sendMessage", { chat_id: s.id, text, ...extra });
+    const res = await tg("sendMessage", { chat_id: s.id, text, ...extra }, { retries: 0 });
     if (res.kind === "ok") {
       appendJsonl(logFile(entry.id), { user: String(s.id), at: new Date().toISOString() });
       sent++;
@@ -64,14 +71,24 @@ export async function publish(entry, ctx = {}) {
       appendJsonl(logFile(entry.id), { user: String(s.id), at: new Date().toISOString(), refused: String(res.error || "").slice(0, 80) });
       if (/blocked|deactivated|chat not found|user is deactivated/i.test(res.error || "")) await b.telegram.store.upsertSubscriber(String(s.id), { status: "blocked" });
       blocked++;
-    } else if (++network >= 5) {
-      const left = list.length - already.size - sent - blocked;
-      return { ok: false, retry: true, error: `связь с Telegram рвётся: доставлено ${already.size + sent}, осталось ${left}. Повтор продолжит с этого места` };
+    } else {
+      /* Обрыв: могло дойти, могло нет. Второй раз этому человеку не шлём. Исключение —
+         сбой, при котором сообщение точно не ушло: соединение не установилось либо
+         Telegram попросил притормозить (429). Таких людей повтор рассылки найдёт сам. */
+      const notSent = res.status === 429 || NOT_SENT.test(res.error || "");
+      if (!notSent) appendJsonl(logFile(entry.id), { user: String(s.id), at: new Date().toISOString(), unsure: true });
+      if (++network >= 5 || res.status === 429) {
+        const rows = readJsonl(logFile(entry.id));
+        const left = list.filter((x) => !rows.some((r) => String(r.user) === String(x.id))).length;
+        return { ok: false, retry: true, error: `связь с Telegram рвётся: доставлено ${rows.filter((r) => !r.refused && !r.unsure).length}, не подтверждено ${rows.filter((r) => r.unsure).length}, осталось ${left}. Повтор продолжит с этого места` };
+      }
     }
     await sleep(70); // предел Bot API — около 30 сообщений в секунду, идём вдвое медленнее
   }
-  const delivered = readJsonl(logFile(entry.id)).filter((r) => !r.refused).length;
-  return { ok: true, id: `bot-${entry.id}`, link: "", note: `рассылка: доставлено ${delivered} из ${list.length}${blocked ? `, недоступны ${blocked}` : ""}` };
+  const rows = readJsonl(logFile(entry.id));
+  const delivered = rows.filter((r) => !r.refused && !r.unsure).length;
+  const unsure = rows.filter((r) => r.unsure).length;
+  return { ok: true, id: `bot-${entry.id}`, link: "", note: `рассылка: доставлено ${delivered} из ${list.length}${blocked ? `, недоступны ${blocked}` : ""}${unsure ? `, не подтверждено ${unsure}` : ""}` };
 }
 
 /** «Просмотры» рассылки — число доставленных сообщений. */
@@ -79,7 +96,7 @@ export async function metrics(items) {
   return items.map((i) => {
     const id = String(i.externalId).replace(/^bot-/, "");
     const rows = readJsonl(logFile(id));
-    return { externalId: i.externalId, views: rows.filter((r) => !r.refused).length, refused: rows.filter((r) => r.refused).length };
+    return { externalId: i.externalId, views: rows.filter((r) => !r.refused && !r.unsure).length, refused: rows.filter((r) => r.refused).length };
   });
 }
 

@@ -345,3 +345,33 @@ test("опрос комментариев: первый проход тольк�
   assert.equal(toEvent({ id: "c8", text: "спасибо", username: "Ecopolis_KZN" }, "m1", "999", "ecopolis_kzn"), null);
   assert.equal(toEvent({ id: "c9", text: "" }, "m1", "999", ""), null);
 });
+
+test("рассылка в боте: после обрыва связи человеку второй раз не пишем, в итоге он «не подтверждён»", async () => {
+  const { publish, metrics } = await import("../src/channels/bot.mjs");
+  await bot().telegram.store.upsertSubscriber("9101", { adsConsent: true });
+  await bot().telegram.store.upsertSubscriber("9102", { adsConsent: true });
+  const real = globalThis.fetch;
+  let toBroken = 0;
+  globalThis.fetch = async (url, init) => {
+    const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
+    // Запрос ушёл, ответ потерялся: дошло ли сообщение, неизвестно.
+    if (String(body.chat_id) === "9102") { toBroken++; throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); }
+    return real(url, init);
+  };
+  try {
+    const entry = { id: "aaaaaaaaaaaaaaaa", text: "Вышел разбор приёмки покрытия." };
+    const quiet = { sleep: async () => {} };
+    const first = await publish(entry, quiet);
+    assert.equal(first.ok, true);
+    assert.match(first.note, /доставлено 1 из 2, не подтверждено 1/);
+    assert.equal(toBroken, 1, "внутреннего повтора у отправки нет");
+    // Повторный проход: ни доставленному, ни «не подтверждённому» второе сообщение не уходит.
+    sent.length = 0;
+    await publish(entry, quiet);
+    assert.equal(toBroken, 1);
+    assert.ok(!sent.some((s) => String(s.body.chat_id) === "9101"));
+    assert.deepEqual(await metrics([{ externalId: "bot-aaaaaaaaaaaaaaaa" }]), [{ externalId: "bot-aaaaaaaaaaaaaaaa", views: 1, refused: 0 }]);
+  } finally {
+    globalThis.fetch = real;
+  }
+});

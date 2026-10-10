@@ -12,12 +12,12 @@ import { alert, h, resolve as resolveAlert } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskTime } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
 import { inbox, submit } from "../bot/approval.mjs";
-import { afterChange as syncYoutube, sayAll, syncAll } from "../video/schedule.mjs";
+import { afterChange as syncYoutube, sayAll, staleOnYoutube, syncAll } from "../video/schedule.mjs";
 import { STATUS_TITLE, normalize, preview, validate } from "./format.mjs";
-import { record } from "./ledger.mjs";
+import { record, rows as ledgerRows } from "./ledger.mjs";
 import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
 import { all, forceHanded, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
-import { clearStop, setStop, stopState } from "./switch.mjs";
+import { clearHold, clearStop, isHeld, isTakeover, runnerBusy, setStop, stopState } from "./switch.mjs";
 
 const byDue = (a, b) => dueAt(a) - dueAt(b);
 
@@ -118,6 +118,11 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         else lines.push(e.title ? `# ${e.title}\n` : "", e.text || "");
         if (e.note) lines.push(`заметка: ${e.note}`);
         if (e.result?.link) lines.push(`ссылка: ${e.result.link}`);
+        if (e.extra?.youtubeId) {
+          lines.push(`ролик на YouTube: https://www.youtube.com/watch?v=${e.extra.youtubeId}${e.extra.youtubePublishAt ? ` · срок выхода ${e.extra.youtubePublishAt}` : " · срока выхода нет"}`);
+          // Запись правили после загрузки: на ролике лежит текст, которому сказали «нет».
+          if (staleOnYoutube(e) && !["published", "cancelled"].includes(e.status)) lines.push(`на ролике прежние название и описание: срок не встанет и ролик не откроется, пока не выполнена команда npm run yt -- --update --id=${e.name}`);
+        }
         if (e.approval?.name) lines.push(`одобрил(а): ${e.approval.name}, ${e.approval.at}`);
         // Вывод уходит на компьютер оператора: номера Telegram людей клиента в нём не нужны.
         if (args.history) for (const h of history(e.id)) lines.push(`  ${h.at} ${actorName(h.by)} → ${STATUS_TITLE[h.status] || h.status}`);
@@ -202,7 +207,36 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const e = find(args.ref, args.channel);
         const saved = await patch(e.id, { extra: { ...(e.extra || {}), ...(args.fields || {}) } }, actor);
         lines.push(`дописано (${Object.keys(args.fields || {}).join(", ")}): ${row(saved)}`);
-        return { code: 0, lines, data: withoutIds(saved) };
+        /* Номер ролика приходит в конце загрузки, а она идёт минуты. Запись за это время
+           могли снять: тогда срок, с которым ролик ушёл на YouTube, снимается здесь же, а
+           не через пять минут на проходе выпуска. */
+        const yt = await syncYoutube(saved.id);
+        if (yt) lines.push(yt);
+        return { code: 0, lines, data: withoutIds(get(saved.id) || saved) };
+      }
+      case "pulse": {
+        /* Короткий ответ компьютеру оператора при перехвате расписания: рубильник, статусы
+           записей и то, что сервер успел сделать с незавершёнными (вышедшие части ветки,
+           номер попытки). По нему компьютер узнаёт, что человек остановил выпуск либо снял
+           запись, а ветку, начатую сервером, продолжает с места обрыва.
+           busy — на сервере прямо сейчас идёт проход выпуска: он может взять запись, чей
+           слот наступил до остановки. Пока он идёт, компьютер такие записи не трогает. */
+        const entries = all();
+        const open = entries.filter((x) => ["approved", "running", "failed", "expired"].includes(x.status) && (x.done?.length || x.attempts));
+        return {
+          code: 0,
+          lines: [],
+          data: {
+            stop: stopState(),
+            held: isHeld(),
+            busy: runnerBusy(),
+            statuses: Object.fromEntries(entries.map((x) => [x.id, x.status])),
+            // Отпечатки текста одобренных записей: по ним компьютер видит, что запись после
+            // копии исправили и одобрили заново, и прежний текст не выпускает.
+            hashes: Object.fromEntries(entries.filter((x) => x.status === "approved").map((x) => [x.id, x.contentHash])),
+            progress: Object.fromEntries(open.map((x) => [x.id, { done: x.done || [], attempts: x.attempts ?? 0, result: x.result || null }])),
+          },
+        };
       }
       case "slots": {
         // Ближайшие свободные слоты по рабочей сетке. --kind=video покажет строку сетки для видео.
@@ -269,28 +303,55 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         return { code: 0, lines, data: found };
       }
       case "pause": {
-        // Рубильник. Остановок две: человек сказал «стоп» либо расписание перехватывает
-        // компьютер оператора (takeover). Вторую снимает только возврат расписания.
-        setStop({ by: actor, reason: String(args.reason || ""), takeover: Boolean(args.takeover) });
+        // Рубильник. Отметок две, и они независимы: человек сказал «стоп» либо расписание
+        // перехватывает компьютер оператора (takeover). Подробно: src/queue/switch.mjs.
         if (args.takeover) {
+          const now = stopState();
+          /* Человек остановил выпуск, значит, выпускать не должен никто. Перехват здесь
+             дал бы обратное: компьютер оператора выпустил бы то, что человек остановил.
+             ongoing — перехват уже идёт, и компьютер ставит отметку серверу, который
+             вернулся после простоя. Тут отказывать нельзя: без отметки команда
+             /start_release включила бы на сервере второго выпускающего. Остановку
+             человека компьютер при этом принимает сам, при сверке. */
+          if (now.human && !args.ongoing) {
+            return { code: 1, lines: [`выпуск остановлен человеком${now.by ? ` (${now.by})` : ""}${now.reason ? `: ${now.reason}` : ""}. Перехватывать нечего: расписание стоит по его решению. Включает его команда /start_release в рабочей группе`] };
+          }
+          setStop({ by: actor, reason: String(args.reason || ""), takeover: true });
           lines.push("выпуск на сервере остановлен ради перехвата. Включит его возврат: npm run mirror -- --handback");
           // Сроки роликов YouTube не трогаем: сервер уступил расписание, а «не выпускать» никто не говорил.
-        } else {
-          lines.push("выпуск на сервере остановлен (файл STOP). Включить: npm run queue -- resume");
-          lines.push(...await youtubeAfterSwitch());
+          return { code: 0, lines };
         }
+        setStop({ by: actor, reason: String(args.reason || "") });
+        // С флагом --local команда исполняется на компьютере оператора при перехвате: слова другие.
+        lines.push(isTakeover() ? "выпуск на этом компьютере остановлен. Включить: npm run queue -- resume --local" : "выпуск на сервере остановлен (файл STOP). Включить: npm run queue -- resume");
+        if (stopState().takeover) lines.push("расписание сейчас ведёт компьютер оператора: он узнает об остановке при ближайшем проходе, если сервер у него на связи");
+        lines.push(...await youtubeAfterSwitch());
         return { code: 0, lines };
       }
       case "resume": {
-        // Остановку ради перехвата снимает только возврат (он передаёт handback): иначе
-        // сервер и компьютер оператора выпускали бы одно и то же.
-        if (stopState().takeover && !args.handback) {
+        const was = stopState();
+        if (args.handback) {
+          // Возврат расписания снимает только отметку перехвата. Слово человека остаётся в силе.
+          const now = clearStop({ takeover: true });
+          /* Удержание после простоя тоже снимается: оно ждало ответа на вопрос «не выходило
+             ли что-то без сервера», а возврат как раз и передал всё вышедшее. */
+          clearHold();
+          resolveAlert("release:hold");
+          if (!now.human) resolveAlert("release:stop");
+          lines.push(now.human ? `перехват снят, но выпуск на сервере остаётся остановленным: его остановил человек${now.by ? ` (${now.by})` : ""}. Включает команда /start_release в рабочей группе` : "выпуск на сервере включён");
+          lines.push(...await youtubeAfterSwitch());
+          return { code: 0, lines };
+        }
+        // Остановку ради перехвата снимает только возврат: иначе сервер и компьютер
+        // оператора выпускали бы одно и то же.
+        if (was.takeover && !was.human) {
           return { code: 1, lines: ["выпуск остановлен ради перехвата расписания компьютером оператора. Включает его возврат: npm run mirror -- --handback. Иначе выпускающих станет двое"] };
         }
-        clearStop();
+        const now = clearStop();
+        clearHold();
         resolveAlert("release:stop");
         resolveAlert("release:hold");
-        lines.push("выпуск на сервере включён");
+        lines.push(isTakeover() ? "выпуск на этом компьютере включён: перехват расписания продолжается" : now.takeover ? "остановка человеком снята, но расписание всё ещё ведёт компьютер оператора: выпуск на сервере включит возврат (npm run mirror -- --handback)" : "выпуск на сервере включён");
         lines.push(...await youtubeAfterSwitch());
         return { code: 0, lines };
       }
@@ -299,34 +360,95 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         // серверу, иначе он выпустит её второй раз.
         const e = find(args.ref, args.channel);
         const at = args.at || new Date().toISOString();
+        const title = channelCfg(e.channel).title;
+        const was = STATUS_TITLE[e.status] || e.status;
+        /* Возврат расписания после перехвата. Что-то ушло с компьютера оператора, а на
+           сервере согласия на записи уже нет: утверждающий снял её либо отозвал «да» после
+           последней копии, и компьютер об этом не знал. Принять это по обычным правилам
+           нельзя, промолчать тоже: возврат застрял бы навсегда, а запись, ждущая «да»,
+           после согласования вышла бы второй раз. Поэтому факт пишется в журнал один раз,
+           запись закрывается, а человек клиента узнаёт об этом сразу. */
+        const noConsent = Boolean(args.takeover) && ["review", "rework", "draft", "cancelled"].includes(e.status);
+        /* Второй случай того же рода: согласие на записи есть, но на другой текст. После копии
+           её вернули на правку, исправили и одобрили заново, а с компьютера ушёл прежний текст
+           (сервер в это время был компьютеру недоступен, иначе сверка это остановила бы). */
+        const otherText = Boolean(args.takeover && args.contentHash && e.contentHash && args.contentHash !== e.contentHash) && !noConsent;
+        const close = async (note) => { if (!["cancelled", "published"].includes(e.status)) await transition(e.id, "cancelled", { note }, actor); };
+        const logged = (status) => ledgerRows().some((r) => r.id === e.id && r.status === status && r.withoutApproval);
+
+        if (args.partial) {
+          /* Проход на компьютере оператора оборвался посреди записи: часть ветки вышла либо
+             отправка началась и не подтвердилась. Сервер должен продолжить с места обрыва и
+             со сверкой, а не публиковать с первой реплики. */
+          const doneParts = Array.isArray(args.done) ? args.done : [];
+          if (noConsent) {
+            await close(`частично вышла с компьютера оператора при перехвате, когда запись была «${was}»`);
+            await alert(`stray:${e.id}`, `<b>${h(title)}</b>: «${h(e.name)}» начала выходить во время аварии сервера${doneParts.length ? ` (вышло частей: ${doneParts.length})` : ""}, хотя на сервере она была «${h(was)}».${args.result?.link ? `\n${h(args.result.link)}` : ""}`, { action: "откройте площадку. Вышедшую часть убирает владелец аккаунта, если она не должна быть видна" });
+            lines.push(`начала выходить без согласия: ${e.channel} · ${e.name} (на сервере была «${was}»). В рабочую группу ушло сообщение, запись закрыта`);
+            return { code: 0, lines };
+          }
+          if (otherText && doneParts.length) {
+            // Часть ветки вышла прежним текстом: продолжать её новым нельзя, получится склейка.
+            await close("начала выходить с компьютера оператора прежним текстом: после копии запись исправили и одобрили заново");
+            await alert(`stray:${e.id}`, `<b>${h(title)}</b>: «${h(e.name)}» начала выходить во время аварии сервера прежним текстом (вышло частей: ${doneParts.length}). После копии запись исправили и одобрили заново, компьютер оператора об этом не знал.${args.result?.link ? `\n${h(args.result.link)}` : ""}`, { action: "откройте площадку. Вышедшую часть убирает владелец аккаунта; исправленный текст оператор поставит новой записью" });
+            lines.push(`начала выходить с прежним текстом: ${e.channel} · ${e.name}. В рабочую группу ушло сообщение, запись закрыта`);
+            return { code: 0, lines };
+          }
+          // Прежним текстом не вышло ничего: сервер выпустит исправленную запись сам, с начала.
+          if (otherText) { lines.push(`не вышла: ${e.channel} · ${e.name}. На сервере одобрен исправленный текст, он выйдет своим порядком`); return { code: 0, lines }; }
+          if (["published", "handed"].includes(e.status)) { lines.push(`уже «${was}»: ${row(e)}`); return { code: 0, lines }; }
+          const saved = await patch(e.id, { done: doneParts.length ? doneParts : e.done, result: { ...(e.result || {}), ...(args.result || {}) }, attempts: Math.max(e.attempts ?? 0, 1), note: args.note || "начата не на сервере: продолжается со сверкой" }, actor);
+          lines.push(`передано незавершённое, сервер продолжит со сверкой: ${row(saved)}`);
+          return { code: 0, lines, data: withoutIds(saved) };
+        }
+
         if (args.handed) {
           // Пакет на ручную выкладку ушёл в группу с компьютера оператора: публикации ещё нет.
+          if (noConsent) {
+            await close(`пакет ушёл сотруднику с компьютера оператора при перехвате, когда запись была «${was}»`);
+            if (!logged("handed")) record(e, "handed", { at, by: actor, withoutApproval: true });
+            await alert(`stray:${e.id}`, `<b>${h(title)}</b>: пакет «${h(e.name)}» ушёл сотруднику на ручную выкладку во время аварии сервера, хотя на сервере запись была «${h(was)}».`, { action: "не выкладывайте этот пакет. Если он уже выложен, публикацию убирает владелец аккаунта" });
+            lines.push(`пакет ушёл без согласия: ${e.channel} · ${e.name} (на сервере была «${was}»). В рабочую группу ушло сообщение, запись закрыта`);
+            return { code: 0, lines };
+          }
+          // Повтор возврата ту же запись второй раз в журнал не пишет.
+          if (["handed", "published"].includes(e.status)) { lines.push(`уже «${was}»: ${row(e)}`); return { code: 0, lines }; }
+          if (otherText) {
+            /* В пакете прежний текст. Запись остаётся одобренной: сервер отправит сотруднику
+               пакет с исправленным текстом, а старый выкладывать нельзя. */
+            await alert(`stray:${e.id}`, `<b>${h(title)}</b>: пакет «${h(e.name)}», ушедший сотруднику во время аварии сервера, содержит прежний текст. После копии запись исправили и одобрили заново.`, { action: "не выкладывайте этот пакет: следом придёт новый, с согласованным текстом. Если старый уже выложен, публикацию правит владелец аккаунта" });
+            lines.push(`пакет ушёл с прежним текстом: ${e.channel} · ${e.name}. В рабочую группу ушло сообщение, сервер отправит пакет с исправленным текстом`);
+            return { code: 0, lines };
+          }
           const handed = await forceHanded(e.id, { result: { ...(e.result || {}), manual: "пакет отправлен, ждёт ручной выкладки", ...(args.packageMessageId ? { packageMessageId: args.packageMessageId } : {}) }, handedAt: at, note: args.note || "пакет отправлен не через сервер" }, actor);
           record(handed, "handed", { at, by: actor });
           lines.push(`отмечена переданной на ручную выкладку: ${row(handed)}`);
           return { code: 0, lines, data: withoutIds(handed) };
         }
-        /* Возврат расписания после перехвата. Запись вышла с компьютера оператора, а на
-           сервере согласия на ней уже нет: утверждающий снял её либо отозвал «да» после
-           последней копии, и компьютер об этом не знал. Отметить её вышедшей по правилам
-           нельзя, промолчать тоже: возврат застрял бы навсегда, а запись, ждущая «да»,
-           после согласования вышла бы второй раз. Поэтому факт пишется в журнал, запись
-           закрывается, а человек клиента узнаёт об этом сразу. */
-        if (args.takeover && ["review", "rework", "draft", "cancelled"].includes(e.status)) {
-          const was = STATUS_TITLE[e.status] || e.status;
-          if (e.status !== "cancelled") await transition(e.id, "cancelled", { note: `вышла с компьютера оператора при перехвате расписания, когда запись была «${was}»`, result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" } }, actor);
-          record(e, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor, withoutApproval: true });
-          await alert(`stray:${e.id}`, `<b>${h(channelCfg(e.channel).title)}</b>: «${h(e.name)}» вышла во время аварии сервера, хотя на сервере она была «${h(was)}». Расписание вёл компьютер оператора по копии, снятой до этого решения.${args.link ? `\n${h(args.link)}` : ""}`, { action: "откройте публикацию. Если она должна быть убрана, её удаляет владелец аккаунта на самой площадке" });
+
+        if (noConsent) {
+          await close(`вышла с компьютера оператора при перехвате расписания, когда запись была «${was}»`);
+          if (!logged("published")) record(e, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor, withoutApproval: true });
+          await alert(`stray:${e.id}`, `<b>${h(title)}</b>: «${h(e.name)}» вышла во время аварии сервера, хотя на сервере она была «${h(was)}». Расписание вёл компьютер оператора по копии, снятой до этого решения.${args.link ? `\n${h(args.link)}` : ""}`, { action: "откройте публикацию. Если она должна быть убрана, её удаляет владелец аккаунта на самой площадке" });
           lines.push(`вышла без согласия: ${e.channel} · ${e.name} (на сервере была «${was}»). В рабочую группу ушло сообщение, запись закрыта`);
           return { code: 0, lines };
         }
-        const done = await forcePublished(e.id, { result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" }, publishedAt: at, note: args.note || "вышла не через сервер" }, actor);
-        record(done, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor });
+        /* Уже отмечена: повтор команды строку в журнал не дописывает. По журналу считается
+           суточный потолок площадки, и три повтора возврата «съедали» бы три выхода. */
+        if (e.status === "published") { lines.push(`уже отмечена вышедшей: ${row(e)}`); return { code: 0, lines, data: withoutIds(e) }; }
+        const done = await forcePublished(e.id, { result: { ...(e.result || {}), id: args.externalId || "", link: args.link || "" }, publishedAt: at, note: otherText ? "вышла с компьютера оператора прежним текстом: после копии запись исправили и одобрили заново" : args.note || "вышла не через сервер" }, actor);
+        record(done, "published", { externalId: args.externalId || "", link: args.link || "", at, by: actor, ...(otherText ? { otherText: true } : {}) });
+        if (otherText) {
+          // Публикация состоялась, второй не будет. Но согласован был другой текст: человек должен знать.
+          await alert(`stray:${e.id}`, `<b>${h(title)}</b>: «${h(e.name)}» вышла во время аварии сервера прежним текстом. После копии запись исправили и одобрили заново, компьютер оператора об этом не знал.${args.link ? `\n${h(args.link)}` : ""}`, { action: "откройте публикацию и сравните с согласованным текстом. Править либо убирать её может владелец аккаунта на самой площадке" });
+          lines.push(`вышла с прежним текстом: ${e.channel} · ${e.name}. В рабочую группу ушло сообщение, запись отмечена вышедшей`);
+          return { code: 0, lines, data: withoutIds(done) };
+        }
         lines.push(`отмечена вышедшей: ${row(done)}`);
         return { code: 0, lines, data: withoutIds(done) };
       }
       default:
-        return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, comments, export, keys, pause, resume, mark`] };
+        return { code: 1, lines: [`команды «${cmd}» нет. Есть: add, list, show, check, submit, inbox, move, cancel, extra, slots, news, comments, export, keys, pulse, pause, resume, mark`] };
     }
   } catch (e) {
     return { code: e.code === "RULE" ? 1 : 2, lines: [...lines, e.message || String(e)] };

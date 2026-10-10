@@ -4,15 +4,14 @@
 // согласовать, поправить, снять, остановить выпуск, взять заявку. Командная строка и
 // сервер остаются оператору.
 
-import { existsSync, rmSync } from "node:fs";
-import { dataPath, list } from "../lib/env.mjs";
+import { list } from "../lib/env.mjs";
 import { h, resolve as resolveAlert, toGroup } from "../lib/notify.mjs";
 import { answerCallback, editMessageText, sendMessage } from "../lib/telegram.mjs";
 import { STATUS_TITLE, preview } from "../queue/format.mjs";
 import { record } from "../queue/ledger.mjs";
 import { digest, morning } from "../queue/runner.mjs";
 import { all, get, patch, transition } from "../queue/store.mjs";
-import { clearStop, isHeld, setStop, stopState } from "../queue/switch.mjs";
+import { clearHold, clearStop, isHeld, setStop, stopState } from "../queue/switch.mjs";
 import { setStatus as setNewsStatus } from "../news/inbox.mjs";
 import { setStatus as setCommentStatus } from "../comments/collect.mjs";
 import { sayAll, syncAll } from "../video/schedule.mjs";
@@ -26,6 +25,8 @@ async function youtubeAfterSwitch() {
 }
 
 const TAKEOVER_NOTE = "Расписание сейчас ведёт компьютер оператора: сервер остановлен на время аварии. Включит его оператор, когда вернёт серверу вышедшее. Команда /start_release сейчас дала бы двух выпускающих и задвоенные посты.";
+// Компьютер оператора спрашивает сервер перед каждым проходом, раз в пять минут.
+const TAKEOVER_LAG = "Расписание сейчас ведёт компьютер оператора. О вашей команде он узнаёт при сверке с сервером, в пределах пяти минут: запись, чей слот наступает прямо сейчас, ещё может выйти.";
 
 const isApprover = (id) => list("APPROVER_IDS").includes(String(id));
 const who = (from) => [from?.first_name, from?.last_name].filter(Boolean).join(" ") || from?.username || String(from?.id || "");
@@ -59,13 +60,15 @@ export async function handleCommand(message) {
       // Состояние рубильников стоит первой строкой: «почему ничего не выходит» — самый
       // частый вопрос, и ответ на него должен быть виден с телефона.
       const stop = stopState();
-      const state = stop.takeover
-        ? `⏸ <b>Выпуск на сервере остановлен.</b> ${TAKEOVER_NOTE}\n\n`
-        : stop.stopped
-          ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release.\n\n"
-          : isHeld()
-            ? "⏳ <b>Выпуск ждёт кнопки «Продолжить выпуск»</b>: сервер вернулся после простоя.\n\n"
-            : "";
+      const state = stop.human && stop.takeover
+        ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release. Расписание при этом перехвачено компьютером оператора: после команды выпуск продолжит он.\n\n"
+        : stop.takeover
+          ? `⏸ <b>Выпуск на сервере остановлен.</b> ${TAKEOVER_NOTE}\n\n`
+          : stop.stopped
+            ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release.\n\n"
+            : isHeld()
+              ? "⏳ <b>Выпуск ждёт кнопки «Продолжить выпуск»</b>: сервер вернулся после простоя.\n\n"
+              : "";
       await reply(state + morning(all(), Date.now()));
       return true;
     }
@@ -79,23 +82,32 @@ export async function handleCommand(message) {
     }
     case "stop_release": {
       if (!isApprover(message.from?.id)) { await reply("Остановить выпуск может только утверждающий."); return true; }
-      if (stopState().takeover) { await reply(`⏸ Выпуск на сервере уже остановлен. ${TAKEOVER_NOTE}`); return true; }
-      setStop({ by: who(message.from), reason: "команда /stop_release" });
+      /* Слово человека ставится всегда, и при перехвате тоже. Раньше команда отвечала
+         «выпуск уже остановлен» и ничего не ставила, а компьютер оператора продолжал
+         выпускать: человек сказал «стоп» и получил обратное. */
+      const taken = setStop({ by: who(message.from), reason: "команда /stop_release" }).takeover;
       // Ролики YouTube с датой выхода сервер не выпускает: их открывает сам YouTube.
       // Поэтому остановка снимает с них срок, и «ничего не выйдет» говорится по результату.
       const yt = await youtubeAfterSwitch();
-      await reply(`⏸ Выпуск остановлен. Сервер ничего не выпустит, пока не придёт команда /start_release.${yt ? `\n\n${h(yt)}` : ""}`);
+      const said = taken ? `${TAKEOVER_LAG} Включает выпуск команда /start_release.` : "Сервер ничего не выпустит, пока не придёт команда /start_release.";
+      await reply(`⏸ Выпуск остановлен. ${said}${yt ? `\n\n${h(yt)}` : ""}`);
       return true;
     }
     case "start_release": {
       if (!isApprover(message.from?.id)) { await reply("Включить выпуск может только утверждающий."); return true; }
-      // Остановку ради перехвата снимает только возврат расписания серверу.
-      if (stopState().takeover) { await reply(`Включить выпуск сейчас нельзя. ${TAKEOVER_NOTE}`); return true; }
-      clearStop();
+      // Остановку ради перехвата снимает только возврат расписания серверу. Команда
+      // снимает слово человека, и только его.
+      const was = stopState();
+      if (was.takeover && !was.human) { await reply(`Включить выпуск сейчас нельзя. ${TAKEOVER_NOTE}`); return true; }
+      const now = clearStop();
+      clearHold();
       resolveAlert("release:stop");
       resolveAlert("release:hold");
       const yt = await youtubeAfterSwitch();
-      await reply(`▶️ Выпуск включён. Одобренное пойдёт по расписанию; опоздавшее выйдет по одному, не пачкой.${yt ? `\n\n${h(yt)}` : ""}`);
+      const said = now.takeover
+        ? "▶️ Остановка снята. Расписание всё ещё ведёт компьютер оператора: выпуск продолжит он, после ближайшей сверки с сервером. На сервере выпуск включит оператор, когда вернёт ему вышедшее."
+        : "▶️ Выпуск включён. Одобренное пойдёт по расписанию; опоздавшее выйдет по одному, не пачкой.";
+      await reply(`${said}${yt ? `\n\n${h(yt)}` : ""}`);
       return true;
     }
     default:
@@ -118,7 +130,7 @@ export async function handleCallback(cb) {
     // Расписание ведёт компьютер оператора: кнопка под старым сообщением не должна
     // включить второго выпускающего.
     if (stopState().takeover) { await answerCallback(cb.id, "Расписание сейчас ведёт компьютер оператора. Выпуск на сервере включит оператор.", true); return true; }
-    if (existsSync(dataPath("HOLD"))) rmSync(dataPath("HOLD"));
+    clearHold();
     resolveAlert("release:hold");
     await answerCallback(cb.id, "Выпуск продолжен.");
     if (cb.message) await editMessageText(cb.message.chat.id, cb.message.message_id, `${h(cb.message.text || "")}\n\n▶️ Продолжил(а) ${h(who(cb.from))}`, { reply_markup: { inline_keyboard: [] } });

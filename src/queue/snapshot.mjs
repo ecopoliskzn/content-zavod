@@ -25,6 +25,7 @@ import { latest } from "../metrics/summary.mjs";
 import { table as tokenTable } from "../tokens/check.mjs";
 import { rows as ledgerRows } from "./ledger.mjs";
 import { all } from "./store.mjs";
+import { stopState } from "./switch.mjs";
 
 /** Вычищает из текста то, по чему можно узнать человека. Чистая функция. */
 export function mask(text) {
@@ -188,7 +189,9 @@ export function snapshot(now = Date.now()) {
     queue: all().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).map(publicEntry),
     ledger: ledgerRows().slice(-2000),
     heartbeat: readJson(dataPath("heartbeat.json"), {}) || {},
-    stopped: existsSync(dataPath("STOP")),
+    stopped: stopState().stopped,
+    // Кто остановил: человек либо перехват. По этому компьютер оператора решает, можно ли перехватывать.
+    stop: { human: stopState().human, takeover: stopState().takeover },
     held: existsSync(dataPath("HOLD")),
     metrics: [...latest(metricRows).values()],
     // Ряд замеров за две недели: по нему видно, как пост набирал просмотры.

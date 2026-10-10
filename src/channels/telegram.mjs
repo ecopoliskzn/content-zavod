@@ -94,12 +94,13 @@ export async function publish(entry, ctx = {}) {
   if (ctx.onState) await ctx.onState({ tgSending: true });
 
   if (!media) {
-    res = await tg("sendMessage", { chat_id: chat, text: entry.text, parse_mode: "HTML", ...buttons });
+    // Без внутреннего повтора: дошёл ли пост после сетевого сбоя, решает сверка на следующем проходе.
+    res = await tg("sendMessage", { chat_id: chat, text: entry.text, parse_mode: "HTML", ...buttons }, { retries: 0 });
   } else {
     const method = media.type === "video" ? "sendVideo" : "sendPhoto";
     const field = media.type === "video" ? "video" : "photo";
     const base = { chat_id: chat, caption: entry.text, parse_mode: "HTML", ...(media.type === "video" ? { supports_streaming: true } : {}), ...buttons };
-    res = await tg(method, { ...base, [field]: media.url }, { timeoutMs: 60_000 });
+    res = await tg(method, { ...base, [field]: media.url }, { timeoutMs: 60_000, retries: 0 });
     // Отказ «не смог забрать по адресу» лечится отправкой байтами.
     if (res.kind === "refused" && /failed to get HTTP URL content|wrong (?:file identifier|type of the web page)|wrong remote file/i.test(res.error || "")) {
       try {

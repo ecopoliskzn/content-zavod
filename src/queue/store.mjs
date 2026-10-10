@@ -131,6 +131,21 @@ export async function forceHanded(id, fields = {}, by) {
   });
 }
 
+/**
+ * Придержать одобренную запись до взгляда человека. Нужна перехвату расписания: по ответу
+ * сервера видно, что он запись начал и не закончил, и выпускать её с компьютера вслепую
+ * нельзя. В обход таблицы переходов, как и две функции выше: обычный выпуск приходит к
+ * «ошибке» только через «выходит».
+ */
+export async function forceHeld(id, fields = {}, by) {
+  return withLock(() => {
+    const was = get(id);
+    if (!was) throw new RuleError(`записи ${id} нет в очереди`);
+    if (was.status !== "approved") throw new RuleError(`запись в статусе «${was.status}»: придерживается только одобренная`);
+    return write({ ...was, ...fields, status: "failed" }, by);
+  });
+}
+
 /** Переставить слот. Содержимое не меняется, поэтому согласование сохраняется. */
 export async function reschedule(id, date, time, by) {
   return withLock(() => {
@@ -142,7 +157,8 @@ export async function reschedule(id, date, time, by) {
     if (bad.length) throw new RuleError(bad.join("; "));
     // Просроченная и упавшая после перестановки снова ждут своего слота.
     const status = ["expired", "failed"].includes(was.status) && was.approval ? "approved" : was.status;
-    return write({ ...next, status, attempts: status === "approved" && was.status !== "approved" ? 0 : was.attempts }, by);
+    // Запись, придержанную перехватом, человек посмотрел и переставил: отметка снимается.
+    return write({ ...next, status, attempts: status === "approved" && was.status !== "approved" ? 0 : was.attempts, ...(status !== was.status ? { takeoverHold: undefined } : {}) }, by);
   });
 }
 

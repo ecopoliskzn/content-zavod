@@ -33,7 +33,18 @@ import { check } from "../gates/index.mjs";
 import { STATUS_TITLE, preview } from "../queue/format.mjs";
 import { slotFor } from "../queue/slots.mjs";
 import { RuleError, all, get, patch, reschedule, transition } from "../queue/store.mjs";
+import { stopState } from "../queue/switch.mjs";
 import { afterChange as syncYoutube } from "../video/schedule.mjs";
+
+/*
+ * ПЕРЕХВАТ РАСПИСАНИЯ. Пока расписание ведёт компьютер оператора, кнопки по-прежнему
+ * обрабатывает сервер, а выпускает не он. Решение человека доходит до компьютера при
+ * сверке раз в пять минут, а новое «да» не доходит вовсе: компьютер выпускает только
+ * одобренное до аварии. Отвечать при этом «Не выйдет» и «Выйдет в 14:30» было бы
+ * неправдой, поэтому в ответ дописывается, как обстоит дело.
+ */
+const lagNote = (wasApproved) => (wasApproved && stopState().takeover ? " Расписание сейчас ведёт компьютер оператора: о вашем решении он узнаёт при сверке с сервером, в пределах пяти минут. Если слот записи в эти минуты, она ещё может выйти." : "");
+const waitNote = () => (stopState().takeover ? " Расписание сейчас ведёт компьютер оператора, и новые согласия он не принимает: запись выйдет, когда расписание вернётся серверу." : "");
 
 export const approvers = () => list("APPROVER_IDS");
 const isApprover = (userId) => approvers().includes(String(userId));
@@ -145,7 +156,12 @@ export async function handleCallback(cb) {
       // Ролик, загруженный до «да», лежит на YouTube без срока: срок ставится сейчас.
       const yt = await syncYoutube(entry.id);
       const tail = yt ? `\n${h(yt)}` : "";
-      await redraw(approved, entry.kind === "reply" ? `✅ Одобрил(а) ${h(name)}. Текст ответа придёт в тему «Выложить руками» в течение пяти минут.` : `✅ Одобрил(а) ${h(name)}. Выйдет ${human(approved)}.${moved}${tail}`, UNDO(entry.id));
+      // Ролик YouTube открывает сам YouTube по сроку, который ставит сервер: перехват его не задерживает.
+      const wait = entry.channel === "youtube" ? "" : waitNote();
+      const said = wait
+        ? `✅ Одобрил(а) ${h(name)}.${wait}`
+        : entry.kind === "reply" ? `✅ Одобрил(а) ${h(name)}. Текст ответа придёт в тему «Выложить руками» в течение пяти минут.` : `✅ Одобрил(а) ${h(name)}. Выйдет ${human(approved)}.${moved}`;
+      await redraw(approved, `${said}${entry.kind === "reply" ? "" : tail}`, UNDO(entry.id));
     } else if (action === "fix") {
       if (!["review", "approved"].includes(entry.status)) { await answerCallback(cb.id, `Запись сейчас «${STATUS_TITLE[entry.status]}».`, true); return true; }
       await patch(entry.id, { fixAsked: { by: cb.from.id, name, at: new Date().toISOString() } }, actor);
@@ -157,15 +173,17 @@ export async function handleCallback(cb) {
       // «Не выйдет» про ролик с датой выхода говорится только по ответу YouTube.
       const yt = await syncYoutube(entry.id);
       // Пакет уже у сотрудника: программа выложенное не снимет, об этом и говорим.
-      const said = entry.status === "handed" ? "Пакет в теме «Выложить руками» больше не действует. Если материал уже выложен, его убирает владелец аккаунта." : yt ? h(yt) : "Не выйдет.";
-      await redraw(cancelled, `🚫 Снял(а) ${h(name)}. ${said}`, null);
+      // При перехвате «Не выйдет» не говорится: о снятии компьютер оператора узнаёт не сразу.
+      const lag = lagNote(entry.status === "approved");
+      const said = entry.status === "handed" ? "Пакет в теме «Выложить руками» больше не действует. Если материал уже выложен, его убирает владелец аккаунта." : yt ? h(yt) : lag ? "" : "Не выйдет.";
+      await redraw(cancelled, `🚫 Снял(а) ${h(name)}.${said ? ` ${said}` : ""}${lag}`, null);
     } else if (action === "undo") {
       if (entry.status !== "approved") { await answerCallback(cb.id, `Отозвать уже нельзя: запись «${STATUS_TITLE[entry.status]}».`, true); return true; }
       const back = await transition(entry.id, "review", { approval: { card: entry.approval?.card }, note: `согласие отозвал(а) ${name}` }, actor);
       await answerCallback(cb.id, "Согласие отозвано.");
       const yt = await syncYoutube(entry.id);
       const tail = yt ? `\n${h(yt)}` : "";
-      await redraw(back, `↩️ Согласие отозвал(а) ${h(name)}. Запись снова ждёт решения.${tail}`, BUTTONS(entry.id));
+      await redraw(back, `↩️ Согласие отозвал(а) ${h(name)}. Запись снова ждёт решения.${lagNote(true)}${tail}`, BUTTONS(entry.id));
     } else if (action === "next") {
       if (!["expired", "failed"].includes(entry.status)) { await answerCallback(cb.id, `Запись сейчас «${STATUS_TITLE[entry.status]}».`, true); return true; }
       const slot = slotFor(entry, all(), channelCfg(entry.channel));
@@ -199,7 +217,7 @@ export async function handleReply(message) {
   const rework = await transition(current.id, "rework", { note: message.text.slice(0, 1500), fixAsked: undefined, reworkBy: name }, actor);
   const yt = await syncYoutube(entry.id);
   const tail = yt ? `\n${h(yt)}` : "";
-  await redraw(rework, `✏️ На правке. ${h(name)}: «${h(message.text.slice(0, 300))}»\nВернётся новой карточкой.${tail}`, null);
+  await redraw(rework, `✏️ На правке. ${h(name)}: «${h(message.text.slice(0, 300))}»\nВернётся новой карточкой.${lagNote(entry.status === "approved")}${tail}`, null);
   return true;
 }
 

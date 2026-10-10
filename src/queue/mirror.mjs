@@ -17,10 +17,20 @@
 //     компьютер. Только вручную и одной командой: автоматический перехват при первом же
 //     сетевом сбое даёт двух выпускающих и задвоенные посты.
 //
-// ПРАВИЛО ПЕРЕХВАТА: ВЫПУСКАЕТ ВСЕГДА КТО-ТО ОДИН. Перехват ставит серверу рубильник STOP
-// (если сервер отвечает). Если не отвечает, страхует сам сервер: после простоя дольше
-// получаса он встаёт на удержание и ждёт кнопки человека. Возврат (--handback) сначала
-// сообщает серверу, что вышло без него, и только потом включает выпуск.
+// ПРАВИЛО ПЕРЕХВАТА: ВЫПУСКАЕТ ВСЕГДА КТО-ТО ОДИН. Поэтому перехват начинается, только
+// когда известно, что сервер не выпускает:
+//   · сервер ответил и принял остановку (отметка перехвата в файле STOP) либо
+//   · сервер не отвечает, и оператор сам его остановил и подтвердил это флагом
+//     --server-stopped. Молчание сервера остановкой не считается: расписание на нём идёт
+//     по cron и от того, отвечает ли он снаружи, не зависит.
+// Сервер ответил отказом (устарел ключ оператора) — перехвата нет: сервер жив и выпускает.
+// Выпуск остановил человек — перехвата тоже нет: расписание стоит по его решению.
+//
+// Пока перехват идёт, компьютер перед каждым проходом сверяется с сервером
+// (src/queue/takeover.mjs): принимает остановку человека и снятые записи, а вернувшемуся
+// серверу сразу ставит отметку перехвата. Возврат (--handback) сначала останавливает
+// выпуск на компьютере, потом сообщает серверу, что вышло без него, и только потом
+// включает выпуск на сервере.
 //
 // Согласовать новое во время перехвата нельзя: кнопки согласования обрабатывает сервер.
 // Компьютер выпускает только то, что было одобрено до аварии.
@@ -30,29 +40,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../lib/config.mjs";
 import { PROJECT_ROOT, dataPath, env } from "../lib/env.mjs";
-import { latestById, readJson, readJsonl, writeAtomic, writeJson } from "../lib/files.mjs";
-import { request } from "../lib/http.mjs";
+import { latestById, lock, readJson, readJsonl, writeAtomic, writeJson } from "../lib/files.mjs";
+import { request, sleep } from "../lib/http.mjs";
 import { alert, resolve } from "../lib/notify.mjs";
 import { dueAt, mskDate, mskTime } from "../lib/time.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
-import { clearStop, setStop } from "./switch.mjs";
+import { base, server } from "./remote.mjs";
+import { clearHold, clearStop, isTakeover, setStop } from "./switch.mjs";
+import { HANDBACK_STOP, HELD_BY, SYNC_BY, TAKEOVER_REASON, adoptServerState, holdFields, sayAdopted } from "./takeover.mjs";
 
 const flag = (name) => process.argv.includes(`--${name}`);
 const mirrorDir = () => path.resolve(env("MIRROR_DIR", path.join(PROJECT_ROOT, "mirror")));
 const mirrorPath = (...parts) => path.join(mirrorDir(), ...parts);
-const base = () => env("QUEUE_API_BASE").replace(/\/+$/, "");
-
-async function server(cmd, args = {}, timeoutMs = 30_000) {
-  if (!base()) return { code: 2, lines: ["нет QUEUE_API_BASE: адрес сервера не задан"] };
-  const res = await request(`${base()}/admin/queue`, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${env("ADMIN_API_TOKEN")}` },
-    body: JSON.stringify({ cmd, args, actor: `${env("OPERATOR_NAME", "оператор")} (дубль)` }),
-    timeoutMs,
-  });
-  if (res.kind !== "ok" && !res.data?.lines) return { code: 2, lines: [`сервер не ответил: ${res.error}`], network: true };
-  return res.data;
-}
 
 const WEEKDAYS = ["воскресенье", "понедельник", "вторник", "среда", "четверг", "пятница", "суббота"];
 
@@ -120,7 +119,9 @@ export async function pull() {
   }
   const titles = Object.fromEntries(Object.entries(config().channels).map(([k, v]) => [k, v.title]));
   writeAtomic(mirrorPath("РАСПИСАНИЕ.md"), renderSchedule(d.queue, Date.now(), titles, { stopped: d.stopped, held: d.held }));
-  writeJson(mirrorPath("state.json"), { pulledAt: new Date().toISOString(), serverAt: d.at, runnerAt: d.heartbeat?.runner || null, stopped: Boolean(d.stopped), held: Boolean(d.held), entries: d.queue.length });
+  // stoppedByHuman — выпуск остановил человек, а не перехват: по этой отметке перехват
+  // отказывается начинаться, когда сервер уже не отвечает и спросить его нельзя.
+  writeJson(mirrorPath("state.json"), { pulledAt: new Date().toISOString(), serverAt: d.at, runnerAt: d.heartbeat?.runner || null, stopped: Boolean(d.stopped), stoppedByHuman: Boolean(d.stop?.human), held: Boolean(d.held), entries: d.queue.length });
   return { ok: true, entries: d.queue.length, runnerAt: d.heartbeat?.runner || null, stopped: d.stopped, held: d.held };
 }
 
@@ -148,96 +149,223 @@ export async function watch() {
 /**
  * Записи, которые при перехвате нельзя выпускать без взгляда человека. Чистая функция.
  *
- * Слот наступил до перехвата, а в копии запись ещё «одобрена». Копия старше остановки
- * сервера: между ними он мог успеть выпустить запись, и копия об этом не знает. Выпустить
- * такую запись с компьютера значит рискнуть вторым постом, а снять вышедший пост площадка
- * не даёт. YouTube сюда не входит: ролик там открывает сам YouTube, выпуск его только сверяет.
+ * Слот наступил до перехвата, а в копии запись ещё «одобрена» либо «выходит». Сервер мог
+ * успеть выпустить её перед остановкой, и копия об этом не знает. Выпустить такую запись с
+ * компьютера значит рискнуть вторым постом, а снять вышедший пост площадка не даёт.
+ * YouTube сюда не входит: ролик там открывает сам YouTube, выпуск его только сверяет.
  */
 export function atRisk(entries, now = Date.now()) {
-  return entries.filter((e) => e.status === "approved" && e.channel !== "youtube" && dueAt(e) <= now);
+  return entries.filter((e) => e.channel !== "youtube" && ((e.status === "approved" && dueAt(e) <= now) || e.status === "running"));
 }
 
-/** Аварийный перехват: расписание ведёт этот компьютер. */
-export async function takeover() {
+const SERVER_STOP_HOWTO = [
+  "сервер не ответил этому компьютеру. Это ещё не значит, что выпуск на нём стоит: расписание на сервере идёт по cron и от того, отвечает ли он снаружи, не зависит.",
+  "перехват при работающем выпуске даёт двух выпускающих и задвоенные посты, а снять вышедший пост площадка не даёт.",
+  "сначала проверьте связь на этом компьютере: если не открывается ни один сайт, лежит не сервер.",
+  "потом остановите выпуск на сервере одним из двух способов:",
+  "  · по SSH, если сервер пускает:  ssh zavod@<адрес сервера> \"cd /opt/ecopolis-zavod/current && node src/queue/cli.mjs pause --takeover\"",
+  "  · в панели Timeweb: сервер → «Выключить»",
+  "и повторите с подтверждением: npm run mirror -- --takeover --yes --server-stopped",
+];
+
+const stamp = (iso) => `${mskDate(Date.parse(iso))} в ${mskTime(Date.parse(iso))} по Москве`;
+
+/** Аварийный перехват: расписание ведёт этот компьютер. Время передаётся только в тестах. */
+export async function takeover({ now = Date.now() } = {}) {
   if (!flag("yes")) return { code: 1, lines: ["перехват делается осознанно: добавьте --yes. До этого убедитесь, что сервер действительно лежит, а не отвалилась сеть на этом компьютере"] };
-  const queueFile = mirrorPath("queue.json");
-  if (!existsSync(queueFile)) return { code: 2, lines: ["копии расписания нет (mirror/queue.json): перехватывать нечего. Копию снимает npm run mirror, пока сервер жив"] };
+  if (isTakeover()) {
+    const cur = readJson(dataPath("TAKEOVER.json"), {}) || {};
+    return { code: 1, lines: [`перехват уже идёт${cur.since ? ` с ${stamp(cur.since)}` : ""}. Повторный перехват переписал бы местное расписание копией, и вышедшее с этого компьютера вышло бы второй раз. Вернуть расписание серверу: npm run mirror -- --handback`] };
+  }
+  if (!base()) return { code: 2, lines: ["нет QUEUE_API_BASE: это не компьютер оператора. Перехват делается только с него"] };
+  if (!existsSync(mirrorPath("queue.json"))) return { code: 2, lines: ["копии расписания нет (mirror/queue.json): перехватывать нечего. Копию снимает npm run mirror, пока сервер жив"] };
   const lines = [];
-  // takeover: такую остановку сервер не даст снять командой из группы, только возвратом.
-  const paused = await server("pause", { reason: "перехват расписания компьютером оператора", takeover: true }, 15_000);
-  lines.push(paused.code === 0 ? "сервер ответил и остановлен (STOP)" : "сервер не ответил: рубильник не поставлен. После возврата он сам встанет на удержание и будет ждать кнопки");
+  const before = readJson(mirrorPath("state.json"), {}) || {};
+
+  /* Кто-то один. Перехват начинается, только когда известно, что сервер не выпускает. */
+  const paused = await server("pause", { reason: TAKEOVER_REASON, takeover: true }, 15_000);
+  if (paused.code !== 0 && !paused.network) {
+    // Сервер ответил. Отказ по правилу: выпуск остановил человек. Иначе не подошёл ключ.
+    if (paused.code === 1) return { code: 1, lines: paused.lines || [] };
+    return { code: 2, lines: [...(paused.lines || []), "сервер жив и остановку не принял. Перехват сейчас дал бы двух выпускающих: сначала верните доступ к серверу, потом повторите"] };
+  }
+  const serverPaused = paused.code === 0;
+  if (!serverPaused) {
+    if (before.stoppedByHuman) return { code: 1, lines: [`сервер не ответил, а по последней копии (${before.pulledAt ? stamp(before.pulledAt) : "время неизвестно"}) выпуск остановлен человеком. Перехватывать нечего: расписание стоит по его решению. Включает его команда /start_release в рабочей группе, когда сервер вернётся`] };
+    if (!flag("server-stopped")) return { code: 1, lines: SERVER_STOP_HOWTO };
+    lines.push("сервер не ответил. Выпуск на нём остановлен со слов оператора (--server-stopped)");
+  } else {
+    lines.push("сервер ответил и остановлен: отметка перехвата стоит в его файле STOP");
+    // Свежая копия после остановки: в ней всё, что утверждающий решил до этой минуты.
+    const fresh = await pull().catch((e) => ({ ok: false, error: e?.message || String(e) }));
+    lines.push(fresh.ok ? "копия расписания снята заново, уже после остановки сервера" : `свежую копию снять не удалось (${fresh.error}): перехват идёт по прежней`);
+  }
+
   // Местный каталог данных собирается из копии. Старое местное состояние убирается в сторону.
   const local = dataPath("queue.jsonl");
   if (existsSync(local)) writeFileSync(`${local}.before-takeover`, readFileSync(local));
-  const now = Date.now();
-  const copy = JSON.parse(readFileSync(queueFile, "utf8"));
+  const state = readJson(mirrorPath("state.json"), {}) || {};
+  const copy = JSON.parse(readFileSync(mirrorPath("queue.json"), "utf8"));
+  // Отметки времени пишутся по настоящим часам: по ним возврат отличает сделанное при перехвате.
+  const since = new Date().toISOString();
   const risky = atRisk(copy, now);
   const riskyIds = new Set(risky.map((e) => e.id));
   const note = "слот наступил до перехвата: сервер мог выпустить запись перед остановкой. Проверьте площадку глазами";
-  const entries = copy.map((e) => (riskyIds.has(e.id) ? { ...e, status: "failed", note, at: new Date(now).toISOString(), by: "перехват" } : e));
+  const entries = copy.map((e) => (riskyIds.has(e.id) ? { ...e, ...holdFields(note), at: since, by: HELD_BY } : e));
   writeAtomic(local, entries.map((e) => JSON.stringify(e)).join("\n") + "\n");
   const ledger = existsSync(mirrorPath("ledger.json")) ? JSON.parse(readFileSync(mirrorPath("ledger.json"), "utf8")) : [];
   writeAtomic(dataPath("ledger.jsonl"), ledger.map((r) => JSON.stringify(r)).join("\n") + (ledger.length ? "\n" : ""));
-  clearStop();
-  writeJson(dataPath("heartbeat.json"), { runner: new Date(now).toISOString(), pid: process.pid });
-  const state = readJson(mirrorPath("state.json"), {}) || {};
-  writeJson(dataPath("TAKEOVER.json"), { since: new Date(now).toISOString(), serverPaused: paused.code === 0, copyFrom: state.pulledAt || null, held: risky.map((e) => `${e.channel}:${e.name}`) });
-  const approved = entries.filter((e) => e.status === "approved").length;
-  lines.push(`расписание перенесено: записей ${entries.length}, одобренных к выпуску ${approved}`);
+  // Местные рубильники остались от прошлой жизни каталога (их ставит возврат): снимаются оба.
+  clearStop({ all: true });
+  clearHold();
+  writeJson(dataPath("heartbeat.json"), { runner: since, pid: process.pid });
+  // Файл перехвата пишется последним: до него выпуск на этом компьютере не начнётся.
+  writeJson(dataPath("TAKEOVER.json"), { since, serverPaused, copyFrom: state.pulledAt || null, held: risky.map((e) => `${e.channel}:${e.name}`) });
+  lines.push(`расписание перенесено: записей ${entries.length}, одобренных к выпуску ${entries.filter((e) => e.status === "approved").length}`);
 
-  /* Слепое окно: что случилось на сервере после последней копии, компьютеру не известно. */
-  if (state.pulledAt) {
+  let left = risky;
+  if (serverPaused) {
+    /* Сервер на связи: о записях со слотом до перехвата спрашиваем его, а не человека. */
+    const seen = await adoptServerState().catch(() => ({ reached: false }));
+    const said = sayAdopted(seen);
+    if (said) lines.push(`сверка с сервером: ${said}`);
+    if (seen.busy) lines.push("на сервере ещё идёт проход выпуска, начатый до остановки: записи со слотом до перехвата придержаны, пока он не закончится. Компьютер спросит сервер снова при ближайшем проходе");
+    const still = new Set([...latestById(local).values()].filter((e) => e.status === "failed" && e.takeoverHold).map((e) => e.id));
+    left = risky.filter((e) => still.has(e.id));
+  } else if (state.pulledAt) {
+    /* Слепое окно: что случилось на сервере после последней копии, компьютеру не известно. */
     const gap = state.failSince ? Math.round((Date.parse(state.failSince) - Date.parse(state.pulledAt)) / 60_000) : null;
-    lines.push(`копия снята ${mskDate(Date.parse(state.pulledAt))} в ${mskTime(Date.parse(state.pulledAt))} по Москве${gap !== null ? `, первый отказ сервера замечен через ${gap} мин.` : "."}`);
+    lines.push(`копия снята ${stamp(state.pulledAt)}${gap !== null ? `, первый отказ сервера замечен через ${gap} мин.` : "."}`);
     lines.push("всё, что утверждающий одобрил, снял или отправил на правку после копии, компьютеру не известно. Спросите его в рабочей группе, не снимал ли он записи перед аварией: снятое уберите командой npm run queue -- cancel <имя> --channel=<площадка> --local");
   }
-  if (risky.length) {
-    lines.push("", `записей, чей слот наступил до перехвата: ${risky.length}. Компьютер их сам не выпустит: сервер мог выпустить их перед остановкой.`);
-    for (const e of risky) lines.push(`  ${e.channel} · ${e.name} · слот ${e.date} ${e.time} · ${preview(e, 50)}`);
+  if (left.length) {
+    lines.push("", `записей, чей слот наступил до перехвата: ${left.length}. Компьютер их сам не выпустит: сервер мог выпустить их перед остановкой.`);
+    for (const e of left) lines.push(`  ${e.channel} · ${e.name} · слот ${e.date} ${e.time} · ${preview(e, 50)}`);
     lines.push("по каждой откройте площадку и посмотрите, вышла ли запись:");
     lines.push("  вышла:    npm run queue -- mark <имя> --channel=<площадка> --link=<ссылка> --local");
     lines.push("  не вышла: npm run queue -- move <имя> --channel=<площадка> --next --local");
   }
   lines.push("", "дальше: включите задачу «zavod-takeover» в планировщике (ops/windows/takeover.cmd, раз в 5 минут) либо запускайте npm run release руками");
+  if (!serverPaused) lines.push("когда сервер включится, компьютер при ближайшем проходе сам поставит ему отметку перехвата. Если сервер простоял меньше получаса, до этой минуты выпускать могут обе машины: включайте его, когда компьютер работает и на связи");
   lines.push("когда сервер оживёт: npm run mirror -- --handback. До этого выпуск на сервере не включать");
   return { code: 0, lines };
 }
 
-/** Возврат: сервер узнаёт, что вышло без него, и снова ведёт расписание. */
-export async function handback() {
+/** Дождаться конца идущего прохода выпуска на этом компьютере и занять его замок. */
+async function holdRunner(waitMs) {
+  const until = Date.now() + waitMs;
+  for (;;) {
+    const release = lock(dataPath("runner.lock"));
+    if (release) return release;
+    if (Date.now() >= until) return null;
+    await sleep(Math.min(5_000, Math.max(50, waitMs / 10)));
+  }
+}
+
+/**
+ * Возврат: сервер узнаёт, что вышло без него, и снова ведёт расписание.
+ *
+ * Порядок важен, и каждый шаг закрывает свою дыру:
+ *   1. сервер должен отвечать: иначе возвращать некому, и местный выпуск не трогаем;
+ *   2. местный выпуск останавливается ДО передачи и ждёт конца идущего прохода: иначе
+ *      запись, вышедшая в эти секунды, серверу не передалась бы и вышла бы второй раз;
+ *   3. серверу передаётся всё, что сделал компьютер: вышедшее, пакеты на ручную выкладку,
+ *      начатое и не законченное, снятое оператором;
+ *   4. только после этого на сервере снимается отметка перехвата. Остановку человеком она
+ *      не снимает.
+ * Команда повторяема: сервер одну и ту же запись дважды в журнал не пишет.
+ */
+export async function handback({ waitMs = 120_000 } = {}) {
   const state = readJson(dataPath("TAKEOVER.json"));
-  if (!state) return { code: 1, lines: ["перехвата не было: файла TAKEOVER.json нет"] };
+  if (!state) return { code: 1, lines: ["перехвата не было: файла TAKEOVER.json нет. Если выпуск на сервере при этом стоит с отметкой перехвата (команда /plan в группе так и пишет), снимите её: npm run queue -- resume --handback"] };
   const lines = [];
-  const done = new Map();
-  for (const r of readJsonl(dataPath("ledger.jsonl"))) if (r.status === "published" && Date.parse(r.at) >= Date.parse(state.since)) done.set(r.id, r);
+
+  const pulse = await server("pulse", {}, 15_000);
+  if (pulse.code !== 0 || !pulse.data?.statuses) {
+    return { code: 2, lines: [...(pulse.lines || []), "сервер не готов принять расписание: возврат не начат, выпуск на этом компьютере продолжается"] };
+  }
+  const remote = pulse.data.statuses;
+
+  setStop({ by: "возврат расписания", reason: HANDBACK_STOP });
+  const release = await holdRunner(waitMs);
+  if (!release) {
+    return { code: 1, lines: ["на этом компьютере сейчас идёт проход выпуска: возврат не начат. Новый проход уже не начнётся (местный выпуск остановлен). Дождитесь конца идущего и повторите: npm run mirror -- --handback", "если возврат отменяется и расписание нужно вести дальше: npm run queue -- resume --local"] };
+  }
   let failed = 0;
-  for (const r of done.values()) {
-    const res = await server("mark", { ref: r.id, link: r.link || "", externalId: r.externalId || "", at: r.at, note: "вышла при перехвате расписания", takeover: true });
-    const stray = res.code === 0 && (res.lines || []).some((l) => /без согласия/.test(l));
-    lines.push(`${res.code === 0 ? "✓" : "✗"} ${r.channel} · ${r.name}${stray ? " — ВЫШЛА БЕЗ СОГЛАСИЯ: на сервере запись была снята или ждала «да». В рабочую группу ушло сообщение" : ""}${res.code === 0 ? "" : `: ${(res.lines || []).join("; ")}`}`);
-    if (res.code !== 0) failed++;
+  const sent = { published: 0, handed: 0, partial: 0, cancelled: 0 };
+  const row = (res, text) => { lines.push(`${res.code === 0 ? "✓" : "✗"} ${text}${res.code === 0 ? "" : `: ${(res.lines || []).join("; ")}`}`); if (res.code !== 0) failed++; };
+  const stray = (res) => {
+    if (res.code !== 0) return "";
+    if ((res.lines || []).some((l) => /без согласия/.test(l))) return " — БЕЗ СОГЛАСИЯ: на сервере запись была снята или ждала «да». В рабочую группу ушло сообщение";
+    if ((res.lines || []).some((l) => /с прежним текстом/.test(l))) return " — ПРЕЖНИЙ ТЕКСТ: на сервере запись исправили и одобрили заново. В рабочую группу ушло сообщение";
+    return "";
+  };
+  let local = new Map();
+  const hashOf = (id) => local.get(String(id))?.contentHash || "";
+  try {
+    // Читается под замком прохода: в эту минуту очередь на компьютере никто не меняет.
+    local = latestById(dataPath("queue.jsonl"));
+    // Строки, написанные этим компьютером при перехвате. Вышедшее и переданное: по одной на запись.
+    const mine = readJsonl(dataPath("ledger.jsonl")).filter((r) => r.takeover);
+    const published = new Map();
+    const handed = new Map();
+    for (const r of mine) {
+      if (r.status === "published") published.set(r.id, r);
+      else if (r.status === "handed") handed.set(r.id, r);
+    }
+
+    for (const r of published.values()) {
+      const res = await server("mark", { ref: r.id, link: r.link || "", externalId: r.externalId || "", at: r.at, note: "вышла при перехвате расписания", takeover: true, contentHash: hashOf(r.id) });
+      row(res, `${r.channel} · ${r.name}${stray(res)}`);
+      if (res.code === 0) sent.published++;
+    }
+    /* Пакеты на ручную выкладку, ушедшие в группу с компьютера. Серверу их нужно отметить
+       переданными, иначе после возврата он отправит тот же пакет второй раз. */
+    for (const r of handed.values()) {
+      if (published.has(r.id)) continue;
+      const e = local.get(String(r.id));
+      const res = await server("mark", { ref: r.id, handed: true, packageMessageId: e?.result?.packageMessageId || null, at: r.at, note: "пакет отправлен при перехвате расписания", takeover: true, contentHash: hashOf(r.id) });
+      row(res, `${r.channel} · ${r.name} (пакет на ручную выкладку)${stray(res)}`);
+      if (res.code === 0) sent.handed++;
+    }
+    for (const e of local.values()) {
+      if (published.has(e.id) || handed.has(e.id)) continue;
+      const startedHere = e.startedAt && Date.parse(e.startedAt) >= Date.parse(state.since);
+      if (["running", "approved", "failed"].includes(e.status) && startedHere && !e.takeoverHold) {
+        /* Компьютер запись начал и не закончил: часть ветки вышла либо отправка оборвалась.
+           Сервер продолжит с этого места и со сверкой, а не с первой реплики. */
+        const res = await server("mark", { ref: e.id, partial: true, done: e.done || [], result: e.result || {}, takeover: true, contentHash: e.contentHash || "", note: "начата компьютером оператора при перехвате: продолжается со сверкой" });
+        row(res, `${e.channel} · ${e.name} (начата и не закончена, вышло частей: ${e.done?.length ?? 0})${stray(res)}`);
+        if (res.code === 0) sent.partial++;
+      } else if (e.status === "cancelled" && e.by !== SYNC_BY && Date.parse(e.at) >= Date.parse(state.since) && ["approved", "failed", "expired"].includes(remote[e.id])) {
+        // Оператор снял запись на компьютере по просьбе утверждающего: сервер о снятии не знает.
+        const res = await server("cancel", { ref: e.id, reason: `снята на компьютере оператора при перехвате расписания${e.note ? `: ${String(e.note).slice(0, 200)}` : ""}` });
+        row(res, `${e.channel} · ${e.name} (снята при перехвате)`);
+        if (res.code === 0) sent.cancelled++;
+      } else if (e.status === "cancelled" && e.by !== SYNC_BY && Date.parse(e.at) >= Date.parse(state.since) && remote[e.id] === "running") {
+        // Сервер начал запись до остановки: снять её программа не может, он её допустит.
+        lines.push(`! ${e.channel} · ${e.name}: на компьютере снята, а на сервере она «выходит» с минуты до остановки. После возврата сервер сверится с площадкой и допустит её. Откройте площадку: вышедшее убирает владелец аккаунта`);
+      }
+    }
+    if (failed) {
+      lines.push(`не передано записей: ${failed}. Выпуск на сервере НЕ включён: иначе они выйдут второй раз. Местный выпуск тоже остановлен. Повторите команду`);
+      lines.push("если сервер снова лёг и расписание нужно вести дальше: npm run queue -- resume --local");
+      return { code: 2, lines };
+    }
+    // handback: остановку ради перехвата сервер снимает только этой командой.
+    const resumed = await server("resume", { handback: true });
+    if (resumed.code !== 0) {
+      lines.push(`всё передано, но отметка перехвата на сервере не снята: ${(resumed.lines || []).join("; ")}. Повторите команду`);
+      return { code: 2, lines };
+    }
+    rmSync(dataPath("TAKEOVER.json"));
+    lines.push(`серверу передано: вышедших ${sent.published}, пакетов на ручную выкладку ${sent.handed}, начатых и не законченных ${sent.partial}, снятых ${sent.cancelled}`);
+    lines.push(...(resumed.lines || []).map((l) => `сервер: ${l}`));
+    lines.push("местный выпуск остановлен. Выключите задачу «zavod-takeover» в планировщике");
+    return { code: 0, lines };
+  } finally {
+    release();
   }
-  /* Пакеты на ручную выкладку, ушедшие в группу с компьютера. Серверу их нужно отметить
-     переданными, иначе после возврата он отправит тот же пакет второй раз. */
-  const handed = [...latestById(dataPath("queue.jsonl")).values()].filter((e) => e.status === "handed" && Date.parse(e.handedAt || 0) >= Date.parse(state.since) && !done.has(e.id));
-  for (const e of handed) {
-    const res = await server("mark", { ref: e.id, handed: true, packageMessageId: e.result?.packageMessageId || null, at: e.handedAt, note: "пакет отправлен при перехвате расписания" });
-    lines.push(`${res.code === 0 ? "✓" : "✗"} ${e.channel} · ${e.name} (пакет на ручную выкладку)${res.code === 0 ? "" : `: ${(res.lines || []).join("; ")}`}`);
-    if (res.code !== 0) failed++;
-  }
-  if (failed) {
-    lines.push(`не передано записей: ${failed}. Выпуск на сервере НЕ включён: иначе они выйдут второй раз. Повторите команду`);
-    return { code: 2, lines };
-  }
-  // handback: остановку ради перехвата сервер снимает только этой командой.
-  const resumed = await server("resume", { handback: true });
-  if (resumed.code !== 0) { lines.push(`вышедшее передано (${done.size}), но выпуск на сервере не включился: ${(resumed.lines || []).join("; ")}`); return { code: 2, lines }; }
-  rmSync(dataPath("TAKEOVER.json"));
-  // Местный выпуск больше работать не должен: рубильник ставится здесь же.
-  setStop({ by: "возврат расписания", reason: "расписание возвращено серверу" });
-  lines.push(`серверу передано вышедших записей: ${done.size}${handed.length ? `, пакетов на ручную выкладку: ${handed.length}` : ""}. Выпуск на сервере включён, местный остановлен`);
-  lines.push("выключите задачу «zavod-takeover» в планировщике");
-  return { code: 0, lines };
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {

@@ -278,7 +278,7 @@ test("ролик YouTube с датой выхода: «Отозвать», «С�
   await press(`q:ok:${entry.id}`);
   // Ролик загружен с компьютера оператора со сроком выхода из слота.
   yt.publishAt = iso;
-  await store.patch(entry.id, { extra: { youtubeId: "abcdefghijk", youtubePublishAt: iso } }, "S2");
+  await store.patch(entry.id, { extra: { youtubeId: "abcdefghijk", youtubePublishAt: iso, youtubeHash: store.get(entry.id).contentHash } }, "S2");
   const saved = () => store.get(entry.id).extra.youtubePublishAt;
 
   sent.length = 0;
@@ -311,7 +311,7 @@ test("ролик YouTube с датой выхода: «Отозвать», «С�
   assert.match(sent.at(-1).body.text, /Включить выпуск сейчас нельзя/);
   assert.deepEqual(yt.calls, [], "сервер уступил расписание: сроки роликов не трогаются");
   assert.equal(yt.publishAt, iso);
-  clearStop();
+  clearStop({ all: true });
 
   // YouTube отказал: «не выйдет» не говорится, человек получает действие.
   yt.fail = true;
@@ -361,7 +361,7 @@ test("загруженный ролик YouTube проверяется зара�
   const { entry } = await store.put({ channel: "youtube", kind: "short", name: "rolik-s-botom", material: "blog:primer", ...slot, title: "Покрытие вырезали до основания при заказчике", text: "Толщину по внешнему виду не оценить.", media: [{ type: "video", url: "https://s3.example.ru/bot.mp4" }], hashtags: ["покрытие"], botKey: "priemka" }, "S2");
   await store.transition(entry.id, "review", {}, "S2");
   await store.transition(entry.id, "approved", { approval: { by: 42, name: "Анна", at: new Date().toISOString() } }, "tg:42");
-  await store.patch(entry.id, { extra: { youtubeId: "bbbbbbbbbbb", youtubePublishAt: iso } }, "S2");
+  await store.patch(entry.id, { extra: { youtubeId: "bbbbbbbbbbb", youtubePublishAt: iso, youtubeHash: store.get(entry.id).contentHash } }, "S2");
   yt.publishAt = iso;
 
   sent.length = 0;

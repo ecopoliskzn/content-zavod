@@ -50,7 +50,7 @@ const linkPlaces = (entry) => [whole(entry), entry.link || "", ...(entry.buttons
 
 /**
  * Куда в записи зовут человека оставить данные. Пустой список — никуда.
- * @param {{ codeWords?: string[], linkTargets?: Record<string, string> }} ctx
+ * @param {{ codeWords?: string[], linkTargets?: Record<string, string>, botUsername?: string }} ctx
  */
 export function intakeIn(entry, ctx = {}) {
   const text = whole(entry);
@@ -58,7 +58,10 @@ export function intakeIn(entry, ctx = {}) {
   const hits = [];
   if (entry.channel === "bot") hits.push("рассылка в боте");
   if (entry.botKey) hits.push(`ссылка в бота (поле botKey = «${entry.botKey}»)`);
-  if (/https?:\/\/t\.me\/\w+\?start=/i.test(places)) hits.push("ссылка в бота");
+  // В бота зовёт и ссылка с меткой, и голая ссылка на него, и упоминание через «@».
+  const bot = String(ctx.botUsername || "").replace(/^@/, "");
+  const plainBot = bot ? new RegExp(`(?:t\\.me/|@)${esc(bot)}(?!\\w)`, "i") : null;
+  if (/https?:\/\/t\.me\/\w+\?start=/i.test(places) || plainBot?.test(places)) hits.push("ссылка в бота");
   if (/\/z\/[a-z0-9_-]+/i.test(places)) hits.push("ссылка на форму заявки");
   for (const w of ctx.codeWords || []) if (re(esc(w), "u").test(text)) hits.push(`кодовое слово «${w}»`);
   for (const slug of [entry.goSlug, ...goLinksIn(places).map((l) => l.slug)].filter(Boolean)) {
@@ -69,8 +72,9 @@ export function intakeIn(entry, ctx = {}) {
 
 /**
  * @param {object} entry
- * @param {{ links?: string[], legal?: boolean, codeWords?: string[], linkTargets?: Record<string, string> }} ctx
- *   links — слаги коротких ссылок из bot/links.json; legal — открыт ли приём заявок
+ * @param {{ links?: string[], legal?: boolean, codeWords?: string[], deadWords?: string[], linkTargets?: Record<string, string>, botUsername?: string }} ctx
+ *   links — слаги коротких ссылок из bot/links.json; legal — открыт ли приём заявок;
+ *   deadWords — слова выключенных сценариев; botUsername — имя бота без «@»
  */
 export function ready(entry, ctx = {}) {
   const block = [];
@@ -85,6 +89,11 @@ export function ready(entry, ctx = {}) {
   if (ctx.legal === false) {
     const hits = intakeIn(entry, ctx);
     if (hits.length) block.push(`готовность: приём заявок закрыт, а в записи есть ${hits.join("; ")}. Человек придёт и получит отказ. Пока согласия не утверждены (npm run doctor, раздел «Бот»), ведите по прямой ссылке на статью сайта`);
+  }
+  /* Слово выключенного сценария. Бот на него не ответит и при открытом приёме: сценарий
+     выключают, пока материал под ним не готов. Человек напишет слово и не получит ничего. */
+  for (const w of ctx.deadWords || []) {
+    if (re(esc(w), "u").test(text)) block.push(`готовность: кодовое слово «${w}» принадлежит выключенному сценарию (bot/scenarios): бот на него не ответит. Включите сценарий либо уберите слово`);
   }
 
   /* Ссылки через счётчик переходов. Неизвестный слаг сервер молча ведёт на главную сайта:

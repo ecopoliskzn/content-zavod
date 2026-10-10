@@ -7,6 +7,7 @@
 
 import { dataPath } from "../lib/env.mjs";
 import { appendJsonl, readJsonl } from "../lib/files.mjs";
+import { isTakeover } from "./switch.mjs";
 
 const FILE = () => dataPath("ledger.jsonl");
 
@@ -20,6 +21,9 @@ export function record(entry, status, extra = {}) {
     material: entry.material || "",
     slot: `${entry.date} ${entry.time}`,
     status,
+    // Строка написана компьютером оператора при перехвате расписания: по этой отметке
+    // возврат находит, что передать серверу.
+    ...(isTakeover() ? { takeover: true } : {}),
     ...extra,
   });
 }

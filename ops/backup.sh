@@ -23,6 +23,14 @@ FILE="$OUT/zavod-data-$STAMP.tar.gz.enc"
 export ZAVOD_ENV_FILE="$DATA/.env"
 export DATA_DIR="$DATA"
 
+# Под root копию не делаем: архив и служебные файлы достались бы root, и завтрашняя
+# копия под пользователем завода на них споткнулась бы. Тревога отсюда не уходит:
+# она тоже пишет в каталог данных.
+if [[ "$(id -u)" == "0" && "$(stat -c %u "$DATA" 2>/dev/null || echo 0)" != "0" ]]; then
+  echo "$(date -u +%FT%TZ) копия не сделана: скрипт запущен под root, а каталог данных принадлежит пользователю завода. Запустите под ним: sudo -u zavod $0" >&2
+  exit 2
+fi
+
 fail() {
   "$NODE" "$APP/ops/backup-upload.mjs" --alert "$1" || true
   exit 2

@@ -2,7 +2,7 @@
 // что было не так, записано в docs/05-ГРАБЛИ.md, раздел «Сборка этого завода».
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
@@ -175,18 +175,24 @@ test("у пакета на ручную выкладку свой статус �
   assert.ok(!canMove("approved", "handed") && !canMove("handed", "approved"));
 });
 
-test("рубильник помнит причину: остановку ради перехвата нельзя спутать с остановкой человеком", () => {
-  clearStop();
-  assert.deepEqual(stopState(), { stopped: false, takeover: false, by: "", at: "", reason: "" });
+test("в рубильнике две независимые отметки: слово человека и перехват друг друга не затирают", () => {
+  clearStop({ all: true });
+  assert.deepEqual(stopState(), { stopped: false, human: false, takeover: false, by: "", at: "", reason: "" });
   setStop({ by: "Анна", reason: "команда /stop_release" });
-  assert.equal(stopState().stopped, true);
-  assert.equal(stopState().takeover, false);
+  assert.deepEqual([stopState().stopped, stopState().human, stopState().takeover], [true, true, false]);
+  // Перехват поверх остановки человеком: слово человека остаётся, и оно же стоит первым.
   setStop({ by: "оператор (дубль)", reason: "перехват расписания компьютером оператора", takeover: true });
-  assert.equal(stopState().takeover, true);
-  // Файл, положенный руками, тоже останавливает выпуск.
+  assert.deepEqual([stopState().human, stopState().takeover, stopState().by], [true, true, "Анна"]);
+  // Возврат снимает только свою отметку: «стоп» человека остаётся в силе.
+  assert.deepEqual([clearStop({ takeover: true }).stopped, stopState().human, stopState().takeover], [true, true, false]);
+  // И обратно: «старт» человека отметку перехвата не снимает.
+  setStop({ by: "оператор (дубль)", reason: "перехват", takeover: true });
+  assert.deepEqual([clearStop().stopped, stopState().human, stopState().takeover], [true, false, true]);
+  clearStop({ all: true });
+  // Файл, положенный руками, останавливает выпуск как слово человека, и снять его можно.
   writeFileSync(path.join(DATA, "STOP"), "остановил вручную");
-  assert.deepEqual([stopState().stopped, stopState().takeover], [true, false]);
-  assert.deepEqual(clearStop(), ["STOP"]);
+  assert.deepEqual([stopState().stopped, stopState().human, stopState().takeover, stopState().reason], [true, true, false, "остановил вручную"]);
+  assert.equal(clearStop().stopped, false);
 });
 
 /* ── Срок выхода на YouTube следует за записью ───────────────────────────── */
@@ -277,10 +283,11 @@ test("снимок: номера Telegram людей клиента убраны
 test("перехват: записи, чей слот наступил до перехвата, компьютер сам не выпускает", () => {
   const now = Date.parse("2030-03-12T16:00:00+03:00");
   const e = (name, channel, time, status = "approved") => ({ id: name, name, channel, kind: "post", date: "2030-03-12", time, status });
-  const risky = atRisk([e("utro", "telegram", "10:00"), e("vecher", "threads", "19:00"), e("rolik", "youtube", "15:00"), e("zhdet", "vk", "12:00", "review")], now);
+  const risky = atRisk([e("utro", "telegram", "10:00"), e("vecher", "threads", "19:00"), e("rolik", "youtube", "15:00"), e("zhdet", "vk", "12:00", "review"), e("idet", "vk", "18:00", "running")], now);
   // Утренний пост сервер мог выпустить перед остановкой. Вечерняя ветка ещё впереди.
   // Ролик YouTube открывает сам YouTube: выпуск его только сверяет. Неодобренное не выходит вовсе.
-  assert.deepEqual(risky.map((x) => x.name), ["utro"]);
+  // Запись, которая в копии «выходит», сервер начал и мог закончить: её тоже смотрит человек.
+  assert.deepEqual(risky.map((x) => x.name), ["utro", "idet"]);
 });
 
 test("копия расписания: вышедшее за шестьдесят дней стоит отдельным разделом", () => {
@@ -376,6 +383,97 @@ test("остановку ради перехвата снимает только
   assert.equal(stopState().stopped, false);
 });
 
+test("перехват не начинается, если выпуск остановил человек; возврат его слово не снимает", async () => {
+  clearStop({ all: true });
+  assert.equal((await execute("pause", { reason: "ждём юриста" }, "оператор")).code, 0);
+  const refused = await execute("pause", { reason: "перехват", takeover: true }, "оператор (дубль)");
+  assert.equal(refused.code, 1, "отказ по правилу");
+  assert.match(refused.lines.join("\n"), /остановлен человеком.*Перехватывать нечего/);
+  assert.equal(stopState().takeover, false);
+  // Перехват уже идёт, сервер вернулся после простоя: отметка ставится и поверх слова человека.
+  assert.equal((await execute("pause", { reason: "перехват", takeover: true, ongoing: true }, "оператор (дубль)")).code, 0);
+  assert.deepEqual([stopState().human, stopState().takeover], [true, true]);
+  // Команда оператора «включить» снимает слово человека, но не перехват.
+  const resumed = await execute("resume", {}, "оператор");
+  assert.equal(resumed.code, 0);
+  assert.match(resumed.lines.join("\n"), /расписание всё ещё ведёт компьютер оператора/);
+  assert.deepEqual([stopState().human, stopState().takeover], [false, true]);
+  // Возврат при стоящем слове человека: перехват снят, выпуск остаётся остановленным.
+  await execute("pause", { reason: "ждём юриста" }, "оператор");
+  writeFileSync(path.join(DATA, "HOLD"), "{}");
+  const back = await execute("resume", { handback: true }, "оператор (дубль)");
+  assert.equal(back.code, 0);
+  assert.match(back.lines.join("\n"), /остаётся остановленным: его остановил человек/);
+  assert.deepEqual([stopState().stopped, stopState().human, stopState().takeover], [true, true, false]);
+  assert.equal(existsSync(path.join(DATA, "HOLD")), false, "удержание после простоя возврат снимает: вышедшее он уже передал");
+  clearStop({ all: true });
+});
+
+test("сверка при перехвате: сервер отдаёт рубильник, статусы и то, что успел сделать с записью", async () => {
+  const { entry } = await store.put({ channel: "threads", kind: "thread", name: "nachata-serverom", material: "blog:primer", date: "2030-05-06", time: "19:00", posts: ["Подрядчик в Казани сдал площадку весной.", "Через год покрытие пошло трещинами.", "Причина нашлась в акте приёмки."] }, "S1");
+  await store.transition(entry.id, "review", {}, "S1");
+  await store.transition(entry.id, "approved", { approval: { by: 42, name: "Анна", at: new Date().toISOString() } }, "tg:42");
+  // Сервер выпустил первую реплику, вторая не ушла: запись вернулась на повтор.
+  await store.transition(entry.id, "running", { startedAt: new Date().toISOString(), attempts: 1 }, "выпуск");
+  await store.transition(entry.id, "approved", { done: ["p1"], result: { link: "https://www.threads.net/@eco/post/p1" } }, "выпуск");
+  const pulse = await execute("pulse", {}, "оператор (дубль)");
+  assert.equal(pulse.code, 0);
+  assert.deepEqual(Object.keys(pulse.data).sort(), ["busy", "hashes", "held", "progress", "statuses", "stop"]);
+  assert.equal(pulse.data.hashes[entry.id], store.get(entry.id).contentHash, "отпечаток одобренного текста: по нему компьютер видит правку после копии");
+  assert.equal(pulse.data.statuses[entry.id], "approved");
+  assert.deepEqual(pulse.data.progress[entry.id], { done: ["p1"], attempts: 1, result: { link: "https://www.threads.net/@eco/post/p1" } });
+  assert.equal(pulse.data.busy, false);
+  // Идёт проход выпуска: стоит свежий замок.
+  writeFileSync(path.join(DATA, "runner.lock"), "1");
+  assert.equal((await execute("pulse", {})).data.busy, true);
+  rmSync(path.join(DATA, "runner.lock"));
+  await execute("cancel", { ref: entry.id });
+});
+
+test("возврат расписания повторяем: вторая отметка той же записи строку в журнал не дописывает", async () => {
+  const mk = async (name, over = {}) => {
+    const { entry } = await store.put({ channel: "threads", kind: "thread", name, material: "blog:primer", date: "2030-05-09", time: "19:00", posts: ["На площадке в Казани толщину проверили до подписи акта.", `Что смотрели в случае «${name}», записано в журнале.`], ...over }, "S1");
+    await store.transition(entry.id, "review", {}, "S1");
+    await store.transition(entry.id, "approved", { approval: { by: 42, name: "Анна", at: new Date().toISOString() } }, "tg:42");
+    return entry;
+  };
+  const out = await mk("vyshla-pri-perehvate");
+  const args = { ref: out.id, link: "https://www.threads.net/@eco/post/88", externalId: "88", takeover: true };
+  assert.equal((await execute("mark", args, "оператор (дубль)")).code, 0);
+  const again = await execute("mark", args, "оператор (дубль)");
+  assert.equal(again.code, 0);
+  assert.match(again.lines.join("\n"), /уже отмечена вышедшей/);
+  assert.equal(ledger.rows().filter((r) => r.id === out.id && r.status === "published").length, 1, "по журналу считается суточный потолок площадки");
+
+  // Пакет на ручную выкладку: то же, и он не становится «вышедшим».
+  const pack = await mk("paket-pri-perehvate", { channel: "dzen", kind: "article", title: "Где покрытие отслаивается чаще всего", text: "Примыкания относятся к самым уязвимым местам резинового покрытия. ".repeat(14), posts: undefined });
+  const handed = { ref: pack.id, handed: true, packageMessageId: 9001, takeover: true };
+  assert.equal((await execute("mark", handed, "оператор (дубль)")).code, 0);
+  assert.equal((await execute("mark", handed, "оператор (дубль)")).code, 0);
+  assert.equal(store.get(pack.id).status, "handed");
+  assert.equal(store.get(pack.id).result.packageMessageId, 9001);
+  assert.equal(ledger.rows().filter((r) => r.id === pack.id && r.status === "handed").length, 1);
+
+  // Начатая и не законченная ветка: сервер продолжит с места обрыва и со сверкой.
+  const part = await mk("nachata-kompyuterom");
+  const partial = await execute("mark", { ref: part.id, partial: true, done: ["p1"], result: { link: "https://www.threads.net/@eco/post/p1" }, takeover: true }, "оператор (дубль)");
+  assert.equal(partial.code, 0);
+  const saved = store.get(part.id);
+  assert.deepEqual([saved.status, saved.done, saved.attempts, saved.result.link], ["approved", ["p1"], 1, "https://www.threads.net/@eco/post/p1"]);
+
+  // Пакет ушёл с компьютера, а на сервере запись сняли: закрыта, в журнале одна строка, группа знает.
+  const stray = await mk("paket-bez-soglasiya", { channel: "dzen", kind: "article", title: "Как принять покрытие у подрядчика", text: "Приёмку покрытия ведут по акту, а не на глаз. ".repeat(20), posts: undefined });
+  await store.transition(stray.id, "cancelled", { note: "снял(а) Анна" }, "tg:42");
+  sent.length = 0;
+  for (let i = 0; i < 2; i++) {
+    const res = await execute("mark", { ref: stray.id, handed: true, takeover: true }, "оператор (дубль)");
+    assert.equal(res.code, 0, "возврат на такой записи не застревает");
+    assert.match(res.lines.join("\n"), /пакет ушёл без согласия/);
+  }
+  assert.equal(ledger.rows().filter((r) => r.id === stray.id && r.status === "handed" && r.withoutApproval).length, 1);
+  assert.match(sent.map((s) => s.body.text || "").join("\n"), /не выкладывайте этот пакет/);
+});
+
 test("возврат расписания: запись, вышедшая без согласия, закрывается, а группа узнаёт об этом сразу", async () => {
   const { entry } = await store.put({ channel: "threads", kind: "thread", name: "snyali-pered-avariej", material: "blog:primer", date: "2030-05-07", time: "19:00", posts: ["На площадке в Казани толщину проверили до подписи акта.", "Что именно смотрели, записано в журнале."] }, "S1");
   // На сервере запись ждёт «да» (утверждающий отозвал согласие), а компьютер по старой копии её выпустил.
@@ -392,4 +490,137 @@ test("возврат расписания: запись, вышедшая без
   // Без признака возврата та же команда отказывает по правилу: руками так не отмечают.
   const { entry: other } = await store.put({ channel: "threads", kind: "thread", name: "prosto-chernovik", material: "blog:primer", date: "2030-05-08", time: "19:00", posts: ["Подрядчик сдал площадку в срок.", "Акт подписали с замечаниями."] }, "S1");
   assert.equal((await execute("mark", { ref: other.id, link: "https://x" }, "оператор")).code, 1);
+});
+
+/* ── Ролик YouTube: текст на ролике и текст в записи ─────────────────────── */
+
+const fakeYoutube = async () => {
+  const schedule = await import("../src/video/schedule.mjs");
+  const yt = { publishAt: "", calls: [] };
+  schedule._setApi({
+    status: async (id) => ({ kind: "ok", privacy: "private", publishAt: yt.publishAt, raw: { id, status: { privacyStatus: "private" } } }),
+    setSchedule: async (v, publishAt) => { yt.calls.push(publishAt); yt.publishAt = publishAt; return { ok: true }; },
+  });
+  return { yt, schedule };
+};
+const approve = async (id) => {
+  await store.transition(id, "review", {}, "S2");
+  return store.transition(id, "approved", { approval: { by: 42, name: "Анна", at: new Date().toISOString() } }, "tg:42");
+};
+
+test("запись правили после загрузки ролика: пока на YouTube прежние название и описание, срок не ставится и ролик не открывается", async () => {
+  const { yt, schedule } = await fakeYoutube();
+  const slot = { date: "2030-06-04", time: "15:00" };
+  const iso = new Date(dueAt(slot)).toISOString();
+  const raw = video("youtube", "short", "pravili-posle-zagruzki", slot);
+  const { entry } = await store.put(raw, "S2");
+  await approve(entry.id);
+  // Загрузка: номер ролика и отпечаток отправленного текста. Срок встаёт тут же.
+  const up = await execute("extra", { ref: entry.id, fields: { youtubeId: "ccccccccccc", youtubeHash: store.get(entry.id).contentHash } }, "S2");
+  assert.equal(yt.publishAt, iso);
+  assert.match(up.lines.join("\n"), /Срок выхода ролика на YouTube/);
+
+  // Утверждающий попросил другое название: запись уходит в черновики, срок снят.
+  await execute("add", { entries: [{ ...raw, title: "Покрытие вырезали до основания при заказчике" }] }, "S2");
+  assert.equal(store.get(entry.id).status, "draft");
+  assert.equal(yt.publishAt, "");
+
+  // Новое «да». На ролике лежит название, которому сказали «нет»: срок не ставится.
+  await approve(entry.id);
+  const said = await schedule.afterChange(entry.id);
+  assert.equal(yt.publishAt, "", "ролик с отклонённым названием срока не получает");
+  assert.match(said, /прежние название и описание/);
+  assert.match(said, /npm run yt -- --update --id=pravili-posle-zagruzki/);
+  assert.deepEqual((await schedule.syncAll()).stale, ["pravili-posle-zagruzki"]);
+  // И в минуту слота выпуск его не открывает.
+  const youtube = await import("../src/channels/youtube.mjs");
+  const refused = await youtube.publish(store.get(entry.id));
+  assert.deepEqual([refused.ok, refused.retry], [false, false]);
+  assert.match(refused.error, /прежние название и описание/);
+
+  // Команда --update отправила новый текст и записала его отпечаток: срок встал.
+  await execute("extra", { ref: entry.id, fields: { youtubeHash: store.get(entry.id).contentHash } }, "S2");
+  assert.equal(yt.publishAt, iso);
+  schedule._setApi(null);
+});
+
+test("запись сняли, пока ролик загружался: срок, с которым он ушёл на YouTube, снимается сразу", async () => {
+  const { yt, schedule } = await fakeYoutube();
+  const slot = { date: "2030-06-06", time: "15:00" };
+  const iso = new Date(dueAt(slot)).toISOString();
+  const { entry } = await store.put(video("youtube", "short", "snyali-vo-vremya-zagruzki", slot), "S2");
+  await approve(entry.id);
+  const hash = store.get(entry.id).contentHash;
+  // Загрузка началась при одобренной записи и идёт минуты. За это время запись сняли.
+  await execute("cancel", { ref: entry.id, reason: "снял(а) Анна" }, "tg:42");
+  yt.publishAt = iso; // ролик уже лежит на YouTube со сроком из слота
+  const done = await execute("extra", { ref: entry.id, fields: { youtubeId: "ddddddddddd", youtubePublishAt: iso, youtubeHash: hash } }, "S2");
+  assert.equal(yt.publishAt, "", "срок снят в ту же минуту, а не через пять");
+  assert.match(done.lines.join("\n"), /Срок выхода на YouTube снят: ролик остаётся закрытым/);
+  schedule._setApi(null);
+});
+
+/* ── Telegram: публикация без слепого повтора ────────────────────────────── */
+
+test("пост в канал после обрыва связи не отправляется второй раз тем же вызовом", async () => {
+  const telegram = await import("../src/channels/telegram.mjs");
+  process.env.TG_CHANNEL = "@ecopolis_kzn";
+  const real = globalThis.fetch;
+  let tries = 0;
+  // Запрос ушёл, ответ потерялся: пост мог выйти.
+  globalThis.fetch = async () => { tries++; throw Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNRESET" } }); };
+  const state = [];
+  try {
+    const out = await telegram.publish({ text: "Площадку в Казани приняли после дождя." }, { onState: async (f) => { state.push(f); } });
+    assert.equal(tries, 1, "повтор внутри вызова дал бы второй пост в канале");
+    assert.deepEqual([out.ok, out.retry], [false, true]);
+    assert.deepEqual(state, [{ tgSending: true }], "отметка «отправка начата» осталась: следующий проход сначала сверится с каналом");
+  } finally {
+    globalThis.fetch = real;
+    delete process.env.TG_CHANNEL;
+  }
+});
+
+/* ── Готовность: слово выключенного сценария и голая ссылка на бота ──────── */
+
+test("готовность: слово выключенного сценария останавливает и при открытом приёме; голая ссылка на бота считается ссылкой в бота", async () => {
+  const open = { legal: true, codeWords: ["ПРИЁМКА", "ТОЛЩИНА"], deadWords: ["ТОЛЩИНА"], botUsername: "eco_bot" };
+  const reel = (text) => ({ channel: "instagram", kind: "reel", name: "r", text });
+  assert.match(ready(reel("Памятку пришлём в личные сообщения. Напишите слово ТОЛЩИНА."), open).block.join("|"), /выключенному сценарию/);
+  assert.deepEqual(ready(reel("Чек-лист пришлём в личные сообщения. Напишите слово ПРИЁМКА."), open).block, []);
+  assert.deepEqual(ready(reel("Толщина слоя на площадке 10 мм."), open).block, [], "обычное слово строчными словом бота не считается");
+  const closed = { ...open, legal: false };
+  assert.match(ready(post("Вопросы принимает бот: https://t.me/eco_bot"), closed).block.join("|"), /ссылка в бота/);
+  assert.match(ready(post("Напишите нашему боту @eco_bot, он пришлёт чек-лист."), closed).block.join("|"), /ссылка в бота/);
+  assert.deepEqual(ready(post("Канал компании: https://t.me/eco_bot_news"), closed).block, [], "чужое имя с тем же началом ссылкой в бота не считается");
+  // В проекте сценарий «толщина» выключен: его слово названо мёртвым, живые слова нет.
+  const gates = await import("../src/gates/index.mjs");
+  assert.deepEqual(gates.deadWords(), ["ТОЛЩИНА"]);
+  assert.ok(gates.codeWords().includes("ТОЛЩИНА") && gates.codeWords().includes("ПРИЁМКА"));
+});
+
+/* ── Запись в каталог данных только под пользователем завода ─────────────── */
+
+test("запись в каталог данных под чужим пользователем запрещена в одном месте: журнал, замена файла и замок", async () => {
+  const files = await import("../src/lib/files.mjs");
+  files._setForeign("команда запущена под root, а каталог данных принадлежит пользователю завода");
+  try {
+    const writes = [
+      () => files.appendJsonl(path.join(DATA, "x.jsonl"), { a: 1 }),
+      () => files.writeAtomic(path.join(DATA, "x.json"), "{}"),
+      () => files.lock(path.join(DATA, "x.lock")),
+    ];
+    for (const write of writes) assert.throws(write, (e) => e.code === "ENV" && /под root/.test(e.message));
+    assert.equal(existsSync(path.join(DATA, "x.jsonl")), false);
+    // Читать можно, писать вне каталога данных тоже.
+    assert.ok(files.readJsonl(path.join(DATA, "queue.jsonl")).length > 0);
+    files.writeAtomic(path.join(mkdtempSync(path.join(os.tmpdir(), "zavod-out-")), "y.json"), "{}");
+    // Команда очереди отвечает поломкой окружения с объяснением, а не падает и не пишет.
+    const out = await execute("pause", { reason: "проба" }, "оператор");
+    assert.equal(out.code, 2);
+    assert.match(out.lines.join("\n"), /под root/);
+    assert.equal(stopState().stopped, false);
+  } finally {
+    files._setForeign(null);
+  }
 });

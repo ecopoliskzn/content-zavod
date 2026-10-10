@@ -31,11 +31,17 @@ function target(method) {
 /**
  * Любой метод Bot API. Никогда не бросает: сетевой сбой возвращается тем же видом,
  * что и отказ площадки, с kind = "network".
+ *
+ * ПОВТОР. По умолчанию запрос повторяется один раз: так живут сообщения в рабочую
+ * группу, где потерянная карточка хуже задвоенной. Публикация в канал и рассылка людям
+ * зовут с retries: 0. Сетевой сбой не говорит, дошло ли сообщение: запрос мог уйти, а
+ * ответ потеряться. Слепой повтор через три секунды давал бы второй пост в канале, и
+ * сверка «не вышел ли пост» до этого места не доходила: повтор сидел внутри одного вызова.
  */
-export async function tg(method, body = {}, { timeoutMs = 15_000 } = {}) {
+export async function tg(method, body = {}, { timeoutMs = 15_000, retries = 1 } = {}) {
   const t = target(method);
   if (!t) return { kind: "refused", status: 0, data: null, error: "не настроен ни релей (TG_RELAY_URL), ни прямой токен (TG_BOT_TOKEN)" };
-  const res = await request(t.url, { method: "POST", headers: { "content-type": "application/json", ...t.headers }, body: JSON.stringify(body), timeoutMs, retries: 1, retryDelayMs: 3_000 });
+  const res = await request(t.url, { method: "POST", headers: { "content-type": "application/json", ...t.headers }, body: JSON.stringify(body), timeoutMs, retries, retryDelayMs: 3_000 });
   return { ...res, result: res.data?.result };
 }
 

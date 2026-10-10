@@ -3,7 +3,7 @@
 
 import path from "node:path";
 import { existsSync, readdirSync } from "node:fs";
-import { PROJECT_ROOT } from "../lib/env.mjs";
+import { PROJECT_ROOT, env } from "../lib/env.mjs";
 import { isRestricted } from "../lib/config.mjs";
 import { readJson } from "../lib/files.mjs";
 import { legalReady } from "../leads/legal.mjs";
@@ -14,15 +14,29 @@ const STAMPS = path.join(PROJECT_ROOT, "src", "gates", "stamps.json");
 const SCENARIOS = path.join(PROJECT_ROOT, "bot", "scenarios");
 const LINKS = path.join(PROJECT_ROOT, "bot", "links.json");
 
-/** Кодовые слова бота из bot/scenarios/*.json: в Threads их быть не должно. */
-export function codeWords() {
+/** Сценарии бота из bot/scenarios/*.json: слова и признак «включён». */
+function scenarios() {
   if (!existsSync(SCENARIOS)) return [];
-  const words = [];
+  const out = [];
   for (const f of readdirSync(SCENARIOS).filter((x) => x.endsWith(".json"))) {
     const s = readJson(path.join(SCENARIOS, f));
-    for (const item of Array.isArray(s) ? s : [s]) for (const w of item?.["слова"] || item?.words || []) words.push(String(w));
+    for (const item of Array.isArray(s) ? s : [s]) {
+      if (item) out.push({ on: item["включён"] !== false && item.enabled !== false, words: (item["слова"] || item.words || []).map(String) });
+    }
   }
-  return [...new Set(words)];
+  return out;
+}
+
+/** Кодовые слова бота, включая выключенные сценарии: в Threads их быть не должно. */
+export function codeWords() {
+  return [...new Set(scenarios().flatMap((s) => s.words))];
+}
+
+/** Слова, на которые бот не ответит: их сценарий выключен, и ни один включённый их не несёт. */
+export function deadWords() {
+  const all = scenarios();
+  const live = new Set(all.filter((s) => s.on).flatMap((s) => s.words));
+  return [...new Set(all.filter((s) => !s.on).flatMap((s) => s.words))].filter((w) => !live.has(w));
 }
 
 /** Начала текстов той же площадки за последние 60 дней: одинаковый заход не выходит дважды. */
@@ -43,6 +57,8 @@ export function check(entry, now = Date.now()) {
     stamps: readJson(STAMPS, { phrases: [] })?.phrases || [],
     recentOpeners: recentOpeners(entry.channel, now),
     codeWords: codeWords(),
+    deadWords: deadWords(),
+    botUsername: env("TG_BOT_USERNAME"),
     restricted: isRestricted(entry.channel),
     // Слаги коротких ссылок: ссылка на неизвестный слаг молча ведёт на главную сайта.
     links: Object.keys(links),

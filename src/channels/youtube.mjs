@@ -197,6 +197,10 @@ export async function already(entry) {
 export async function publish(entry, ctx = {}) {
   const id = entry.extra?.youtubeId || entry.result?.youtubeId;
   if (!id) return { ok: false, retry: false, error: "ролик не загружен на YouTube. Загрузка идёт с компьютера оператора: npm run yt -- --upload --id=<номер записи> --file=<путь>" };
+  /* Запись правили после загрузки: в очереди одобрен новый текст, а на ролике лежат прежние
+     название и описание. Открыть такой ролик значит выпустить то, чему сказали «нет».
+     Отпечаток отправленного содержимого пишут загрузка и команда --update. */
+  if (entry.extra?.youtubeHash !== entry.contentHash) return { ok: false, retry: false, error: `на ролике на YouTube лежат прежние название и описание, а одобрены новые. Оператору: npm run yt -- --update --id=${entry.name}, затем кнопка «Вернуть в ближайший слот»` };
   const s = await status(id);
   if (s.kind !== "ok") return { ok: false, error: `YouTube не отвечает про ролик: ${s.error}`, retry: s.kind === "network" };
   const link = `https://www.youtube.com/watch?v=${id}`;
