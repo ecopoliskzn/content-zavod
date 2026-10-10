@@ -1,0 +1,436 @@
+{
+  "_о_файле": "Единый реестр завода: площадки, слоты, сессии, расписание, ключи (только имена). Его читают очередь, выпуск, проверки и сборщик витрины Obsidian. Значений ключей здесь нет и быть не должно.",
+  "project": "ecopolis-zavod",
+  "client": {
+    "name": "ООО «Экополис»",
+    "inn": "1655274420",
+    "ogrn": "1131690053923",
+    "city": "Казань",
+    "site": "https://ecopolisrf.ru",
+    "blog": "https://ecopolisrf.ru/blog/",
+    "articleEndMarkers": [
+      "Подберем покрытие",
+      "Подберём покрытие",
+      "Остались вопросы",
+      "Оставьте заявку"
+    ]
+  },
+  "timezone": "Europe/Moscow",
+  "approval": {
+    "mode": "group",
+    "who": "ответственный со стороны клиента, кнопкой в рабочей группе Telegram",
+    "nudgeHoursBeforeSlot": 3
+  },
+  "release": {
+    "lateLimitHours": 6,
+    "lateAfterMin": 10,
+    "catchUpGapMin": 40,
+    "attempts": 3,
+    "outageHoldMin": 30,
+    "nightFromHour": 22.5,
+    "nightToHour": 7,
+    "morningHour": 7.5,
+    "digestHour": 22
+  },
+  "channels": {
+    "threads": {
+      "title": "Threads",
+      "access": "restricted",
+      "adPolicy": "только экспертное: без цен, акций и призывов купить",
+      "session": "S1",
+      "adapter": "src/channels/threads.mjs",
+      "kinds": [
+        "thread"
+      ],
+      "slots": [
+        "08:30",
+        "14:30",
+        "19:00",
+        "20:30"
+      ],
+      "perDay": 4,
+      "minGapMin": 40,
+      "tokens": [
+        "THREADS_TOKEN",
+        "THREADS_USER_ID",
+        "THREADS_TOKEN_EXPIRES"
+      ],
+      "tokenLifeDays": 60,
+      "developerApp": "приложение Meta исполнителя на первый месяц, затем приложение клиента",
+      "reach": "с сервера в России напрямую",
+      "metrics": [
+        "views",
+        "likes",
+        "replies",
+        "reposts",
+        "quotes",
+        "followers"
+      ],
+      "status": "проверено в двух наших проектах"
+    },
+    "telegram": {
+      "title": "Telegram-канал",
+      "access": "restricted",
+      "adPolicy": "только экспертное; с 2027 года реклама под штрафами",
+      "session": "S1",
+      "adapter": "src/channels/telegram.mjs",
+      "kinds": [
+        "post"
+      ],
+      "slots": [
+        "10:00"
+      ],
+      "perDay": 1,
+      "minGapMin": 120,
+      "tokens": [
+        "TG_BOT_TOKEN (в секретах релея)",
+        "TG_RELAY_URL",
+        "TG_RELAY_SECRET",
+        "TG_CHANNEL"
+      ],
+      "tokenLifeDays": null,
+      "reach": "только через релей: api.telegram.org с российских серверов не отвечает",
+      "metrics": [
+        "views"
+      ],
+      "status": "проверено в двух наших проектах. Площадку в России замедляют: запасной путь заявок — форма на своём адресе"
+    },
+    "vk": {
+      "title": "ВКонтакте, сообщество",
+      "access": "open",
+      "adPolicy": "можно прямые предложения; сведения о своих товарах на своей странице",
+      "session": "S1",
+      "adapter": "src/channels/vk.mjs",
+      "kinds": [
+        "post",
+        "video"
+      ],
+      "slots": [
+        "12:00",
+        "18:00"
+      ],
+      "perDay": 2,
+      "minGapMin": 90,
+      "tokens": [
+        "VK_GROUP_ID",
+        "VK_GROUP_TOKEN",
+        "VK_APP_ID",
+        "VK_USER_TOKEN",
+        "VK_USER_REFRESH_TOKEN",
+        "VK_SERVICE_TOKEN"
+      ],
+      "tokenLifeDays": null,
+      "reach": "с сервера в России напрямую (api.vk.ru)",
+      "metrics": [
+        "views",
+        "likes",
+        "comments",
+        "reposts"
+      ],
+      "status": "текст со ссылкой ключом сообщества работает у нас; фото и видео требуют ключа администратора через VK ID (написано по документации, боем не проверено), без него идут пакетом на ручную выкладку"
+    },
+    "dzen": {
+      "title": "Дзен",
+      "access": "open",
+      "adPolicy": "можно прямые предложения",
+      "session": "S1",
+      "adapter": "src/channels/dzen.mjs",
+      "kinds": [
+        "article"
+      ],
+      "slots": [
+        "11:00"
+      ],
+      "perDay": 1,
+      "minGapMin": 240,
+      "tokens": [],
+      "tokenLifeDays": null,
+      "reach": "посты Telegram-канала транслируются в Дзен официальным ботом Дзена; отдельные статьи выходят пакетом на ручную выкладку",
+      "metrics": [],
+      "status": "проверено по справке Дзена: программной публикации нет; цифры только в Студии"
+    },
+    "instagram": {
+      "title": "Instagram",
+      "access": "restricted",
+      "adPolicy": "только экспертное: без цен, акций и призывов купить; кодовое слово выдаёт полезный материал",
+      "session": "S2",
+      "adapter": "src/channels/instagram.mjs",
+      "kinds": [
+        "reel",
+        "carousel",
+        "story"
+      ],
+      "slots": [
+        "18:30"
+      ],
+      "perDay": 2,
+      "minGapMin": 180,
+      "tokens": [
+        "IG_TOKEN",
+        "IG_USER_ID",
+        "IG_TOKEN_EXPIRES",
+        "IG_RELAY_URL",
+        "IG_RELAY_SECRET"
+      ],
+      "tokenLifeDays": 60,
+      "developerApp": "приложение Meta исполнителя на первый месяц, затем приложение клиента",
+      "reach": "только через релей: graph.instagram.com с российских серверов не отвечает; файл Meta забирает сама по публичному адресу",
+      "metrics": [
+        "views",
+        "reach",
+        "likes",
+        "comments",
+        "saves",
+        "shares"
+      ],
+      "status": "ответы по кодовым словам проверены у нас; публикацию рилсов своим кодом проверить живым вызовом. Площадка в России заблокирована: аудитория заходит через обходные средства"
+    },
+    "youtube": {
+      "title": "YouTube",
+      "access": "restricted",
+      "adPolicy": "только экспертное; с 2027 года реклама под штрафами",
+      "session": "S2",
+      "adapter": "src/channels/youtube.mjs",
+      "kinds": [
+        "video",
+        "short"
+      ],
+      "slots": [
+        "17:00"
+      ],
+      "perDay": 2,
+      "minGapMin": 120,
+      "tokens": [
+        "YOUTUBE_CLIENT_ID",
+        "YOUTUBE_CLIENT_SECRET",
+        "YOUTUBE_REFRESH_TOKEN",
+        "YOUTUBE_API_KEY",
+        "YOUTUBE_CHANNEL_ID"
+      ],
+      "tokenLifeDays": null,
+      "reach": "загрузка с компьютера оператора, где лежит файл и есть доступ к YouTube; сервер только сверяет через googleapis.com, что ролик открылся",
+      "metrics": [
+        "views",
+        "likes",
+        "comments"
+      ],
+      "status": "загрузка проверена у нас. В России площадка без обходных средств почти недоступна: канал ведём как архив и для зарубежной аудитории, основная ставка на ВКонтакте и Rutube"
+    },
+    "rutube": {
+      "title": "Rutube",
+      "access": "open",
+      "adPolicy": "можно прямые предложения",
+      "session": "S2",
+      "adapter": "src/channels/rutube.mjs",
+      "kinds": [
+        "video",
+        "short"
+      ],
+      "slots": [
+        "17:10"
+      ],
+      "perDay": 2,
+      "minGapMin": 120,
+      "tokens": [
+        "RUTUBE_TOKEN"
+      ],
+      "tokenLifeDays": null,
+      "reach": "без ключа: пакет на ручную загрузку; с ключом: Rutube забирает файл сам по публичному адресу",
+      "metrics": [
+        "views",
+        "comments"
+      ],
+      "status": "открытой документации API нет: адреса взяты из архивного клиента Rutube, доступ канала к загрузке не подтверждён. С первого дня работает ручной пакет; просмотры снимаются без ключа"
+    },
+    "bot": {
+      "title": "Рассылка в боте",
+      "access": "restricted",
+      "adPolicy": "только тем, кто дал согласие на рассылку; материал и приглашение прочитать, без цен и призывов; не чаще двух раз за 30 дней",
+      "session": "S3",
+      "adapter": "src/channels/bot.mjs",
+      "kinds": [
+        "post"
+      ],
+      "slots": [
+        "11:30"
+      ],
+      "perDay": 1,
+      "minGapMin": 10080,
+      "tokens": [
+        "TG_RELAY_URL",
+        "TG_RELAY_SECRET"
+      ],
+      "tokenLifeDays": null,
+      "reach": "через релей, каждому согласившемуся лично",
+      "metrics": [
+        "views"
+      ],
+      "status": "написано по образцу рассылки в нашем боте; первую рассылку проверить на трёх своих аккаунтах"
+    }
+  },
+  "sessions": [
+    {
+      "id": "S0",
+      "title": "Фундамент",
+      "prompt": "prompts/sessions/S0-ФУНДАМЕНТ.md",
+      "what": "сервер, релей, бот-пульт, ключи, проверка связи"
+    },
+    {
+      "id": "S1",
+      "title": "Массовые каналы",
+      "prompt": "prompts/sessions/S1-МАССОВЫЕ-КАНАЛЫ.md",
+      "what": "Threads, Telegram-канал, ВКонтакте, Дзен: тексты из статей и новостей"
+    },
+    {
+      "id": "S2",
+      "title": "Видео",
+      "prompt": "prompts/sessions/S2-ВИДЕО.md",
+      "what": "YouTube, Instagram, Rutube, видео ВКонтакте: сценарии, подписи, выкладка"
+    },
+    {
+      "id": "S3",
+      "title": "Бот и заявки",
+      "prompt": "prompts/sessions/S3-БОТ-И-ЗАЯВКИ.md",
+      "what": "кодовые слова, материалы, карточки заявок в группу"
+    },
+    {
+      "id": "S4",
+      "title": "Тренды и новости",
+      "prompt": "prompts/sessions/S4-ТРЕНДЫ-И-НОВОСТИ.md",
+      "what": "сборщик новостей, статьи сайта, конкуренты, банк тем"
+    },
+    {
+      "id": "S5",
+      "title": "Цифры и разбор",
+      "prompt": "prompts/sessions/S5-ЦИФРЫ-И-РАЗБОР.md",
+      "what": "съём статистики, недельный отчёт, что менять"
+    },
+    {
+      "id": "S6",
+      "title": "Комментарии",
+      "prompt": "prompts/sessions/S6-КОММЕНТАРИИ.md",
+      "what": "сбор реплик, черновики ответов, вопросы покупателей"
+    },
+    {
+      "id": "S7",
+      "title": "Витрина",
+      "prompt": "prompts/sessions/S7-ВИТРИНА-OBSIDIAN.md",
+      "what": "хранилище Obsidian по живому состоянию завода"
+    }
+  ],
+  "cron": [
+    {
+      "id": "release",
+      "where": "сервер",
+      "when": "каждые 5 минут, круглосуточно (ночью выпуск только пишет пульс)",
+      "run": "node src/queue/runner.mjs",
+      "why": "выпуск одобренного по расписанию"
+    },
+    {
+      "id": "morning",
+      "where": "сервер",
+      "when": "07:30 МСК, внутри выпуска",
+      "run": "src/queue/runner.mjs",
+      "why": "план дня и что ждёт согласования"
+    },
+    {
+      "id": "digest",
+      "where": "сервер",
+      "when": "22:00 МСК, внутри выпуска",
+      "run": "src/queue/runner.mjs",
+      "why": "сводка дня одним сообщением"
+    },
+    {
+      "id": "news",
+      "where": "сервер",
+      "when": "каждые 3 часа, 07:00–22:00 МСК",
+      "run": "node src/news/collect.mjs",
+      "why": "новости отрасли в общий ящик"
+    },
+    {
+      "id": "articles",
+      "where": "сервер",
+      "when": "раз в сутки, 06:30 МСК",
+      "run": "node src/news/site-articles.mjs --notify",
+      "why": "новые статьи сайта клиента карточкой в группу"
+    },
+    {
+      "id": "trends",
+      "where": "сервер",
+      "when": "раз в сутки, 06:40 МСК",
+      "run": "node src/trends/collect.mjs",
+      "why": "что зашло у конкурентов и соседей по теме"
+    },
+    {
+      "id": "ig-poll",
+      "where": "сервер",
+      "when": "каждые 5 минут, только при IG_POLL=1",
+      "run": "node src/bot/ig-poll.mjs",
+      "why": "кодовые слова в комментариях, если события о них не приходят"
+    },
+    {
+      "id": "metrics",
+      "where": "сервер",
+      "when": "раз в сутки, 07:10 МСК",
+      "run": "node src/metrics/pull.mjs",
+      "why": "съём цифр по вышедшему"
+    },
+    {
+      "id": "weekly",
+      "where": "сервер",
+      "when": "понедельник, 09:00 МСК",
+      "run": "node src/metrics/weekly.mjs --send",
+      "why": "недельный отчёт в группу"
+    },
+    {
+      "id": "tokens",
+      "where": "сервер",
+      "when": "раз в сутки, 06:00 МСК",
+      "run": "node src/tokens/check.mjs --refresh",
+      "why": "сроки ключей и продление"
+    },
+    {
+      "id": "leads-sla",
+      "where": "сервер",
+      "when": "каждые 30 минут, 09:00–20:00 МСК",
+      "run": "node src/leads/sla.mjs",
+      "why": "заявка без ответа дольше срока"
+    },
+    {
+      "id": "mirror",
+      "where": "компьютер оператора",
+      "when": "каждые 15 минут",
+      "run": "node src/queue/mirror.mjs --watch",
+      "why": "дубль расписания и сторож: сервер молчит — тревога в группу"
+    },
+    {
+      "id": "vault",
+      "where": "компьютер оператора",
+      "when": "раз в сутки, 08:15",
+      "run": "node src/vault/build.mjs",
+      "why": "витрина Obsidian по свежему состоянию"
+    },
+    {
+      "id": "takeover",
+      "where": "компьютер оператора",
+      "when": "каждые 5 минут, ТОЛЬКО при перехвате расписания",
+      "run": "node src/queue/runner.mjs",
+      "why": "аварийный выпуск с компьютера, пока сервер лежит"
+    }
+  ],
+  "priorities": {
+    "_о_блоке": "Куда идут силы. Собрано по состоянию площадок в России на 10.10.2026 и по тому, где у конкурентов пусто.",
+    "first": [
+      "vk",
+      "telegram",
+      "threads"
+    ],
+    "video": [
+      "vk",
+      "rutube",
+      "instagram",
+      "youtube"
+    ],
+    "why": "ВКонтакте и Rutube открыты всем и допускают прямые предложения. Telegram замедляют, но аудитория заказчиков и чиновников там. Threads даёт охват дёшево. Instagram и YouTube доступны только через обходные средства: держим ради тех, кто там уже есть."
+  }
+}

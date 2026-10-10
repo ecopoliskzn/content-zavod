@@ -1,0 +1,37 @@
+{
+  "name": "ecopolis-zavod",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Контент-завод «Экополис»: очередь, выпуск по расписанию, бот, сбор новостей, цифры",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "imports": {
+    "#bot": "./packages/bot/src/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:bot": "node --test packages/bot/test/*.test.mjs",
+    "doctor": "node src/doctor.mjs",
+    "queue": "node src/queue/cli.mjs",
+    "check": "node src/gates/cli.mjs",
+    "release": "node src/queue/runner.mjs",
+    "mirror": "node src/queue/mirror.mjs",
+    "server": "node src/server.mjs",
+    "news": "node src/news/collect.mjs",
+    "articles": "node src/news/site-articles.mjs",
+    "trends": "node src/trends/collect.mjs",
+    "metrics": "node src/metrics/pull.mjs",
+    "report": "node src/metrics/weekly.mjs",
+    "tokens": "node src/tokens/check.mjs",
+    "media": "node src/media/upload.mjs",
+    "yt": "node src/video/youtube-cli.mjs",
+    "vk": "node src/tokens/vk-login.mjs",
+    "rutube": "node src/tokens/rutube-login.mjs",
+    "sla": "node src/leads/sla.mjs",
+    "erase": "node src/leads/erase.mjs",
+    "vault": "node src/vault/build.mjs",
+    "deploy": "bash ops/deploy.sh"
+  }
+}

@@ -1,0 +1,21 @@
+# Релей завода на Cloudflare Workers.
+# Выкладка:   cd ops/relay && npx wrangler deploy
+# Секреты (значения спросит сама команда, в файл они не попадают):
+#   npx wrangler secret put TG_BOT_TOKEN
+#   npx wrangler secret put TG_RELAY_SECRET
+#   npx wrangler secret put TG_WEBHOOK_SECRET
+#   npx wrangler secret put IG_RELAY_SECRET
+# Учётная запись Cloudflare принадлежит клиенту: релей видит сообщения его бота.
+
+name = "ecopolis-zavod-relay"
+main = "worker.mjs"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[vars]
+# Адрес сервера завода. Не секрет.
+ORIGIN_URL = "https://go.ecopolisrf.ru"
+
+[observability]
+# Журнал запросов у Cloudflare выключен: через релей идут сообщения людей.
+enabled = false

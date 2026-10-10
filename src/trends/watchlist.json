@@ -1,0 +1,66 @@
+{
+  "_о_файле": "За кем следим. Номера каналов и имена сообществ собраны и открыты 10.10.2026. Вывод той проверки: у прямых конкурентов нет ни одного живого канала с аудиторией больше двух тысяч, поэтому в списке есть и соседи по теме (связующие, оборудование, площадки), у которых регулярно что-то выходит. Канал клиента стоит в списке для сравнения с самим собой. minViews — порог, ниже которого находка не считается выбросом. Список правится в сессии S4.",
+  "youtube": [
+    { "id": "UC_yeqCTdrMoziXXELiGtn_g", "title": "Экополис (клиент)", "why": "свой канал: что у нас самих набирало больше обычного", "minViews": 300 },
+    { "id": "UCS0Dw_7416YZjpFz5Ft6GXg", "title": "Химтраст", "why": "связующие, Нижнекамск; ролик о технологии укладки набрал 166 тысяч" },
+    { "id": "UCUJOm83ZIEdrc8vVMuX2xFg", "title": "Альфа-СПК", "why": "оборудование для крошки и плитки, 19 тысяч подписчиков" },
+    { "id": "UCK8ek8K99gUwvHkQlLAGd1w", "title": "Global Plant", "why": "оборудование, 6 тысяч подписчиков" },
+    { "id": "UCMUNcJeAdtSMhgAAt74zvyQ", "title": "Лексор", "why": "заводы по переработке шин, выходит регулярно" },
+    { "id": "UCFCRVM0YeE0HOKARiXrLJkw", "title": "ЧЗМ", "why": "прессы для плитки, выходит регулярно" },
+    { "id": "UCd1IuqUndmzzFs-S2P1LWpA", "title": "Union Polymers", "why": "клей и EPDM" },
+    { "id": "UC7BBRIpRGdIBG-Nk_mG18Qg", "title": "Фабрика Резиновых Покрытий", "why": "прямой конкурент" },
+    { "id": "UC8EFcSvEhJS8RnQ0MKJ3gqQ", "title": "EcoStep", "why": "прямой конкурент" },
+    { "id": "UCWV9cIY0qZzx2RxdwUxy5vQ", "title": "Resi-Sport", "why": "прямой конкурент" },
+    { "id": "UCj9hd6vLYF6--rM2NKbZhnQ", "title": "Кенгуру ПРО", "why": "уличные спортплощадки: тот же заказчик" },
+    { "id": "UCWuoAj-JMADr6JCL__C4Gmg", "title": "КСИЛ", "why": "детские площадки: тот же заказчик" },
+    { "id": "UCvmFNvjDh6dG1Ie98ajrdgw", "title": "Оазис Групп", "why": "ландшафт и благоустройство, 6,7 тысячи подписчиков" },
+    { "id": "UCMBtOm41OZ8SUjd4NdsuB2A", "title": "Быстроф Приемка", "why": "Казань, переработка резины как бизнес; ролик на 327 тысяч" }
+  ],
+  "rutube": [
+    { "id": "26444926", "title": "Химтраст" },
+    { "id": "23921009", "title": "Union Polymers" },
+    { "id": "68914490", "title": "Лексор" },
+    { "id": "1158782", "title": "Global Plant" },
+    { "id": "39839747", "title": "EcoStep" },
+    { "id": "42532081", "title": "Rubber Covers" }
+  ],
+  "telegram": [
+    { "handle": "himtrust", "title": "Химтраст", "why": "связующие, 1,8 тысячи подписчиков, пишут регулярно" },
+    { "handle": "igratex", "title": "Игратекс", "why": "игровые пространства, 500–970 просмотров на пост" },
+    { "handle": "kengurupro_blog", "title": "Кенгуру ПРО", "why": "уличные спортплощадки" },
+    { "handle": "hobbyka", "title": "Хоббика", "why": "уличная мебель и малые формы" },
+    { "handle": "dvor_tatar", "title": "Наш двор, Татарстан", "why": "заказчик и повестка региона" },
+    { "handle": "parkikazani", "title": "Парки и скверы Казани", "why": "20 тысяч подписчиков, городские объекты" },
+    { "handle": "gradovod", "title": "Градовод", "why": "критика благоустройства: какие претензии набирают отклик" },
+    { "handle": "gkhnewsru", "title": "ЖКХ Ньюс", "why": "управляющие компании: тот же заказчик" },
+    { "handle": "lexor_lexor", "title": "Лексор" },
+    { "handle": "alfaspk", "title": "Альфа-СПК" }
+  ],
+  "vk": [
+    { "domain": "unionpolymer", "title": "Union Polymers", "why": "1,5 тысячи участников, посты ежедневно" },
+    { "domain": "kengurupro", "title": "Кенгуру ПРО", "why": "4 тысячи участников, посты ежедневно" },
+    { "domain": "himtrust", "title": "Химтраст" },
+    { "domain": "hobbyka", "title": "Хоббика" },
+    { "domain": "globalplant.store", "title": "Global Plant" },
+    { "domain": "skolzheniyanet43", "title": "Скольжения.нет", "why": "антискользящие покрытия; один пост набрал 61 тысячу просмотров" },
+    { "domain": "rezinovoepokritie", "title": "Фабрика Резиновых Покрытий", "why": "прямой конкурент" },
+    { "domain": "ecostep_official", "title": "EcoStep", "why": "прямой конкурент" }
+  ],
+  "queries": [
+    "резиновое покрытие своими руками",
+    "покрытие из резиновой крошки для крыльца",
+    "приёмка детской площадки",
+    "резиновая крошка укладка ошибки"
+  ],
+  "proven": [
+    { "url": "https://www.youtube.com/watch?v=WN9ZBYEyXxQ", "views": "2,34 млн", "what": "покрытие из резиновой крошки на входе в офис" },
+    { "url": "https://www.youtube.com/watch?v=CwRDlTufKSo", "views": "1,46 млн", "what": "бизнес на старых шинах" },
+    { "url": "https://www.youtube.com/watch?v=3Dijk8hEc6U", "views": "653 тыс.", "what": "инструкция: резиновый пол для крыльца" },
+    { "url": "https://www.youtube.com/watch?v=Tu6ABXN8hi4", "views": "327 тыс.", "what": "казанская переработка резины как бизнес" },
+    { "url": "https://www.youtube.com/watch?v=3HLzeD4fLSs", "views": "174 тыс.", "what": "монтаж резиновой крошки своими руками" },
+    { "url": "https://www.youtube.com/watch?v=as6Xej0DBBQ", "views": "173 тыс.", "what": "укладчик в работе, 12 секунд" },
+    { "url": "https://www.youtube.com/watch?v=cEMq-ap3qZw", "views": "166 тыс.", "what": "технология укладки от производителя связующего" },
+    { "url": "https://www.youtube.com/watch?v=9HPBFATyfM8", "views": "121 тыс.", "what": "претензия по гарантии" },
+    { "url": "https://www.youtube.com/watch?v=41VEoaQmM9w", "views": "84 тыс.", "what": "лучший ролик самого клиента: набор «Леонардо»" }
+  ]
+}

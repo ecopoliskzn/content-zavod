@@ -1,0 +1,45 @@
+# Расписание завода на сервере. Ставится пользователю zavod:  crontab ops/crontab.txt
+# Время сервера — UTC. Москва = UTC + 3: 07:00 по Москве это 04:00 здесь.
+#
+# ПРАВИЛА ЭТОГО ФАЙЛА (каждое стоило нам вечера):
+#  · ни одного ключа в строках cron: скрипты читают /opt/ecopolis-data/.env сами;
+#  · node по полному пути: у cron свой PATH, и «node: not found» в журнал не попадает;
+#  · у долгих задач замок flock: второй проход не стартует поверх первого;
+#  · вывод каждой задачи в свой журнал, иначе причину сбоя не найти.
+
+SHELL=/bin/bash
+NODE=/usr/bin/node
+APP=/opt/ecopolis-zavod/current
+LOG=/var/log/zavod
+
+# Выпуск одобренного по расписанию. Круглосуточно: ночью слотов нет, но проход пишет
+# пульс, по которому видно простой сервера.
+*/5 * * * *        flock -n /tmp/zavod-release.lock $NODE $APP/src/queue/runner.mjs >> $LOG/release.log 2>&1
+
+# Кодовые слова в комментариях Instagram опросом. Работает только при IG_POLL=1.
+*/5 * * * *        flock -n /tmp/zavod-igpoll.lock $NODE $APP/src/bot/ig-poll.mjs >> $LOG/ig-poll.log 2>&1
+
+# Ключи площадок: сроки, продление, живая проверка. 06:00 по Москве.
+0 3 * * *          $NODE $APP/src/tokens/check.mjs --refresh --live >> $LOG/tokens.log 2>&1
+
+# Новые статьи сайта клиента: карточкой в группу. 06:30 по Москве.
+30 3 * * *         $NODE $APP/src/news/site-articles.mjs --notify >> $LOG/articles.log 2>&1
+
+# Что зашло у конкурентов. 06:40 по Москве.
+40 3 * * *         flock -n /tmp/zavod-trends.lock $NODE $APP/src/trends/collect.mjs >> $LOG/trends.log 2>&1
+
+# Новости отрасли: каждые три часа с 07:00 до 22:00 по Москве.
+0 4-19/3 * * *     flock -n /tmp/zavod-news.lock $NODE $APP/src/news/collect.mjs --send >> $LOG/news.log 2>&1
+
+# Цифры по вышедшему. 07:10 по Москве. Не чаще раза в сутки: частое чтение площадки закрывают.
+10 4 * * *         flock -n /tmp/zavod-metrics.lock $NODE $APP/src/metrics/pull.mjs >> $LOG/metrics.log 2>&1
+
+# Недельный отчёт в группу. Понедельник, 09:00 по Москве.
+0 6 * * 1          $NODE $APP/src/metrics/weekly.mjs --send >> $LOG/weekly.log 2>&1
+
+# Заявки без ответа: будни, каждые полчаса с 09:00 до 20:30 по Москве.
+*/30 6-17 * * 1-5  $NODE $APP/src/leads/sla.mjs >> $LOG/sla.log 2>&1
+
+# Резервная копия каталога данных: раз в сутки, 03:30 по Москве. Копия шифруется и
+# остаётся в России: в каталоге данных лежат заявки.
+30 0 * * *         $APP/ops/backup.sh >> $LOG/backup.log 2>&1

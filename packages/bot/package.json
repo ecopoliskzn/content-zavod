@@ -1,0 +1,9 @@
+{
+  "name": "@liga/bot",
+  "version": "0.0.0",
+  "private": true,
+  "main": "./src/index.mjs",
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  }
+}

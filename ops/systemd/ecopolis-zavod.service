@@ -1,0 +1,36 @@
+# Сервер завода: бот, приём событий, очередь по ключу оператора, счётчик ссылок, формы.
+# Установка:
+#   sudo cp ops/systemd/ecopolis-zavod.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now ecopolis-zavod
+# Журнал:  journalctl -u ecopolis-zavod -n 100 --no-pager
+#
+# Файл окружения приложение читает само (/opt/ecopolis-data/.env). Через EnvironmentFile
+# его подключать нельзя: тогда продлённый маркер не подхватится без перезапуска.
+
+[Unit]
+Description=Контент-завод «Экополис»: сервер
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=zavod
+Group=zavod
+WorkingDirectory=/opt/ecopolis-zavod/current
+ExecStart=/usr/bin/node src/server.mjs
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=DATA_DIR=/opt/ecopolis-data
+Environment=ZAVOD_ENV_FILE=/opt/ecopolis-data/.env
+
+# Процесс видит код только на чтение, пишет только в каталог данных.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ecopolis-data
+MemoryMax=400M
+
+[Install]
+WantedBy=multi-user.target
