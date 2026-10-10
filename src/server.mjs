@@ -8,6 +8,7 @@
 //   POST /admin/queue       команды очереди с компьютера оператора (ключ ADMIN_API_TOKEN)
 //   GET  /go/<слаг>         счётчик переходов и переадресация на сайт клиента
 //   GET  /z/<слаг>          форма заявки; POST туда же — приём
+//   GET  /cb/vk, /cb/meta   страница возврата после входа владельца аккаунта: показывает код
 //   GET  /doc/<имя>         тексты согласий и политики из каталога legal/site
 //
 // За nginx с HTTPS. Сам процесс слушает только 127.0.0.1.
@@ -30,6 +31,7 @@ import * as leads from "./bot/leads.mjs";
 import * as staff from "./bot/staff.mjs";
 import { handleGo } from "./leads/go.mjs";
 import { renderForm, submitForm } from "./leads/form.mjs";
+import { legalReady } from "./leads/legal.mjs";
 import { execute } from "./queue/commands.mjs";
 
 const send = (res, status, body, headers = {}) => {
@@ -153,6 +155,8 @@ export function createHandler() {
       const viaForward = env("IG_FORWARD_SECRET") && verify(body, req.headers["x-forward-signature"], env("IG_FORWARD_SECRET"));
       const viaMeta = env("IG_APP_SECRET") && verify(body, req.headers["x-hub-signature-256"], env("IG_APP_SECRET"));
       if (!viaForward && !viaMeta) return send(res, 401, { ok: false });
+      // Согласия не утверждены: событие принято (Meta ждёт 200), но не записано и без ответа.
+      if (!legalReady()) return send(res, 200, { ok: true, принято: 0 });
       const account = env("IG_USER_ID");
       const events = b.ig.webhook["разобратьСобытия"](body, { accountId: account || undefined });
       for (const event of events) b.ig.queue["положить"](event);
@@ -178,7 +182,8 @@ export function createHandler() {
 
     if (p.startsWith("/z/")) {
       const slug = p.slice(3).replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "zayavka";
-      if (req.method === "GET") return send(res, 200, renderForm(slug, Object.fromEntries(url.searchParams)));
+      // Пока тексты согласий не утверждены, вместо формы стоит страница «скоро заработает».
+      if (req.method === "GET") return send(res, legalReady() ? 200 : 503, renderForm(slug, Object.fromEntries(url.searchParams)));
       if (req.method === "POST") {
         const body = new URLSearchParams(await readBody(req, 64 * 1024));
         const ip = String(req.headers["x-real-ip"] || req.headers["x-forwarded-for"] || req.socket?.remoteAddress || "").split(",")[0].trim();
@@ -198,6 +203,17 @@ export function createHandler() {
         ? `<h1>Вход выполнен</h1><p>Передайте оператору эти две строки. Код действует десять минут и годится один раз.</p><p><b>Код:</b><br><code>${codeValue}</code></p><p><b>Номер устройства:</b><br><code>${device}</code></p>`
         : `<h1>Вход не выполнен</h1><p>ВКонтакте не вернул код. Попросите у оператора новую ссылку.</p>`;
       return send(res, 200, `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Вход ВКонтакте</title><style>body{font:17px/1.6 system-ui,sans-serif;max-width:640px;margin:0 auto;padding:28px 18px}code{word-break:break-all;background:#eef0ec;padding:4px 6px;border-radius:6px}</style></head><body>${body}</body></html>`, { "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    }
+
+    if (req.method === "GET" && p === "/cb/meta") {
+      // Возврат после входа владельца в Instagram или Threads через СВОЁ приложение клиента
+      // (со второго месяца). Как и у ВКонтакте: сервер ничего не сохраняет и не обменивает,
+      // он показывает человеку код, который тот передаст оператору. Код живёт час.
+      const codeValue = String(url.searchParams.get("code") || "").replace(/[^\w.-]/g, "").slice(0, 700);
+      const body = codeValue
+        ? `<h1>Вход выполнен</h1><p>Передайте оператору этот код. Он действует один час и годится один раз.</p><p><code>${codeValue}</code></p>`
+        : `<h1>Вход не выполнен</h1><p>Площадка не вернула код. Попросите у оператора новую ссылку.</p>`;
+      return send(res, 200, `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Вход</title><style>body{font:17px/1.6 system-ui,sans-serif;max-width:640px;margin:0 auto;padding:28px 18px}code{word-break:break-all;background:#eef0ec;padding:4px 6px;border-radius:6px}</style></head><body>${body}</body></html>`, { "cache-control": "no-store", "referrer-policy": "no-referrer" });
     }
 
     if (req.method === "GET" && p.startsWith("/doc/")) {

@@ -6,6 +6,10 @@
 //   npm run tokens -- --live          спросить площадки, живы ли ключи
 //   npm run tokens -- --refresh       продлить маркеры Threads и Instagram, которым осталось меньше 20 дней
 //   npm run tokens -- --compare       сверить копии ключей на компьютере и на сервере (по отпечаткам)
+//   npm run tokens -- --init          создать недостающие случайные секреты (на сервере, один раз)
+//   npm run tokens -- --export=ИМЯ,ИМЯ --out=keys.env   выгрузить ключи в файл для переноса
+//   npm run tokens -- --import=/tmp/keys.env            принять файл с ключами и удалить его
+//   npm run tokens -- --example       напечатать образец файла окружения из реестра
 //
 // ЗНАЧЕНИЯ КЛЮЧЕЙ НЕ ПЕЧАТАЮТСЯ НИКОГДА. В таблице имя, срок и статус; при сверке —
 // короткий отпечаток, по которому значение не восстановить.
@@ -22,6 +26,7 @@
 // ТРИ ИСХОДА ПРОВЕРКИ. «Площадка отказала» и «не смог спросить» — разные вещи. Тревога
 // уходит только на отказ: сетевой сбой не объявляет ключ мёртвым.
 
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { env, envFile, fingerprint, has } from "../lib/env.mjs";
 import { setEnv } from "../lib/envfile.mjs";
@@ -44,6 +49,111 @@ export async function init() {
   const fresh = Object.fromEntries(GENERATED.filter((n) => !has(n)).map((n) => [n, randomBytes(32).toString("hex")]));
   if (!Object.keys(fresh).length) return { file: envFile(), created: [] };
   return { file: setEnv(fresh), created: Object.keys(fresh) };
+}
+
+/**
+ * На какой машине мы: сервер читает файл окружения из /opt, компьютер оператора из проекта.
+ * От этого зависит, какие ключи здесь вообще могут лежать.
+ */
+export const machine = () => (String(envFile()).startsWith("/opt/") || env("DATA_DIR").startsWith("/opt/") ? "server" : "operator");
+
+/**
+ * Выгрузка выбранных ключей в файл для переноса на другую машину. Значения не печатаются.
+ * Ключи переносятся файлом, из терминала в терминал: в чат, письмо, буфер обмена и
+ * сессию Codex значение не попадает ни разу.
+ * @returns {{ written: string[], missing: string[], file: string }}
+ */
+export function exportKeys(names, outFile) {
+  const known = new Map(REGISTRY.map((r) => [r.name, r]));
+  const unknown = names.filter((n) => !known.has(n));
+  if (unknown.length) throw Object.assign(new Error(`таких переменных нет в реестре: ${unknown.join(", ")}`), { code: "RULE" });
+  if (!outFile) throw Object.assign(new Error("куда выгрузить: --out=<файл>"), { code: "RULE" });
+  const written = names.filter(has);
+  writeFileSync(outFile, written.map((n) => `${n}=${env(n)}`).join("\n") + "\n", { encoding: "utf8", mode: 0o600 });
+  return { written, missing: names.filter((n) => !has(n)), file: outFile };
+}
+
+/**
+ * Приём файла с ключами: строки вписываются в файл окружения этой машины, принесённый файл
+ * удаляется. Ключ, которому на этой машине не место, останавливает приём целиком: так
+ * секрет приложения Meta исполнителя не окажется на сервере клиента по ошибке.
+ * @returns {{ names: string[], file: string }}
+ */
+export function importKeys(file, where = machine()) {
+  if (!existsSync(file)) throw Object.assign(new Error(`файла ${file} нет`), { code: "RULE" });
+  const known = new Map(REGISTRY.map((r) => [r.name, r]));
+  const values = {};
+  for (const line of readFileSync(file, "utf8").replace(/^﻿/, "").split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z][A-Z0-9_]*)\s*=\s*(.*)$/);
+    if (!m) continue;
+    values[m[1]] = m[2].trim();
+  }
+  const names = Object.keys(values);
+  if (!names.length) throw Object.assign(new Error("в файле нет ни одной строки ИМЯ=значение"), { code: "RULE" });
+  const unknown = names.filter((n) => !known.has(n));
+  if (unknown.length) throw Object.assign(new Error(`неизвестные переменные: ${unknown.join(", ")}. Файл не принят`), { code: "RULE" });
+  const foreign = names.filter((n) => !known.get(n).where.includes(where));
+  if (foreign.length) throw Object.assign(new Error(`этим ключам здесь не место (${where === "server" ? "сервер" : "компьютер оператора"}): ${foreign.join(", ")}. Файл не принят и не удалён: уберите лишние строки`), { code: "RULE" });
+  const target = setEnv(values);
+  rmSync(file);
+  return { names, file: target };
+}
+
+const SECTIONS = [
+  ["Общее", (n) => ["DATA_DIR", "PUBLIC_BASE_URL", "PORT", "ADMIN_API_TOKEN", "QUEUE_API_BASE", "OPERATOR_NAME", "MIRROR_DIR"].includes(n)],
+  ["Telegram: бот, рабочая группа, канал", (n) => n.startsWith("TG_") || n === "APPROVER_IDS" || n === "STAFF_IDS"],
+  ["Threads", (n) => n.startsWith("THREADS_")],
+  ["Instagram", (n) => n.startsWith("IG_")],
+  ["Приложение Meta: вход владельца аккаунта", (n) => n.startsWith("META_")],
+  ["ВКонтакте", (n) => n.startsWith("VK_")],
+  ["YouTube", (n) => n.startsWith("YOUTUBE_")],
+  ["Rutube", (n) => n.startsWith("RUTUBE_")],
+  ["Хранилище файлов", (n) => n.startsWith("S3_")],
+  ["Резервные копии", (n) => n.startsWith("BACKUP_")],
+  ["Заявки и документы", () => true],
+];
+const WHERE = { server: "сервер", operator: "компьютер", relay: "релей" };
+
+/**
+ * Образец файла окружения: имена и пояснения из реестра, значений нет.
+ * Файл .env.example в корне проекта собирается этой функцией и сверяется с ней тестом:
+ * переменная, добавленная в реестр, не может остаться без строки в образце.
+ */
+export function example(channelTitles = {}) {
+  const need = (r) => (r.need === "core" ? "обязательна" : r.need.startsWith("channel:") ? `нужна для площадки «${channelTitles[r.need.slice(8)] || r.need.slice(8)}»` : "по желанию");
+  const out = [
+    "# Образец файла окружения завода. Собран из src/tokens/registry.mjs:",
+    "#   npm run tokens -- --example > .env.example",
+    "# Значений здесь нет и быть не должно. Настоящие файлы в git не попадают:",
+    "#   сервер                /opt/ecopolis-data/.env   (права 600, владелец zavod)",
+    "#   компьютер оператора   .env.local в корне проекта",
+    "#   релей                 /etc/zavod-relay.env на втором сервере либо секреты Cloudflare",
+    "# После пояснения в квадратных скобках: на каких машинах переменная нужна.",
+    `# Случайные секреты (${GENERATED.join(", ")}) создаёт`,
+    "# команда на сервере: node src/tokens/check.mjs --init. Руками их не придумывают.",
+    "# Значение ключа нельзя показывать никому и ничему: ни в чате, ни в выводе команды.",
+  ];
+  const left = [...REGISTRY];
+  for (const [title, test] of SECTIONS) {
+    const mine = left.filter((r) => test(r.name));
+    if (!mine.length) continue;
+    for (const r of mine) left.splice(left.indexOf(r), 1);
+    out.push("", `# ── ${title} ${"─".repeat(Math.max(3, 66 - title.length))}`);
+    for (const r of mine) out.push(`# ${r.what}`, `# [${r.where.map((w) => WHERE[w] || w).join(", ")}] · ${need(r)}${r.secret ? " · секрет" : ""}`, `${r.name}=`, "");
+    out.pop();
+  }
+  out.push(
+    "",
+    `# ── Только релей ${"─".repeat(54)}`,
+    "# адрес сервера завода с https://: туда релей передаёт обновления Telegram",
+    "# [релей] · обязательна",
+    "ORIGIN_URL=",
+    "# порт релея на втором сервере, по умолчанию 8787 (слушает только 127.0.0.1)",
+    "# [релей] · по желанию",
+    "RELAY_PORT=",
+    "",
+  );
+  return out.join("\n");
 }
 
 /** Сколько дней осталось до даты (ГГГГ-ММ-ДД или ISO). Нет даты — null. */
@@ -145,10 +255,36 @@ export async function compare() {
 }
 
 async function main() {
+  if (flag("example")) {
+    const { config } = await import("../lib/config.mjs");
+    process.stdout.write(example(Object.fromEntries(Object.entries(config().channels || {}).map(([k, v]) => [k, v.title]))));
+    return 0;
+  }
   if (flag("init")) {
     const r = await init();
     console.log(r.created.length ? `созданы в ${r.file}: ${r.created.join(", ")}` : "все случайные секреты уже заданы");
     return 0;
+  }
+  const opt = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || "").slice(name.length + 3);
+  if (opt("export")) {
+    try {
+      const r = exportKeys(opt("export").split(",").map((s) => s.trim()).filter(Boolean), opt("out"));
+      console.log(`выгружено в ${r.file}: ${r.written.join(", ") || "ничего"}${r.missing.length ? `\nне заданы и не выгружены: ${r.missing.join(", ")}` : ""}`);
+      console.log("Файл с ключами: перенесите его по scp, примите на той стороне (--import) и удалите здесь.");
+      return r.written.length ? 0 : 1;
+    } catch (e) { console.error(`✗ ${e.message}`); return e.code === "RULE" ? 1 : 2; }
+  }
+  if (opt("import")) {
+    try {
+      const r = importKeys(opt("import"));
+      console.log(`приняты в ${r.file}: ${r.names.join(", ")}. Принесённый файл удалён.`);
+      if (r.names.includes("IG_TOKEN")) {
+        // Новый маркер Instagram без подписки на события нем: кодовые слова молча не работают.
+        const sub = await (await adapter("instagram")).subscribe();
+        console.log(sub.kind === "ok" ? "✓ подписка аккаунта Instagram на события оформлена" : `⚠ подписка на события не оформилась: ${sub.error}. Повторите: node src/tokens/check.mjs --refresh --force`);
+      }
+      return 0;
+    } catch (e) { console.error(`✗ ${e.message}`); return e.code === "RULE" ? 1 : 2; }
   }
   if (flag("compare")) {
     const r = await compare();

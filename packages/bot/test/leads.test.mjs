@@ -20,7 +20,7 @@ function newDir() {
 test("saveLead дописывает лид в jsonl раньше любой попытки CRM", async () => {
   const dir = newDir();
   const store = createLeadStore({ storageDir: dir });
-  const record = await store.saveLead({ name: "Пётр", phone: "+79990000001", source: "alyona:telegram" });
+  const record = await store.saveLead({ name: "Пётр", phone: "+79990000001", source: "demo:telegram" });
 
   assert.ok(record.id);
   assert.ok(record.createdAt);
@@ -48,11 +48,11 @@ test("submitLead без CRM только сохраняет лид и помеч
 test("submitLead записывает лид в jsonl, даже если CRM падает (заявка не теряется)", async () => {
   const dir = newDir();
   const crm = { pushLead: async () => { throw new Error("сеть недоступна"); } };
-  const store = createLeadStore({ storageDir: dir, crm, sourceTagPrefix: "alyona" });
+  const store = createLeadStore({ storageDir: dir, crm, sourceTagPrefix: "demo" });
 
   const { lead, crm: crmResult } = await store.submitLead({ name: "Иван", source: store.sourceTag("telegram") });
 
-  assert.equal(lead.source, "alyona:telegram");
+  assert.equal(lead.source, "demo:telegram");
   assert.equal(crmResult.ok, false);
   assert.match(crmResult.error, /сеть недоступна/);
   assert.equal(readLines(store.files.leadsFile).length, 1, "лид обязан остаться в буфере при сбое CRM");
@@ -72,12 +72,12 @@ test("submitLead с успешной CRM пишет crmId в результат"
   };
   const store = createLeadStore({ storageDir: dir, crm });
 
-  const { crm: crmResult } = await store.submitLead({ name: "Мария", sourceLabel: "alyona:instagram" });
+  const { crm: crmResult } = await store.submitLead({ name: "Мария", sourceLabel: "demo:instagram" });
 
   assert.equal(crmResult.ok, true);
   assert.equal(crmResult.crmId, 777);
   assert.equal(вызовы.length, 1);
-  assert.equal(вызовы[0].sourceLabel, "alyona:instagram");
+  assert.equal(вызовы[0].sourceLabel, "demo:instagram");
 
   rmSync(dir, { recursive: true, force: true });
 });

@@ -20,6 +20,7 @@ import { PROJECT_ROOT, dataPath, env } from "../lib/env.mjs";
 import { appendJsonl, readJson } from "../lib/files.mjs";
 import { bot } from "../bot/instance.mjs";
 import { announceLead } from "../bot/leads.mjs";
+import { legalReady } from "./legal.mjs";
 
 const FORMS = path.join(PROJECT_ROOT, "bot", "forms.json");
 const e = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -43,8 +44,19 @@ function formCfg(slug) {
 const page = (title, body) => `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>${e(title)}</title>
 <style>body{font:17px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;margin:0;background:#f5f6f4;color:#1c1f1a}main{max-width:560px;margin:0 auto;padding:28px 18px 60px}h1{font-size:26px;line-height:1.2;margin:8px 0 12px;text-wrap:balance}p{margin:0 0 14px}label{display:block;margin:16px 0 6px;font-weight:600}input[type=text],input[type=tel],textarea,select{width:100%;box-sizing:border-box;padding:13px 12px;font:inherit;border:1px solid #b9beb4;border-radius:8px;background:#fff}textarea{min-height:92px}.c{display:flex;gap:10px;align-items:flex-start;margin:16px 0;font-weight:400}.c input{margin-top:5px;width:20px;height:20px;flex:none}button{margin-top:10px;width:100%;padding:15px;font:inherit;font-weight:700;border:0;border-radius:8px;background:#1f6f43;color:#fff}.err{background:#fde8e6;border:1px solid #e0a39c;padding:12px;border-radius:8px}.s{font-size:14px;color:#565c52}.hp{position:absolute;left:-9999px}a{color:#1f6f43}</style></head><body><main>${body}</main></body></html>`;
 
+/**
+ * Страница вместо формы, пока тексты согласий не утверждены юристом клиента. Форма
+ * открыта всему интернету с минуты, когда поднят сервер, поэтому заслон стоит здесь, а не
+ * в памятке. См. src/leads/legal.mjs.
+ */
+export const closedPage = () => {
+  const client = config().client;
+  return page("Форма скоро заработает", `<p class="s">${e(client.name)}</p><h1>Форма скоро заработает</h1><p>Сейчас заявки принимаются на сайте компании.</p><p><a href="${e(client.site)}/contacts/">Контакты на сайте</a></p>`);
+};
+
 /** Страница формы. */
 export function renderForm(slug, query = {}, error = "", values = {}) {
+  if (!legalReady()) return closedPage();
   const cfg = formCfg(slug);
   const consent = env("CONSENT_URL", "/doc/soglasie");
   const policy = env("POLICY_URL", "/doc/politika");
@@ -81,6 +93,8 @@ export const thanksPage = (slug) => {
  * @param {{ ip: string, ua: string }} who
  */
 export async function submitForm(slug, body, who) {
+  // Согласия не утверждены: заявку не принимаем и ничего из присланного не записываем.
+  if (!legalReady()) return { status: 503, html: closedPage() };
   const v = Object.fromEntries(body);
   // Робот заполнил поле-ловушку: отвечаем как обычно, заявку не создаём.
   if (v.website) return { status: 200, html: thanksPage(slug) };

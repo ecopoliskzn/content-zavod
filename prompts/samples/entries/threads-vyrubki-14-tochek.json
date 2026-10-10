@@ -1,0 +1,21 @@
+{
+  "channel": "threads",
+  "kind": "thread",
+  "name": "vyrubki-14-tochek",
+  "material": "blog:kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2",
+  "posts": [
+    "На площадке в 500 квадратных метров толщину покрытия проверяют в 14 точках. Каждая точка: вырубка 10 на 10 сантиметров до самого основания.",
+    "Счёт такой. На первые 200 метров площади делают 5 вырубок, на каждые следующие 100 метров ещё по 3. Точку берут не ближе 3 метров от края площадки.",
+    "Толщину измеряют штангенциркулем и записывают в журнал контроля качества. Нижний слой вырубают раньше, чем уложен верхний цветной.",
+    "Заказчику резать готовое покрытие самому не стоит: это повод для спора. Метод контроля заранее записывают в договор, места измерений согласуют, вырубки делают при обеих сторонах, каждую точку отмечают на схеме и фотографируют.",
+    "Что ещё проверить до подписи акта, собрано в чек-листе: https://go.ecopolisrf.ru/go/priemka2?c=th&p=vyrubki-14-tochek"
+  ],
+  "facts": [
+    { "claim": "для объекта площадью 500 м² потребуется 14 вырубок", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "размер вырубки 10 × 10 см, до основания", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "на 200 м² 5 вырубок, на каждые дополнительные 100 м² ещё 3", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "контрольную точку располагают не менее чем в 3 метрах от края площадки", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "вырубку нижнего слоя делают до устройства верхнего цветного слоя; результаты фиксируют в журнале контроля качества", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "самостоятельно вырезать готовое покрытие заказчику не следует; метод контроля заранее включают в договор", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" }
+  ]
+}

@@ -108,6 +108,24 @@ export function summarize({ ledger, metrics, followers = [], clicks = [], leads 
   }
   const slotTable = Object.fromEntries(Object.entries(slots).map(([c, byTime]) => [c, Object.entries(byTime).map(([time, v]) => ({ time, posts: v.length, median: median(v) })).sort((a, b) => a.time.localeCompare(b.time))]));
 
+  // Ролики YouTube: досмотр и подписки с ролика. Просмотры зависят от раздачи, досмотр от
+  // самого ролика, поэтому «что снимать дальше» решают по нему. Обычный досмотр считается
+  // по восьми неделям: разница меньше десяти пунктов ничего не доказывает.
+  const watchHistory = [];
+  for (const r of ledger) {
+    if (r.status !== "published" || r.channel !== "youtube" || Date.parse(r.at) < window.to - 56 * 86_400_000 || Date.parse(r.at) >= window.to) continue;
+    const n = numbers.get(r.id);
+    if (Number.isFinite(n?.watchPct)) watchHistory.push(n.watchPct);
+  }
+  const usualWatch = median(watchHistory);
+  const video = {
+    usualWatch,
+    list: posts
+      .filter((p) => p.channel === "youtube")
+      .map((p) => ({ id: p.id, name: p.name, material: p.material, link: p.link, views: p.views ?? null, watchPct: p.watchPct ?? null, avgSec: p.avgSec ?? null, subs: p.subs ?? null }))
+      .sort((a, b) => (b.watchPct ?? -1) - (a.watchPct ?? -1)),
+  };
+
   // Переходы на сайт через наш счётчик. Роботы уже отсеяны при записи.
   const clickRows = clicks.filter((r) => r.device !== "robot" && inWindow(r.at, window));
   const clicksByChannel = {};
@@ -158,7 +176,8 @@ export function summarize({ ledger, metrics, followers = [], clicks = [], leads 
     leads: { total: leadRows.length, bySource: leadsBySource, byNeed: leadsByNeed, taken, rejected, unanswered },
     keywords: keywordHits,
     followers: followersDelta,
-    suggestions: suggest({ channels, slotTable, materials, leadsBySource, clicksByChannel, title }),
+    video,
+    suggestions: suggest({ channels, slotTable, materials, leadsBySource, clicksByChannel, title, video }),
   };
 }
 
@@ -166,8 +185,12 @@ export function summarize({ ledger, metrics, followers = [], clicks = [], leads 
  * Предложения на следующую неделю. Не больше трёх, и каждое опирается на цифру.
  * Это подсказка для сессии разбора и для человека, а не решение: решение принимает он.
  */
-export function suggest({ channels, slotTable, materials, leadsBySource, clicksByChannel, title }) {
+export function suggest({ channels, slotTable, materials, leadsBySource, clicksByChannel, title, video }) {
   const out = [];
+  // Ролик, который досмотрели заметно лучше обычного: повод для продолжения. Порог в десять
+  // пунктов: меньшая разница — шум раздачи, а не свойство ролика.
+  const held = (video?.list || []).filter((v) => Number.isFinite(v.watchPct) && video.usualWatch && v.watchPct - video.usualWatch >= 10)[0];
+  if (held) out.push({ weight: 2 + (held.watchPct - video.usualWatch) / 10, text: `YouTube: ролик «${held.name}» досмотрели на ${Math.round(held.watchPct)}% при обычных ${Math.round(video.usualWatch)}%. Снять продолжение в ту же серию.` });
   for (const [channel, rows] of Object.entries(slotTable)) {
     const enough = rows.filter((r) => r.posts >= 3);
     if (enough.length < 2) continue;

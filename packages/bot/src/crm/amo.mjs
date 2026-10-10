@@ -1,4 +1,4 @@
-// Клиент amoCRM: framework-agnostic порт lib/amo.ts из kormishin-site, урезанный
+// Клиент amoCRM: framework-agnostic порт lib/amo.ts из исходного проекта, урезанный
 // до общего ядра «лид → сделка в «Входящих лидах»». Ничего из process.env не читает:
 // baseUrl, токен (или геттер токена — для будущего oauth-рефреша) и id воронки/полей
 // приходят конфигом от приложения-потребителя (D-011: пакет инстанс-агностичен).
@@ -25,7 +25,7 @@ function cfv(field_id, value) {
  *   (функция — задел под oauth-рефреш: пакет не хранит и не обновляет токены сам)
  * @param {number} [конфиг.pipelineId] id воронки для новых сделок
  * @param {number} [конфиг.statusId] id статуса (этапа) для новых сделок
- * @param {string} [конфиг.tagPrefix] префикс метки лида/source_uid, например "alyona"
+ * @param {string} [конфиг.tagPrefix] префикс метки лида/source_uid, например "demo"
  * @param {string} [конфиг.formName] «Форма»/источник для metadata и имени сделки
  * @param {object} [конфиг.fields] id кастомных полей amoCRM
  * @param {number} [конфиг.fields.source] поле сделки: метка источника (sourceLabel)
@@ -56,8 +56,8 @@ export function createAmoClient(config = {}) {
 
   /**
    * Заводит лид в «Входящие лиды» (unsorted/forms) — контакт + сделка одним запросом,
-   * как в kormishin-site. sourceLabel — человекочитаемый ярлык источника (см. lead-source.ts
-   * kormishin), lead — произвольный объект (name, phone/contact, task, id, ...).
+   * как в исходном проекте. sourceLabel — человекочитаемый ярлык источника (см. lead-source.ts
+   * исходного проекта), lead — произвольный объект (name, phone/contact, task, id, ...).
    */
   async function pushLead(lead = {}, sourceLabel) {
     const token = await resolveToken();

@@ -169,7 +169,9 @@ async function doUpload() {
     console.log(t.ok ? "✓ обложка поставлена" : `⚠ ${t.error}`);
   }
   if (entry.series) {
-    registry = withVideo(registry, entry.series, { id: res.id, name: entry.name, title: entry.title });
+    // Срок выхода пишется в реестр: до него соседние ролики на этот не ссылаются, иначе
+    // зритель по ссылке «следующая часть» попадёт на «видео недоступно».
+    registry = withVideo(registry, entry.series, { id: res.id, name: entry.name, title: entry.title, ...(publishAt ? { publishAt } : {}) });
     saveRegistry(registry);
     const s = registry.series.find((x) => x.key === entry.series);
     if (s.playlistId) {
@@ -178,9 +180,11 @@ async function doUpload() {
     } else {
       console.log(`· у серии «${s.title}» ещё нет плейлиста: npm run yt -- --series-create --series=${s.key}`);
     }
-    // Прошлым частям дописываем ссылку на новую, новой — на прошлые.
+    // Новому ролику ссылки на вышедшие части ставятся сразу. Прошлым частям ссылка на него
+    // дописывается после выхода: до тех пор он закрыт.
     const r = await relink(registry, entry.series);
     console.log(`ссылки в серии обновлены: описаний изменено ${r.changed}${r.failed ? `, не удалось ${r.failed}` : ""}`);
+    if (publishAt) console.log(`после выхода ролика (${entry.date} в ${entry.time} МСК) дайте остальным роликам серии ссылку на него: npm run yt -- --relink --series=${s.key}`);
   }
   console.log("\nЗакреплённый комментарий (после выхода ролика его ставит и закрепляет человек в Студии; текст придёт в рабочую группу):\n");
   console.log(pinnedComment(entry, context(registry, res.id)));

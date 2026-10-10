@@ -55,12 +55,27 @@ export function cardText(entry, verdict = { block: [], warn: [] }, footer = "") 
   for (const m of entry.media || []) rows.push(`${m.type === "video" ? "🎬 Ролик" : "🖼 Картинка"}: ${h(m.url)}`);
   for (const row of entry.buttons || []) for (const b of row) rows.push(`🔘 Кнопка «${h(b.text)}» → ${h(b.url)}`);
   if (entry.link) rows.push(`🔗 Ссылка в тексте ведёт на: ${h(entry.link)}`);
+  // У ролика под согласованным текстом программа сама ставит ссылки и хэштеги. Человек
+  // должен видеть и их: «да» относится ко всему, что появится под роликом.
+  const isVideo = ["video", "short"].includes(entry.kind);
+  if (isVideo) {
+    const under = [
+      entry.goSlug ? `ссылка на материал «${entry.goSlug}»` : "",
+      entry.botKey ? `ссылка в бота на материал «${entry.botKey}»` : "",
+      entry.article ? `ссылка на статью «${entry.article}»` : "",
+      entry.series ? `серия «${entry.series}» и соседние ролики` : "",
+      entry.hashtags?.length ? `хэштеги: ${entry.hashtags.map((t) => `#${String(t).replace(/^#/, "")}`).join(" ")}` : "",
+    ].filter(Boolean);
+    if (under.length) rows.push("", `<b>Под текстом программа поставит</b>\n${under.map((u) => `· ${h(u)}`).join("\n")}`);
+  }
+  // Вопрос автора утверждающему: спорное место решает человек клиента, а не программа.
+  if (entry.ask) rows.push("", `❓ <b>Вопрос к вам:</b> ${h(String(entry.ask).slice(0, 500))}`);
   const facts = (entry.facts || []).filter((f) => f?.claim);
   if (facts.length) {
     rows.push("", "<b>Откуда цифры</b>");
     for (const f of facts.slice(0, 8)) rows.push(`· ${h(f.claim)} — ${h(f.source || "источник не указан")}`);
   }
-  rows.push("", verdict.block.length ? `⛔ Проверки не пройдены:\n${h(verdict.block.join("\n"))}` : "✓ Проверки пройдены: готовность, речь, реклама, факты.");
+  rows.push("", verdict.block.length ? `⛔ Проверки не пройдены:\n${h(verdict.block.join("\n"))}` : `✓ Проверки пройдены: готовность, речь, реклама, факты${isVideo || entry.kind === "reel" ? ", ролик" : ""}.`);
   if (verdict.warn.length) rows.push(`⚠️ На что посмотреть:\n${h(verdict.warn.join("\n"))}`);
   if (footer) rows.push("", footer);
   return rows.join("\n");

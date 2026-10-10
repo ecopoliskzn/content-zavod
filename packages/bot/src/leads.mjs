@@ -1,6 +1,6 @@
 // Store-and-forward для заявок (Фаза 3, D-013): сначала лид дописывается в jsonl-буфер
 // на VPS в РФ (152-ФЗ — первичная фиксация до любой передачи наружу), потом идёт в CRM.
-// Порт идеи lib/telegram/lead.ts (submitLead) из kormishin-site: сбой CRM не должен
+// Порт идеи lib/telegram/lead.ts (submitLead) из исходного проекта: сбой CRM не должен
 // ронять заявку — она уже в файле, попытку можно повторить (retryFailed).
 
 import { promises as fs } from "node:fs";
@@ -41,7 +41,7 @@ async function readJsonl(file) {
  * @param {string} конфиг.storageDir каталог хранилища (152-ФЗ, свой каталог на VPS в РФ)
  * @param {{ pushLead: (lead: object, sourceLabel?: string) => Promise<{ok: boolean, id?: any, error?: string}> }} [конфиг.crm]
  *   клиент CRM (например createAmoClient) — необязателен: без него лид только сохраняется в jsonl
- * @param {string} [конфиг.sourceTagPrefix] префикс метки источника, например "alyona"
+ * @param {string} [конфиг.sourceTagPrefix] префикс метки источника, например "demo"
  *   (используется как "<sourceTagPrefix>:<площадка>", как sourceTag в createBotInstance)
  */
 export function createLeadStore({ storageDir, crm, sourceTagPrefix } = {}) {

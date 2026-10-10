@@ -16,10 +16,13 @@
 //   order "views" — самостоятельные ролики одной темы: в плейлисте первым стоит самый
 //                   просматриваемый, потому что плейлист открывают с первого ролика.
 
+import { MARK } from "../leads/marks.mjs";
+
 export const watchUrl = (id) => `https://youtu.be/${id}`;
 export const playlistUrl = (id) => `https://www.youtube.com/playlist?list=${id}`;
 
-const PLATFORM = { youtube: "yt", rutube: "rt", vk: "vk", instagram: "ig" };
+// Метки площадок общие со счётчиком ссылок и ботом: src/leads/marks.mjs.
+const PLATFORM = MARK;
 
 /** Серия и место ролика в ней: по номеру ролика либо по имени записи очереди. */
 export function locate(registry, { videoId = "", name = "", series = "" } = {}) {
@@ -32,15 +35,22 @@ export function locate(registry, { videoId = "", name = "", series = "" } = {}) 
   return direct ? { series: direct, index: -1, video: null } : null;
 }
 
+/**
+ * Ролик уже виден зрителю: у него есть номер, и отложенный срок выхода наступил.
+ * Ролик загружается закрытым за часы и дни до слота. Ссылка на него из соседних описаний
+ * до выхода ведёт зрителя на «видео недоступно», поэтому в связи он попадает только живым.
+ */
+export const isLive = (video, now = Date.now()) => Boolean(video?.id) && !(video.publishAt && Date.parse(video.publishAt) > now);
+
 /** Соседи ролика. У серии по частям — прошлая и следующая; у тематической — два лучших других. */
-export function neighbours(registry, where) {
+export function neighbours(registry, where, now = Date.now()) {
   const found = locate(registry, where);
   if (!found) return { series: null, prev: null, next: null, also: [] };
   const { series, index } = found;
-  const published = (series.videos || []).filter((v) => v.id);
+  const published = (series.videos || []).filter((v) => isLive(v, now));
   if (series.order === "parts") {
-    const prev = index > 0 ? series.videos.slice(0, index).reverse().find((v) => v.id) || null : null;
-    const next = index >= 0 ? series.videos.slice(index + 1).find((v) => v.id) || null : null;
+    const prev = index > 0 ? series.videos.slice(0, index).reverse().find((v) => isLive(v, now)) || null : null;
+    const next = index >= 0 ? series.videos.slice(index + 1).find((v) => isLive(v, now)) || null : null;
     return { series, prev, next, also: [] };
   }
   const self = found.video?.id;
@@ -93,7 +103,7 @@ const RELATION_START = /^(?:Серия «|Следующая часть: |Пре
 export function relations(entry, ctx = {}) {
   const base = String(ctx.base || "").replace(/\/+$/, "");
   const titleOf = (v) => v?.title || ctx.titles?.[v?.id] || "";
-  const n = neighbours(ctx.registry, { videoId: ctx.videoId, name: entry.name, series: entry.series });
+  const n = neighbours(ctx.registry, { videoId: ctx.videoId, name: entry.name, series: entry.series }, ctx.now);
   const rel = [];
   if (n.series?.playlistId) rel.push(`Серия «${n.series.title}»: ${playlistUrl(n.series.playlistId)}`);
   if (n.next) rel.push(`Следующая часть: ${watchUrl(n.next.id)}${titleOf(n.next) ? ` | ${titleOf(n.next)}` : ""}`);

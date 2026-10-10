@@ -5,7 +5,7 @@ import { createTgRelayClient } from "../src/telegram/relay.mjs";
 
 // Порт-проверка LL-кнопок: релей должен уметь проксировать ЛЮБОЙ метод Bot API
 // (не только sendMessage), потому что инлайн-кнопки требуют answerCallbackQuery
-// и editMessageReplyMarkup (см. apps/bot-alyona/src/tg-flow.mjs).
+// и editMessageReplyMarkup (см. apps/bot-instance/src/tg-flow.mjs).
 
 function withFakeFetch(handler, run) {
   const оригинал = global.fetch;

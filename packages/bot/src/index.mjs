@@ -1,6 +1,6 @@
-// @liga/bot — общий движок ботов сети (D-011). Фаза 1: IG-ядро (кодовые слова,
+// @zavod/bot — общий движок ботов. Фаза 1: IG-ядро (кодовые слова,
 // досылки, вебхук) + минимум TG (хранилище подписчиков, вход по deep-link, тексты,
-// отправка через релей). Экземпляр (leanliga, bot-alyona, …) собирается конфигом,
+// отправка через релей). Экземпляр (по одному на клиента) собирается конфигом,
 // никакой бизнес-логики конкретного сайта здесь нет.
 
 import path from "node:path";
@@ -26,18 +26,18 @@ import { createHeartbeat } from "./heartbeat.mjs";
 
 /**
  * @typedef {object} BotInstanceConfig
- * @property {string} id идентификатор инстанса, например "alyona"
- * @property {string} storageDir каталог хранилища на VPS, например "/opt/leads-alyona"
+ * @property {string} id идентификатор инстанса, например "demo"
+ * @property {string} storageDir каталог хранилища на VPS, например "/opt/leads-demo"
  * @property {string[]|object[]|string} [scenarios] сценарии кодовых слов IG: массив
  *   объектов или путь к директории с *.json (см. ig/scenarios.mjs)
  * @property {object} [texts] словарь текстов TG-бота (см. telegram/texts.mjs)
  * @property {object[]} [materials] материалы, отдаваемые по кодовому слову/deep-link;
  *   каждый — { key, ... }; сама выдача (файл/ссылка) остаётся за приложением-потребителем
- * @property {string} [envPrefix] префикс имён env-переменных инстанса, например "ALYONA_"
+ * @property {string} [envPrefix] префикс имён env-переменных инстанса, например "DEMO_"
  *   (используется приложением-потребителем при чтении секретов; сам пакет process.env
  *   не читает — секреты передаются явно через relay-поля ниже)
  * @property {{ id: string }[]} [recipients] получатели уведомлений (chat id в TG)
- * @property {string} [sourceTagPrefix] префикс метки источника лида, например "alyona"
+ * @property {string} [sourceTagPrefix] префикс метки источника лида, например "demo"
  *   (используется как "<sourceTagPrefix>:<площадка>")
  * @property {{ url: string, relaySecret?: string, igToken?: string, appSecret?: string, verifyToken?: string }} [igRelay]
  * @property {{ url: string, relaySecret?: string, botUsername?: string }} [tgRelay]
@@ -56,7 +56,7 @@ export function createBotInstance(config = {}) {
   const сценарииСписок = scenarios ? загрузитьСценарии(scenarios) : [];
   const материалыПоКлючу = new Map(materials.map((m) => [String(m.key), m]));
   // Метка входа несёт канал впереди материала ("yt-forbes"): режем по первому дефису,
-  // как materials.ts в kormishin-site (materialByEntry), плюс проверка ключа целиком —
+  // как materials.ts в исходном проекте (materialByEntry), плюс проверка ключа целиком —
   // для голого имени материала без канала ("forbes").
   const materialByEntry = (key) => {
     const k = String(key).toLowerCase();
@@ -73,7 +73,7 @@ export function createBotInstance(config = {}) {
     subsFile: path.join(storageDir, "tg-subscribers.jsonl"),
     eventsFile: path.join(storageDir, "tg-events.jsonl"),
   });
-  // OUTGOING LOG (воронка v2, BOT-ALYONA-FUNNEL-V2): обёртка добавляет запись в tgStore
+  // OUTGOING LOG (воронка v2, ВОРОНКА-V2): обёртка добавляет запись в tgStore
   // (tg-events.jsonl) на каждую успешную отправку клиенту, один раз здесь — см.
   // telegram/outgoing-log.mjs. bot.telegram.client остаётся null, если релей не настроен
   // (withOutgoingLog(null, …) возвращает null как есть).

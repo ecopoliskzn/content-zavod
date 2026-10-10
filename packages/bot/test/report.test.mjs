@@ -136,8 +136,8 @@ test("Ключи — человеческие подписи из config.keyLabe
       { id: "3", entryOrigin: "site", entryKey: "bez-slova", funnel: { startedAt: iso(now, 1) } },
     ]),
   );
-  // @liga/bot контент приложения не читает — карту key→word передаёт вызывающий скрипт
-  // (apps/bot-alyona/scripts/report.mjs::materialKeyLabels из content/materials.json).
+  // @zavod/bot контент приложения не читает — карту key→word передаёт вызывающий скрипт
+  // (apps/bot-instance/scripts/report.mjs::materialKeyLabels из content/materials.json).
   const report = createReportBuilder({ storageDir: d, keyLabels: { "rol-hr": "РОЛЬ HR" } });
   const { text } = await report.build(new Date(now));
   assert.match(text, /Ключи: РОЛЬ HR 2, bez-slova 1/);
@@ -175,14 +175,14 @@ test("«ждут ответа»: исключает взятых в работу
         id: "12",
         profile: { firstName: "Взятый" },
         funnel: { leadAt: iso(now, 2) },
-        salesCard: { messageId: 57, status: "lead", takenBy: "alyona" },
+        salesCard: { messageId: 57, status: "lead", takenBy: "demo" },
       },
       {
         // отклонён («не целевой») — уже решённый вопрос, не «ждёт ответа»
         id: "13",
         profile: { firstName: "Отклонённый" },
         funnel: { diagDoneAt: iso(now, 2) },
-        salesCard: { messageId: 58, status: "diag", rejectedBy: "alyona" },
+        salesCard: { messageId: 58, status: "diag", rejectedBy: "demo" },
       },
       {
         // тестовый — не должен попасть, даже с открытой карточкой

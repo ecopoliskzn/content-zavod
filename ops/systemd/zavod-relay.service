@@ -1,0 +1,37 @@
+# Релей на втором сервере (Нидерланды): посредник между сервером завода в России и
+# площадками, до которых из России напрямую не достать (Telegram, Instagram).
+#
+# Установка на втором сервере:
+#   sudo cp zavod-relay.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now zavod-relay
+# Журнал:  journalctl -u zavod-relay -n 50 --no-pager
+#
+# Секреты релея лежат в /etc/zavod-relay.env (владелец root, права 600). Токен бота
+# вписывает туда сотрудник клиента сам: никому другому он не показывается.
+# Релей ничего не хранит и в журнал пишет только сбои: через него идут сообщения людей.
+
+[Unit]
+Description=Контент-завод «Экополис»: релей
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=relay
+Group=relay
+WorkingDirectory=/opt/zavod-relay
+EnvironmentFile=/etc/zavod-relay.env
+Environment=RELAY_PORT=8787
+ExecStart=/usr/bin/node node-server.mjs
+Restart=always
+RestartSec=3
+
+# Процессу не нужен ни диск, ни домашние каталоги: только сеть.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+MemoryMax=200M
+
+[Install]
+WantedBy=multi-user.target

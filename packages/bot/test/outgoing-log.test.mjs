@@ -3,9 +3,9 @@ import assert from "node:assert/strict";
 
 import { withOutgoingLog } from "../src/telegram/outgoing-log.mjs";
 
-// Журнал исходящих (воронка v2, BOT-ALYONA-FUNNEL-V2, раздел "OUTGOING LOG"): unit-тест
+// Журнал исходящих (воронка v2, ВОРОНКА-V2, раздел "OUTGOING LOG"): unit-тест
 // обёртки в изоляции (без сети/реле) — фейковый внутренний клиент + фейковый store.logEvent.
-// Интеграционные тесты Live Reply Relay (apps/bot-alyona/test/relay-reply.test.mjs) проверяют
+// Интеграционные тесты Live Reply Relay (apps/bot-instance/test/relay-reply.test.mjs) проверяют
 // её же поведение через реальный bot.telegram.client, собранный createBotInstance.
 
 function fakeClient(overrides = {}) {
@@ -106,7 +106,7 @@ test("copyMessage без caption в доп логируется с пустым 
   assert.equal(события[0].ушло.текст, "");
 });
 
-test('маркер {от:"алёна"} уходит в журнал и снимается перед вызовом настоящего клиента (Telegram его не видит)', async () => {
+test('маркер {от:"человек"} уходит в журнал и снимается перед вызовом настоящего клиента (Telegram его не видит)', async () => {
   const { store, события } = fakeStore();
   const вызовы = [];
   const client = withOutgoingLog(
@@ -119,9 +119,9 @@ test('маркер {от:"алёна"} уходит в журнал и сним�
     store,
   );
 
-  await client.sendMessage("111", "Отвечаю от себя", { от: "алёна", parse_mode: "HTML" });
+  await client.sendMessage("111", "Отвечаю от себя", { от: "человек", parse_mode: "HTML" });
 
-  assert.equal(события[0].ушло.от, "алёна");
+  assert.equal(события[0].ушло.от, "человек");
   // Реальному client.sendMessage "от" не передаётся — только то, что реально идёт в Bot API.
   assert.deepEqual(вызовы[0], ["111", "Отвечаю от себя", { parse_mode: "HTML" }]);
 });

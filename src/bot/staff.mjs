@@ -43,9 +43,17 @@ export async function handleCommand(message) {
     case "start":
       await reply(HELP);
       return true;
-    case "plan":
-      await reply(morning(all(), Date.now()));
+    case "plan": {
+      // Состояние рубильников стоит первой строкой: «почему ничего не выходит» — самый
+      // частый вопрос, и ответ на него должен быть виден с телефона.
+      const state = existsSync(dataPath("STOP"))
+        ? "⏸ <b>Выпуск остановлен.</b> Включает команда /start_release.\n\n"
+        : existsSync(dataPath("HOLD"))
+          ? "⏳ <b>Выпуск ждёт кнопки «Продолжить выпуск»</b>: сервер вернулся после простоя.\n\n"
+          : "";
+      await reply(state + morning(all(), Date.now()));
       return true;
+    }
     case "day":
       await reply(digest(all(), Date.now()));
       return true;

@@ -11,6 +11,7 @@ import { checkAll, opener, partsOf } from "./rules.mjs";
 
 const STAMPS = path.join(PROJECT_ROOT, "src", "gates", "stamps.json");
 const SCENARIOS = path.join(PROJECT_ROOT, "bot", "scenarios");
+const LINKS = path.join(PROJECT_ROOT, "bot", "links.json");
 
 /** Кодовые слова бота из bot/scenarios/*.json: в Threads их быть не должно. */
 export function codeWords() {
@@ -41,5 +42,7 @@ export function check(entry, now = Date.now()) {
     recentOpeners: recentOpeners(entry.channel, now),
     codeWords: codeWords(),
     restricted: isRestricted(entry.channel),
+    // Слаги коротких ссылок: ссылка на неизвестный слаг молча ведёт на главную сайта.
+    links: Object.keys(readJson(LINKS, {}) || {}),
   });
 }

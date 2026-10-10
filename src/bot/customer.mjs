@@ -22,12 +22,20 @@
 // ЧТО ЗАПИСЫВАЕМ ДО СОГЛАСИЯ. Только метку входа и шаги воронки. Текст сообщения
 // сохраняется в одном случае: человек сам задал вопрос, и его нужно передать специалисту.
 
+import { config } from "../lib/config.mjs";
 import { dataPath, env } from "../lib/env.mjs";
 import { appendJsonl } from "../lib/files.mjs";
 import { h } from "../lib/notify.mjs";
 import { answerCallback, keyboard, sendMessage, tg } from "../lib/telegram.mjs";
+import { legalReady } from "../leads/legal.mjs";
 import { bot } from "./instance.mjs";
 import { announceLead, relayQuestion, updateLeadCard, withdraw } from "./leads.mjs";
+
+/**
+ * Пока тексты согласий не утверждены юристом клиента, бот людям не отвечает по существу и
+ * ничего о них не записывает: одна фраза и адрес блога. См. src/leads/legal.mjs.
+ */
+const notReady = (chatId) => sendMessage(chatId, t("notReady", { blogUrl: config().client.blog || config().client.site }));
 
 const PLATFORMS = ["ig", "vk", "th", "yt", "rt", "dz", "tg", "site"];
 const CHANNEL_TITLE = { ig: "Instagram", vk: "ВКонтакте", th: "Threads", yt: "YouTube", rt: "Rutube", dz: "Дзен", tg: "Telegram-канал", site: "сайт", direct: "прямой заход" };
@@ -93,6 +101,9 @@ export async function handleMessage(message) {
     return;
   }
 
+  // Отзыв согласия выше работает всегда. Всё остальное ждёт утверждённых текстов согласий.
+  if (!legalReady()) { await notReady(chatId); return; }
+
   const entry = b.telegram.parseEntry(text, { платформы: PLATFORMS });
   if (entry) {
     const channel = entry["канал"] || (entry.key.includes("-") ? entry.key.split("-")[0] : "direct");
@@ -149,8 +160,9 @@ export async function handleCallback(cb) {
   const b = bot();
   const chatId = cb.message?.chat?.id ?? cb.from.id;
   const userId = String(cb.from.id);
-  const sub = (await b.telegram.store.findSubscriber(userId)) || {};
   await answerCallback(cb.id);
+  if (!legalReady()) { await notReady(chatId); return true; }
+  const sub = (await b.telegram.store.findSubscriber(userId)) || {};
 
   if (data.startsWith("c:m:")) {
     const material = b.materialByEntry(data.slice(4));

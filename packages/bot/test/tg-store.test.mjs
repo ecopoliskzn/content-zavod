@@ -80,10 +80,10 @@ test("salesCard: патч сливается с текущей карточко�
   assert.equal(после.salesCard.messageId, 501, "messageId карточки не должен теряться при обновлении статуса");
   assert.equal(после.salesCard.status, "lead");
 
-  const взяли = await upsertSubscriber("777", { salesCard: { takenBy: "Алёна", takenAt: "2026-09-28T12:00:00.000Z" } });
+  const взяли = await upsertSubscriber("777", { salesCard: { takenBy: "Сотрудник", takenAt: "2026-09-28T12:00:00.000Z" } });
   assert.equal(взяли.salesCard.messageId, 501);
   assert.equal(взяли.salesCard.status, "lead");
-  assert.equal(взяли.salesCard.takenBy, "Алёна");
+  assert.equal(взяли.salesCard.takenBy, "Сотрудник");
 });
 
 test("findByCardMessageId: находит подписчика по messageId его карточки продавца", async () => {

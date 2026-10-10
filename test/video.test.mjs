@@ -34,6 +34,18 @@ test("у серии по частям есть прошлая и следующ�
   assert.equal(first.next.id, "aaaaaaaaaa2");
 });
 
+test("загруженный, но ещё закрытый ролик соседом не считается: до срока выхода на него не ссылаются", () => {
+  const now = Date.parse("2026-10-12T06:00:00Z");
+  const scheduled = { series: [{ key: "val", title: "Электровал", order: "parts", playlistId: "PLval", videos: [{ id: "aaaaaaaaaa1", title: "Часть 1" }, { id: "aaaaaaaaaa2", title: "Часть 2", publishAt: "2026-10-13T07:00:00.000Z" }] }, { key: "t", title: "Тема", order: "views", videos: [{ id: "cccccccccc1" }, { id: "cccccccccc2", publishAt: "2026-10-13T07:00:00.000Z" }, { id: "cccccccccc3" }] }] };
+  assert.equal(neighbours(scheduled, { videoId: "aaaaaaaaaa1" }, now).next, null, "вторая часть ещё закрыта");
+  assert.equal(neighbours(scheduled, { videoId: "aaaaaaaaaa1" }, Date.parse("2026-10-13T07:05:00Z")).next.id, "aaaaaaaaaa2", "после срока ссылка появляется");
+  // Сам отложенный ролик на вышедшую часть ссылаться может: она уже открыта.
+  assert.equal(neighbours(scheduled, { videoId: "aaaaaaaaaa2" }, now).prev.id, "aaaaaaaaaa1");
+  assert.deepEqual(neighbours(scheduled, { videoId: "cccccccccc1" }, now).also.map((v) => v.id), ["cccccccccc3"]);
+  const rel = relations({ name: "", series: "val" }, { registry: scheduled, videoId: "aaaaaaaaaa1", now });
+  assert.ok(!rel.some((l) => l.includes("aaaaaaaaaa2")), "в блоке ссылок закрытого ролика нет");
+});
+
 test("у тематической серии соседи — два других ролика, без «следующей части»", () => {
   const n = neighbours(registry, { videoId: "bbbbbbbbbb2" });
   assert.equal(n.next, null);

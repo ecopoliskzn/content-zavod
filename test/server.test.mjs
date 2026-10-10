@@ -33,7 +33,10 @@ globalThis.fetch = async (url, init) => {
 const { createHandler, docHtml } = await import("../src/server.mjs");
 const { handle } = await import("../ops/relay/relay.mjs");
 const { judge, renderSchedule } = await import("../src/queue/mirror.mjs");
+const legal = await import("../src/leads/legal.mjs");
 const handler = createHandler();
+// Приём персональных данных в этих проверках открыт; закрытое состояние проверяется отдельно.
+legal._setLegalReady(true);
 
 /** Запрос к обработчику без сети: поддельные req и res. */
 function call({ method = "GET", url, headers = {}, body = "" }) {
@@ -104,6 +107,29 @@ test("форма заявки: страница открывается, отпр
   assert.equal(no.status, 400);
 });
 
+test("пока согласия не утверждены: форма закрыта, событие Instagram принято и не записано", async () => {
+  legal._setLegalReady(false);
+  try {
+    const page = await call({ url: "/z/raschet?c=vk" });
+    assert.equal(page.status, 503);
+    assert.match(page.body, /Форма скоро заработает/);
+    assert.doesNotMatch(page.body, /<form/);
+    const post = await call({ method: "POST", url: "/z/raschet", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ name: "Анна", phone: "+79991112233", consent_pd: "1" }).toString() });
+    assert.equal(post.status, 503);
+    // Meta ждёт 200 всегда: событие принято, но в очередь не положено.
+    const body = JSON.stringify({ object: "instagram", entry: [{ id: "17841400000000099", time: 1, changes: [{ field: "comments", value: { id: "c-closed", text: "приёмка", from: { id: "555" }, media: { id: "m1" } } }] }] });
+    const res = await call({ method: "POST", url: "/ig/webhook", headers: { "x-forward-signature": `sha256=${createHmac("sha256", "pair-secret-0123456789").update(body, "utf8").digest("hex")}` }, body });
+    assert.equal(res.status, 200);
+    assert.equal(json(res)["принято"], 0);
+    // Без подписи отказ остаётся отказом: заслон не делает ручку открытой.
+    assert.equal((await call({ method: "POST", url: "/ig/webhook", body })).status, 401);
+    // Тексты согласий при этом читаются: человеку и юристу их нужно видеть.
+    assert.equal((await call({ url: "/doc/soglasie" })).status, 200);
+  } finally {
+    legal._setLegalReady(true);
+  }
+});
+
 test("тексты согласий отдаются страницей, чужой путь наружу не выводит", async () => {
   const ok = await call({ url: "/doc/soglasie" });
   assert.equal(ok.status, 200);
@@ -132,6 +158,15 @@ test("возврат после входа ВКонтакте: код показ
   assert.doesNotMatch(res.body, /<script>/);
   assert.equal(res.headers["cache-control"], "no-store");
   assert.match((await call({ url: "/cb/vk" })).body, /Вход не выполнен/);
+});
+
+test("возврат после входа в Meta: код показан, разметка из адреса не исполняется", async () => {
+  const res = await call({ url: "/cb/meta?code=AQB-x_1.y%3Cscript%3Ealert(1)%3C%2Fscript%3E" });
+  assert.equal(res.status, 200);
+  assert.ok(res.body.includes("<code>AQB-x_1.yscriptalert1script</code>"), "код показан, скобки и теги из адреса вычищены");
+  assert.doesNotMatch(res.body, /<script>/);
+  assert.equal(res.headers["cache-control"], "no-store");
+  assert.match((await call({ url: "/cb/meta" })).body, /Вход не выполнен/);
 });
 
 test("подписка Instagram подтверждается только своим словом", async () => {

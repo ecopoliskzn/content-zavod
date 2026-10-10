@@ -87,7 +87,21 @@ test("сводка недели: заявки сверху, пост сравн�
   assert.match(tg, /заявок 2, вышло 3 материала/);
   assert.match(tg, /Без ответа осталось: 1/);
   assert.match(tg, /Молчали: ВКонтакте/);
-  assert.match(markdown(s, { threads: "Threads", youtube: "YouTube", vk: "ВКонтакте" }), /## Заявки/);
+  const md = markdown(s, { threads: "Threads", youtube: "YouTube", vk: "ВКонтакте" });
+  assert.match(md, /## Заявки/);
+  // Ролик YouTube показан досмотром, а не только просмотрами.
+  assert.deepEqual(s.video.list.map((v) => [v.name, v.watchPct]), [["имя-y1", 55]]);
+  assert.match(md, /## YouTube: досмотр и подписки с ролика/);
+  assert.match(md, /\| имя-y1 \| 2 000 \| 55% \|/);
+});
+
+test("ролик, досмотренный заметно лучше обычного, попадает в предложения; разница в пять пунктов нет", () => {
+  const base = { channels: {}, slotTable: {}, materials: [], leadsBySource: {}, clicksByChannel: {}, title: (c) => c };
+  const strong = suggest({ ...base, video: { usualWatch: 40, list: [{ name: "vyrubki", watchPct: 58 }, { name: "shvy", watchPct: 44 }] } });
+  assert.equal(strong.length, 1);
+  assert.match(strong[0], /ролик «vyrubki» досмотрели на 58% при обычных 40%/);
+  assert.deepEqual(suggest({ ...base, video: { usualWatch: 40, list: [{ name: "shvy", watchPct: 45 }] } }), [], "пять пунктов — шум раздачи");
+  assert.deepEqual(suggest({ ...base, video: { usualWatch: 0, list: [{ name: "pervyj", watchPct: 70 }] } }), [], "без истории сравнивать не с чем");
 });
 
 test("предложений не больше трёх, и у каждого своя цифра", () => {

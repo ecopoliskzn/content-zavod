@@ -1,0 +1,13 @@
+# Журналы задач завода: /var/log/zavod/*.log. Без ротации выпуск раз в пять минут за год
+# напишет сотни мегабайт, и диск на 30 ГБ закончится в самый неудобный день.
+# Установка:  sudo cp ops/logrotate/zavod /etc/logrotate.d/zavod
+/var/log/zavod/*.log {
+    weekly
+    rotate 8
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su zavod zavod
+}

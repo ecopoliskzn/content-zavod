@@ -28,6 +28,7 @@
 import { dataPath, has } from "../lib/env.mjs";
 import { appendJsonl, readJsonl } from "../lib/files.mjs";
 import { ig } from "../lib/ig.mjs";
+import { legalReady } from "../leads/legal.mjs";
 import { bot } from "./instance.mjs";
 
 const rawId = (eventId) => String(eventId || "").replace(/^(com|msg)-/, "");
@@ -57,6 +58,9 @@ export function buildReply(b, event) {
 
 /** Разбирает очередь событий один раз. Возвращает, сколько обработано и сколько ответов ушло. */
 export async function drain(b = bot()) {
+  // Тексты согласий не утверждены: на слова не отвечаем. Очередь при этом и не наполняется
+  // (вебхук и опрос закрыты тем же заслоном), проверка здесь стоит на случай старых событий.
+  if (!legalReady()) return { handled: 0, replied: 0, closed: true };
   const events = b.ig.queue["взять"]();
   const handled = [];
   let replied = 0;

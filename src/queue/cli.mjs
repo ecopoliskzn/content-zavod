@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Очередь из командной строки.
 //
-//   npm run queue -- add --file=content/threads/2026-10-15/priemka.json
+//   npm run queue -- add --file=content/queue/threads/2026-10-15/priemka.json
 //   npm run queue -- add --file=priemka.txt --channel=threads --name=priemka --material=blog:kak-proverit
 //   npm run queue -- list [--channel=threads] [--status=review] [--days=7] [--all]
 //   npm run queue -- show <номер|имя> [--history]
@@ -13,6 +13,10 @@
 //   npm run queue -- slots [--channel=threads] [--count=5]
 //   npm run queue -- pause [--reason=…] | resume      рубильник выпуска на сервере
 //   npm run queue -- mark <номер|имя> --link=… [--externalId=…]   вышла не через сервер
+//   npm run queue -- news [--status=taken] [--json]             ящик новостей: что взято в работу
+//   npm run queue -- news <номер> --status=used                 новость стала материалом
+//   npm run queue -- comments [--status=new] [--json]           комментарии, которые ждут ответа
+//   npm run queue -- comments <номер> --status=skipped          ответ не нужен
 //
 // ГДЕ ИСПОЛНЯЕТСЯ. Хозяин очереди — сервер. Если в окружении задан QUEUE_API_BASE, команда
 // уходит на сервер (ручка /admin/queue, ключ ADMIN_API_TOKEN) и файл очереди на компьютере

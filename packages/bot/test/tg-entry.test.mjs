@@ -2,12 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { parseEntry, botLink } from "../src/telegram/entry.mjs";
 
-// Материалы-фикстура (нейтральные, не боевые тексты kormishin).
+// Материалы-фикстура (нейтральные, не боевые тексты исходный проект).
 const MATERIALS = [
   { key: "forbes", intro: "Держи подборку статей." },
   { key: "kpmg", intro: "Держи таблицу." },
 ];
-// Как в kormishin: materialByEntry сам режет метку по первому дефису (канал-материал),
+// Как в исходный проект: materialByEntry сам режет метку по первому дефису (канал-материал),
 // сюда приходит и полный ключ, и уже маршрут без IGSID-хвоста.
 const materialByEntry = (key) => {
   const k = String(key).toLowerCase();

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Проверки из командной строки: до постановки в очередь и без неё.
 //
-//   npm run check -- --file=content/threads/2026-10-15/priemka.json
+//   npm run check -- --file=content/queue/threads/2026-10-15/priemka.json
 //   npm run check -- --file=priemka.txt --channel=threads            ветка текстом, реплики через ---
 //   npm run check -- --text="Толщину покрытия проверяют вырубкой" --channel=telegram
 //   npm run check -- --drafts                                        все черновики очереди

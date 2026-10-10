@@ -26,6 +26,7 @@ import { fileURLToPath } from "node:url";
 import { dataPath, env } from "../lib/env.mjs";
 import { readJson, writeJson } from "../lib/files.mjs";
 import { ig, igUserId } from "../lib/ig.mjs";
+import { legalReady } from "../leads/legal.mjs";
 import { drain } from "./ig-flow.mjs";
 import { bot } from "./instance.mjs";
 
@@ -77,6 +78,8 @@ export function plan(state, mediaList, now = Date.now()) {
 
 export async function poll({ dry = false } = {}) {
   if (env("IG_POLL") !== "1" && !dry) return { skipped: "IG_POLL не включён" };
+  // Тексты согласий не утверждены: комментарии людей не читаем и не записываем.
+  if (!legalReady() && !dry) return { skipped: "тексты согласий не утверждены юристом клиента: кодовые слова закрыты" };
   const uid = igUserId();
   if (!uid) return { error: "нет IG_USER_ID" };
   const feed = await ig(`${uid}/media?fields=id,timestamp,comments_count&limit=${MEDIA_LIMIT}`, { retries: 0 });

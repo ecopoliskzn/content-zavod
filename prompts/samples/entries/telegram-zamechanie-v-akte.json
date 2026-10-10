@@ -1,0 +1,15 @@
+{
+  "channel": "telegram",
+  "kind": "post",
+  "name": "zamechanie-v-akte",
+  "material": "blog:kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2",
+  "text": "Записи «покрытие выполнено некачественно» в акте приёмки недостаточно: в ней нет ни места, ни размера, ни признака.\n\nЗамечание, по которому понятно, что исправлять, выглядит так:\n\n<i>«В северо-восточной части площадки, примерно в 2 метрах от бордюра, рыхлый участок около 40 на 60 сантиметров. При лёгком проведении рукой осыпаются гранулы».</i>\n\nК каждому замечанию записывают номер, место, размер, характер недостатка, измерение, ссылку на пункт договора или спецификации, срок устранения и представителя подрядчика. И два фото: общий план и крупный.\n\nСнимают так, чтобы по кадру было видно и дефект, и где он находится: рядом рулетка или линейка, на бумажной карточке номер замечания.\n\nАкт без замечаний при видимых недостатках не подписывают.",
+  "buttons": [
+    [{ "text": "Чек-лист приёмки на сайте", "url": "https://go.ecopolisrf.ru/go/priemka2?c=tg&p=zamechanie-v-akte" }]
+  ],
+  "facts": [
+    { "claim": "пример записи: рыхлый участок приблизительно 40 × 60 см на расстоянии около 2 метров от бордюра", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "для каждого замечания фиксируют номер, место, размер, характер, фото общего и крупного плана, измерение, ссылку на договор, срок устранения, ответственного представителя подрядчика", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "не подписывайте акт без замечаний, если недостатки фактически существуют", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" }
+  ]
+}

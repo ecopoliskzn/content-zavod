@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { подобрать, персональнаяМетка, подставить, норма } from "../src/ig/match.mjs";
 
-// Порт lib/ig/match.test.mjs из kormishin-site — тот же набор пересечений
+// Порт lib/ig/match.test.mjs из исходного проекта — тот же набор пересечений
 // (ДОДО внутри ДОДОИС, АКФИКС внутри «АКФИКС ИИ», короткий опасный ИИ с точным
 // совпадением), логика match.mjs не менялась при переносе.
 const СЦЕНАРИИ = [

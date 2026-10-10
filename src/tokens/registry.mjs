@@ -50,12 +50,20 @@ export const REGISTRY = [
   { name: "IG_USER_ID", where: ["server", "operator"], secret: false, need: "channel:instagram", what: "номер профессионального аккаунта Instagram" },
   { name: "IG_USERNAME", where: ["server"], secret: false, need: "optional", what: "имя аккаунта без @: чтобы бот не отвечал на собственные комментарии" },
   { name: "IG_TOKEN_EXPIRES", where: ["server", "operator"], secret: false, need: "channel:instagram", what: "дата, когда маркер истечёт" },
-  { name: "IG_RELAY_URL", where: ["server"], secret: false, need: "channel:instagram", what: "адрес релея для вызовов к graph.instagram.com (с сервера в России напрямую не ходит)" },
-  { name: "IG_RELAY_SECRET", where: ["server", "relay"], secret: true, need: "channel:instagram", what: "общий секрет сервера и релея Instagram" },
+  { name: "IG_RELAY_URL", where: ["server", "operator"], secret: false, need: "channel:instagram", what: "адрес релея для вызовов к graph.instagram.com (с сервера в России напрямую не ходит). На компьютере оператора нужен на случай перехвата расписания" },
+  { name: "IG_RELAY_SECRET", where: ["server", "operator", "relay"], secret: true, need: "channel:instagram", what: "общий секрет сервера и релея Instagram" },
   { name: "IG_FORWARD_SECRET", where: ["server"], secret: true, need: "channel:instagram", what: "первый месяц: секрет пары, которым приложение исполнителя подписывает пересылаемые события" },
   { name: "IG_APP_SECRET", where: ["server"], secret: true, need: "optional", what: "после переезда на своё приложение Meta: его секрет для проверки подписи событий" },
   { name: "IG_WEBHOOK_VERIFY_TOKEN", where: ["server"], secret: true, need: "optional", what: "после переезда: слово для подтверждения вебхука своим приложением" },
   { name: "IG_POLL", where: ["server"], secret: false, need: "optional", what: "1 — читать комментарии опросом раз в пять минут (если события о комментариях не приходят)" },
+
+  // ── Приложение Meta: вход владельца аккаунта ─────────────────────────────
+  { name: "META_IG_APP_ID", where: ["operator"], secret: false, need: "optional", what: "номер приложения Meta для входа в Instagram. Первый месяц это приложение исполнителя, потом своё" },
+  { name: "META_IG_APP_SECRET", where: ["operator"], secret: true, need: "optional", what: "секрет того же приложения: нужен только для обмена кода на маркер. На сервер клиента не кладётся" },
+  { name: "META_IG_REDIRECT_URI", where: ["operator"], secret: false, need: "optional", what: "страница возврата после входа в Instagram: ровно та, что записана в настройках приложения" },
+  { name: "META_THREADS_APP_ID", where: ["operator"], secret: false, need: "optional", what: "номер приложения Meta для входа в Threads" },
+  { name: "META_THREADS_APP_SECRET", where: ["operator"], secret: true, need: "optional", what: "секрет приложения Threads: только для обмена кода на маркер. На сервер клиента не кладётся" },
+  { name: "META_THREADS_REDIRECT_URI", where: ["operator"], secret: false, need: "optional", what: "страница возврата после входа в Threads" },
 
   // ── ВКонтакте ────────────────────────────────────────────────────────────
   { name: "VK_GROUP_ID", where: ["server", "operator"], secret: false, need: "channel:vk", what: "номер сообщества без минуса" },
@@ -92,6 +100,13 @@ export const REGISTRY = [
   { name: "POLICY_URL", where: ["server"], secret: false, need: "optional", what: "адрес политики обработки персональных данных" },
   { name: "ADS_CONSENT_URL", where: ["server"], secret: false, need: "optional", what: "адрес согласия на рассылку" },
   { name: "LEAD_SLA_MIN", where: ["server"], secret: false, need: "optional", what: "срок ответа на заявку в рабочих минутах, по умолчанию 60" },
+
+  // ── Резервные копии ──────────────────────────────────────────────────────
+  { name: "BACKUP_S3_ENDPOINT", where: ["server"], secret: false, need: "optional", what: "хранилище для зашифрованных копий данных: адрес. Бакет приватный и отдельный от бакета с роликами" },
+  { name: "BACKUP_S3_BUCKET", where: ["server"], secret: false, need: "optional", what: "имя приватного бакета копий" },
+  { name: "BACKUP_S3_REGION", where: ["server"], secret: false, need: "optional", what: "регион бакета копий, по умолчанию ru-1" },
+  { name: "BACKUP_S3_ACCESS_KEY", where: ["server"], secret: true, need: "optional", what: "ключ доступа к бакету копий: живёт только на сервере" },
+  { name: "BACKUP_S3_SECRET_KEY", where: ["server"], secret: true, need: "optional", what: "секретный ключ бакета копий" },
 ];
 
 export const byName = (name) => REGISTRY.find((r) => r.name === name);

@@ -1,5 +1,5 @@
 {
-  "name": "@liga/bot",
+  "name": "@zavod/bot",
   "version": "0.0.0",
   "private": true,
   "main": "./src/index.mjs",

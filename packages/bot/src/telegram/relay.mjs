@@ -1,4 +1,4 @@
-// Клиент для workers/tg-relay (kormishin-site): релей проксирует Bot API, потому что
+// Клиент для workers/tg-relay (исходного проекта): релей проксирует Bot API, потому что
 // с VPS в РФ api.telegram.org недоступен напрямую. URL и секрет — из конфига инстанса.
 
 /**
@@ -79,7 +79,7 @@ export function createTgRelayClient({ url, relaySecret, timeoutMs = 10_000, logg
   }
 
   /** Гасит "часики" на нажатой инлайн-кнопке — без этого кнопка выглядит зависшей
-   *  секунд двадцать (порт lib/telegram/api.ts::answerCallback из kormishin-site). */
+   *  секунд двадцать (порт lib/telegram/api.ts::answerCallback из исходного проекта). */
   async function answerCallbackQuery(callbackQueryId, доп = {}) {
     return call("answerCallbackQuery", { callback_query_id: callbackQueryId, ...доп });
   }
@@ -91,7 +91,7 @@ export function createTgRelayClient({ url, relaySecret, timeoutMs = 10_000, logg
   }
 
   /** Редактирует текст уже отправленного сообщения на месте (карточка продавца
-   *  «одна на человека», квиз «одно сообщение» — воронка v2, BOT-ALYONA-FUNNEL-V2).
+   *  «одна на человека», квиз «одно сообщение» — воронка v2, ВОРОНКА-V2).
    *  `buttons` — тот же формат инлайн-кнопок, что и у sendMessage/sendPhoto (массив
    *  рядов), `доп` — доп. поля Bot API поверх (например `parse_mode: "HTML"`). */
   async function editMessageText(chatId, messageId, text, buttons, доп = {}) {
@@ -100,7 +100,7 @@ export function createTgRelayClient({ url, relaySecret, timeoutMs = 10_000, logg
   }
 
   /** Копия чужого сообщения (текст, фото, голосовое, файл — что угодно) в другой чат,
-   *  без пометки «переслано». Live Reply Relay (воронка v2, BOT-ALYONA-FUNNEL-V2, раздел
+   *  без пометки «переслано». Live Reply Relay (воронка v2, ВОРОНКА-V2, раздел
    *  "1") использует её в обе стороны: ответ продавца клиенту и свободное сообщение
    *  клиента в тему продавца. `доп` может нести caption (переопределяет подпись при
    *  копировании медиа — своя пометка вместо/поверх исходной), parse_mode,

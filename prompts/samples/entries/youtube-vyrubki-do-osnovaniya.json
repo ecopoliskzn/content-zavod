@@ -1,0 +1,22 @@
+{
+  "channel": "youtube",
+  "kind": "short",
+  "name": "vyrubki-do-osnovaniya",
+  "material": "blog:kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2",
+  "title": "На пятистах метрах покрытия делают четырнадцать вырубок, и каждую до основания",
+  "text": "Толщину резинового покрытия нельзя оценить на глаз: два одинаковых с виду участка могут сильно отличаться по расходу смеси.\n\nОдин из надёжных способов проверки: вырезать контрольный участок до основания и измерить слой штангенциркулем. Размер вырубки 10 на 10 сантиметров. На площадке в 200 квадратных метров их делают 5, на каждые следующие 100 метров добавляют по 3. Точку берут не ближе 3 метров от края.\n\nЗаказчику резать покрытие самому не нужно. Метод контроля заранее записывают в договор, места измерений согласуют, вырубки делают при обеих сторонах, каждую точку отмечают на схеме и фотографируют. После измерения участок заполняют и уплотняют до общего уровня.",
+  "media": [{ "type": "video", "url": "https://s3.twcstorage.ru/ecopolis-media/2026/10/vyrubki-do-osnovaniya.mp4" }],
+  "hashtags": ["резиновоепокрытие", "резиноваякрошка", "детскаяплощадка", "благоустройство", "приемкаработ"],
+  "goSlug": "priemka2",
+  "goLabel": "Чек-лист приёмки покрытия",
+  "botKey": "priemka",
+  "botLabel": "Короткий чек-лист в Telegram",
+  "article": "priemka",
+  "series": "priemka",
+  "facts": [
+    { "claim": "для объекта площадью 500 м² потребуется 14 вырубок до основания", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "размер вырубки 10 × 10 см; на 200 м² 5 вырубок, на каждые дополнительные 100 м² ещё 3; не менее чем в 3 метрах от края", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "одинаково выглядящие участки могут существенно отличаться по фактическому расходу смеси", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" },
+    { "claim": "после заполнения вырубки поверхность выравнивают и уплотняют до общего уровня покрытия", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" }
+  ]
+}

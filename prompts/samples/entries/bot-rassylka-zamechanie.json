@@ -1,0 +1,13 @@
+{
+  "channel": "bot",
+  "kind": "post",
+  "name": "rassylka-zamechanie-v-akte",
+  "material": "blog:kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2",
+  "text": "Новый материал для тех, кто принимает площадку у подрядчика.\n\nЗаписи «покрытие выполнено некачественно» в акте недостаточно: по ней непонятно, что исправлять. В статье есть образец формулировки и список того, что записывают к каждому замечанию: место, размер, признак, два фото, пункт договора и срок.\n\nОтписаться от сообщений: команда /stop.",
+  "buttons": [
+    [{ "text": "Открыть статью", "url": "https://go.ecopolisrf.ru/go/priemka2?c=bot&p=rassylka-zamechanie-v-akte" }]
+  ],
+  "facts": [
+    { "claim": "образец формулировки замечания и перечень того, что фиксируют для каждого замечания", "source": "https://ecopolisrf.ru/blog/kak-proverit-kachestvo-rezinovogo-pokrytiya-posle-ukladki-chek-list-dlya-zakazchika-chast-2/" }
+  ]
+}

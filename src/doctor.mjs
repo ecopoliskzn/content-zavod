@@ -23,6 +23,7 @@ import { readJson } from "./lib/files.mjs";
 import { request } from "./lib/http.mjs";
 import { tg } from "./lib/telegram.mjs";
 import { adapterNames } from "./channels/index.mjs";
+import { LEGAL_DOCS, legalGaps } from "./leads/legal.mjs";
 import { REGISTRY, required } from "./tokens/registry.mjs";
 
 const flag = (name) => process.argv.includes(`--${name}`);
@@ -36,7 +37,7 @@ const info = (text) => results.push({ mark: "·", text });
 const head = (text) => results.push({ mark: "", text: `\n${text}` });
 
 /** Ключи текстов бота, без которых он ответит именем ключа вместо фразы. */
-const TEXT_KEYS = ["welcome", "unknown", "stopped", "btnLead", "leadAskNeed", "consentPd", "btnPdYes", "btnPdNo", "consentPdDeclined", "leadAlreadySaved", "leadSaved", "leadAskPhone", "btnContactShare", "btnLeadNoPhone", "phoneSaved", "questionRelayed", "consentAds", "btnAdsYes", "btnAdsNo", "consentAdsYes", "consentAdsNo", "consentVersion"];
+const TEXT_KEYS = ["welcome", "unknown", "notReady", "stopped", "btnLead", "leadAskNeed", "consentPd", "btnPdYes", "btnPdNo", "consentPdDeclined", "leadAlreadySaved", "leadSaved", "leadAskPhone", "btnContactShare", "btnLeadNoPhone", "phoneSaved", "questionRelayed", "consentAds", "btnAdsYes", "btnAdsNo", "consentAdsYes", "consentAdsNo", "consentVersion"];
 
 /** Какие площадки считаем подключёнными: по наличию главного ключа. */
 export function connectedChannels() {
@@ -128,14 +129,15 @@ function checkBot() {
     }
   }
   if (scenarios.length) ok(`кодовых слов: ${seen.size} в ${scenarios.length} сценариях`);
+  // Заслон приёма персональных данных: src/leads/legal.mjs. Пока есть хоть одна строка
+  // ниже, бот людям не отвечает, формы закрыты, кодовые слова молчат. Это не поломка.
+  const gaps = legalGaps();
+  for (const g of gaps) warn(g);
+  if (gaps.length) info("приём закрыт: бот для людей, формы заявок и кодовые слова не работают, пока юрист клиента не утвердил тексты согласий. Рабочая группа, согласование и выпуск работают");
+  else ok("тексты согласий утверждены: бот для людей, формы и кодовые слова открыты");
   const approved = readJson(path.join(PROJECT_ROOT, "legal", "site", "approved.json"), {}) || {};
-  for (const doc of ["soglasie", "politika", "soglasie-na-rassylku"]) {
-    const file = path.join(PROJECT_ROOT, "legal", "site", `${doc}.md`);
-    if (!existsSync(file)) { bad(`нет legal/site/${doc}.md: ссылка из формы и бота ведёт в пустоту`); continue; }
-    const hole = readFileSync(file, "utf8").match(/\[[^\]\n]{3,80}\](?!\()/);
-    if (hole) bad(`legal/site/${doc}.md: не заполнено «${hole[0]}». Документ с пустым местом людям показывать нельзя`);
-    if (!approved[doc]?.date) warn(`legal/site/${doc}.md не утверждён юристом клиента (legal/site/approved.json). До утверждения бот и формы заявок не включаются`);
-    else if (texts && approved[doc].version !== texts.consentVersion && doc !== "politika") warn(`версия документа ${doc} (${approved[doc].version}) не совпадает с версией согласия в боте (${texts.consentVersion})`);
+  for (const doc of LEGAL_DOCS) {
+    if (texts && approved[doc]?.date && approved[doc].version !== texts.consentVersion && doc !== "politika") warn(`версия документа ${doc} (${approved[doc].version}) не совпадает с версией согласия в боте (${texts.consentVersion})`);
   }
 }
 

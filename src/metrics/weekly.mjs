@@ -73,6 +73,12 @@ export function markdown(s, titles) {
     const f = s.followers[c.channel];
     L.push(`| ${c.title} | ${c.posts} | ${c.measured ? n(c.views) : "не измерено"} | ${c.measured ? n(c.median) : "—"} | ${c.usual ? n(c.usual) : "—"} | ${f ? `${n(f.now)} (${f.delta >= 0 ? "+" : ""}${f.delta})` : "—"} |`);
   }
+  if (s.video?.list?.length) {
+    const pct = (x) => (Number.isFinite(x) ? `${Math.round(x)}%` : "ещё нет");
+    L.push("", "## YouTube: досмотр и подписки с ролика", "", `Обычный досмотр за восемь недель: ${s.video.usualWatch ? `${Math.round(s.video.usualWatch)}%` : "ещё не набрался"}. Разница меньше десяти пунктов ничего не доказывает. Досмотр приходит с опозданием до трёх дней: у свежих роликов его ещё нет.`, "");
+    L.push("| Ролик | Просмотры | Досмотр | Среднее время, с | Подписались |", "|---|---|---|---|---|");
+    for (const v of s.video.list) L.push(`| ${v.name} | ${n(v.views)} | ${pct(v.watchPct)} | ${Number.isFinite(v.avgSec) ? Math.round(v.avgSec) : "—"} | ${Number.isFinite(v.subs) ? v.subs : "—"} |`);
+  }
   L.push("", "## Лучшие", "");
   for (const p of s.top) L.push(`- ${t(p.channel)} · ${p.slot} · «${p.name}» · ${n(p.views)} просмотров · ${p.ratio ? times(p.ratio) : "нет базы"} · материал: ${p.material || "—"}${p.link ? ` · ${p.link}` : ""}`);
   if (s.bottom.length) {

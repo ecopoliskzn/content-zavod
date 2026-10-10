@@ -1,12 +1,12 @@
-// Утренний отчёт v2 (Фаза 4, D-011/D-014, воронка v2 — .planning/plans/BOT-ALYONA-FUNNEL-V2.md,
-// разделы «Владелец и Алёна: утренний отчёт» и «Контракт данных»). Строит два текста из
+// Утренний отчёт v2 (Фаза 4, D-011/D-014, воронка v2 — .planning/plans/ВОРОНКА-V2.md,
+// разделы «Владелец и Сотрудник: утренний отчёт» и «Контракт данных»). Строит два текста из
 // tg-subscribers.jsonl (последняя запись по id побеждает — см. telegram/store.mjs):
 //
 //   text        — Алёне/продавцу в тему уведомлений: воронка, источники, «ждут ответа»
 //                 (карточки без «Взял в работу» со ссылкой на сообщение), топ болей за неделю.
 //   ownerSummary — владельцу: те же числа, БЕЗ единого имени/ника/телефона/ссылки на человека.
 //
-// Контракт полей подписчика (пишет apps/bot-alyona/src/*, читает только этот модуль):
+// Контракт полей подписчика (пишет apps/bot-instance/src/*, читает только этот модуль):
 //   funnel: { startedAt, consentAt, materialAt, diagStartedAt, diagDoneAt, leadAt, leadCancelledAt }
 //   entryOrigin: "instagram" | "site" | "telegram", entryKey
 //   diag.итог: { band, title, weak: [echo…] }
@@ -107,7 +107,7 @@ function displayName(sub) {
   return legacy || "без имени";
 }
 
-/** Легаси-поле "источник" ("alyona:rol-hr") — ключ материала без префикса сети (до entryKey). */
+/** Легаси-поле "источник" ("demo:rol-hr") — ключ материала без префикса сети (до entryKey). */
 function legacyKeyFrom(sub) {
   const src = sub?.источник;
   if (typeof src !== "string") return undefined;
@@ -140,16 +140,16 @@ const DEFAULT_LABELS = {
 /**
  * @param {object} config
  * @param {string} config.storageDir каталог jsonl-журналов инстанса
- * @param {(string|number)[]} [config.excludeIds] ID тестовых аккаунтов (ALYONA_TEST_ACCOUNT_IDS) —
+ * @param {(string|number)[]} [config.excludeIds] ID тестовых аккаунтов (DEMO_TEST_ACCOUNT_IDS) —
  *   исключаются из отчёта целиком, в дополнение к записям с isTest:true
  * @param {number} [config.hours] окно отчёта в часах (по умолчанию 24)
  * @param {number} [config.weakDays] окно для топа «болит» в днях (по умолчанию 7)
- * @param {string} [config.notifyChatId] чат темы «Заявки Алёны» — для ссылок на карточки
+ * @param {string} [config.notifyChatId] чат темы «Заявки сотрудника» — для ссылок на карточки
  * @param {object} [config.labels] переопределение русских подписей (для будущих сайтов сети)
  * @param {Record<string,string>} [config.keyLabels] человеческие подписи ключей материалов
- *   для секции «Откуда» (key → word, например "rol-hr" → "РОЛЬ HR"). Пакет @liga/bot
+ *   для секции «Откуда» (key → word, например "rol-hr" → "РОЛЬ HR"). Пакет @zavod/bot
  *   контент приложения не читает — карту собирает и передаёт вызывающий скрипт
- *   (apps/bot-alyona/scripts/report.mjs — из content/materials.json). Ключ без записи
+ *   (apps/bot-instance/scripts/report.mjs — из content/materials.json). Ключ без записи
  *   в карте показывается как есть.
  */
 export function createReportBuilder(config = {}) {
@@ -230,7 +230,7 @@ export function createReportBuilder(config = {}) {
       }
 
       // Ждут ответа — снимок «сейчас», не привязан к окну отчёта: карточка могла
-      // повиснуть и позавчера, владелец/Алёна должны всё равно её увидеть.
+      // повиснуть и позавчера, владелец/Сотрудник должны всё равно её увидеть.
       const card = sub?.salesCard;
       if (card && (card.status === "lead" || card.status === "diag") && !card.takenBy && !card.rejectedBy) {
         if (card.status === "lead" && sub.lead?.status === "cancelled") continue;

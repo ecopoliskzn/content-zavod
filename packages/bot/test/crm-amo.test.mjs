@@ -12,7 +12,7 @@ function mockFetch(handler) {
 
 test("pushLead без токена не бьёт по сети", async () => {
   const client = createAmoClient({ baseUrl: "https://example.amocrm.ru", getToken: () => "", pipelineId: 1 });
-  const итог = await client.pushLead({ name: "Тест" }, "alyona:instagram");
+  const итог = await client.pushLead({ name: "Тест" }, "demo:instagram");
   assert.equal(итог.ok, false);
   assert.match(итог.error, /токена/);
 });
@@ -32,13 +32,13 @@ test("pushLead отправляет контакт+сделку с меткой 
     getToken: "tok-123",
     pipelineId: 42,
     statusId: 7,
-    tagPrefix: "alyona",
+    tagPrefix: "demo",
     fields: { source: 100, task: 101, contactPhone: 200, contactUsername: 201 },
   });
 
   const итог = await client.pushLead(
     { id: "lead-1", name: "Ирина", phone: "+79990000000", username: "irina_hr", task: "Хочу консультацию" },
-    "alyona:telegram",
+    "demo:telegram",
   );
 
   restore();
@@ -50,13 +50,13 @@ test("pushLead отправляет контакт+сделку с меткой 
 
   const [форма] = captured.body;
   assert.equal(форма.pipeline_id, 42);
-  assert.equal(форма.source_uid, "alyona-lead-1");
+  assert.equal(форма.source_uid, "demo-lead-1");
   assert.equal(форма._embedded.leads[0].status_id, 7);
 
   const сделкаПоля = Object.fromEntries(
     форма._embedded.leads[0].custom_fields_values.map((f) => [f.field_id, f.values[0].value]),
   );
-  assert.equal(сделкаПоля[100], "alyona:telegram");
+  assert.equal(сделкаПоля[100], "demo:telegram");
   assert.equal(сделкаПоля[101], "Хочу консультацию");
 
   const контактПоля = Object.fromEntries(
@@ -74,7 +74,7 @@ test("pushLead возвращает ok:false при не-2xx ответе amo", 
   }));
 
   const client = createAmoClient({ baseUrl: "https://example.amocrm.ru", getToken: "tok", pipelineId: 1 });
-  const итог = await client.pushLead({ name: "Тест" }, "alyona:instagram");
+  const итог = await client.pushLead({ name: "Тест" }, "demo:instagram");
 
   restore();
 
@@ -88,7 +88,7 @@ test("pushLead ловит сетевую ошибку, а не бросает и
   });
 
   const client = createAmoClient({ baseUrl: "https://example.amocrm.ru", getToken: "tok", pipelineId: 1 });
-  const итог = await client.pushLead({ name: "Тест" }, "alyona:instagram");
+  const итог = await client.pushLead({ name: "Тест" }, "demo:instagram");
 
   restore();
 
@@ -111,7 +111,7 @@ test("getToken как функция вызывается для получен�
     },
     pipelineId: 1,
   });
-  await client.pushLead({ name: "Тест" }, "alyona:instagram");
+  await client.pushLead({ name: "Тест" }, "demo:instagram");
 
   restore();
   assert.equal(calls, 1);

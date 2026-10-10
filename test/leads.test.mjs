@@ -39,6 +39,52 @@ const { plan, toEvent } = await import("../src/bot/ig-poll.mjs");
 const { buildReply } = await import("../src/bot/ig-flow.mjs");
 const { recipients } = await import("../src/channels/bot.mjs");
 const { bot } = await import("../src/bot/instance.mjs");
+const legal = await import("../src/leads/legal.mjs");
+const { drain } = await import("../src/bot/ig-flow.mjs");
+
+test("заслон читает документы: пустое место и неутверждённый текст закрывают приём", () => {
+  assert.equal(legal.hole("Передаём данные [наименование исполнителя, ИНН] для настройки."), "[наименование исполнителя, ИНН]");
+  assert.equal(legal.hole("Подробнее в [политике](/doc/politika) компании."), "", "ссылка пустым местом не считается");
+  // В проекте тексты ещё не утверждены юристом клиента: приём обязан быть закрыт.
+  const gaps = legal.legalGaps();
+  assert.ok(gaps.some((g) => /soglasie\.md не утверждён/.test(g)));
+  assert.ok(gaps.some((g) => /не заполнено «\[наименование исполнителя, ИНН\]»/.test(g)));
+  assert.equal(legal.legalReady(), false);
+});
+
+test("пока согласия не утверждены, бот людям не отвечает по существу и ничего о них не записывает", async () => {
+  legal._setLegalReady(false);
+  const stranger = { id: 7001, first_name: "Олег", username: "oleg_m" };
+  sent.length = 0;
+  await customer.handleMessage({ chat: { id: 7001, type: "private" }, from: stranger, text: "/start vk-priemka" });
+  await customer.handleMessage({ chat: { id: 7001, type: "private" }, from: stranger, text: "Сколько стоит покрытие на двор?" });
+  await customer.handleCallback({ id: "cb", data: "c:lead", from: stranger, message: { chat: { id: 7001 } } });
+  const replies = sent.filter((s) => String(s.body.chat_id) === "7001" && s.body.text);
+  assert.equal(replies.length, 3);
+  for (const r of replies) assert.match(r.body.text, /Бот скоро начнёт работать.*https:\/\/ecopolisrf\.ru\/blog\//);
+  assert.ok(!sent.some((s) => String(s.body.chat_id) === "-1001"), "вопрос человека в группу не ушёл");
+  assert.equal(await bot().telegram.store.findSubscriber("7001"), undefined, "о человеке не записано ничего");
+  assert.equal(lines("leads.jsonl").length, 0);
+  assert.equal(existsSync(path.join(DATA, "leads", "tg-events.jsonl")), false, "и текста его сообщения тоже");
+
+  // Форма закрыта и ничего не принимает, даже с отмеченным согласием.
+  assert.match(renderForm("raschet", {}), /Форма скоро заработает/);
+  assert.doesNotMatch(renderForm("raschet", {}), /<form/);
+  const out = await submitForm("raschet", new URLSearchParams({ name: "Анна", phone: "+79991112233", consent_pd: "1" }), { ip: "203.0.113.9", ua: "test" });
+  assert.equal(out.status, 503);
+  assert.equal(lines("leads.jsonl").length, 0);
+  assert.equal(lines("consents.jsonl").length, 0);
+
+  // Кодовые слова молчат: событие из очереди не разбирается.
+  assert.deepEqual(await drain(), { handled: 0, replied: 0, closed: true });
+
+  // Отозвать согласие можно всегда, даже при закрытом приёме.
+  sent.length = 0;
+  await customer.handleMessage({ chat: { id: 7001, type: "private" }, from: stranger, text: "/stop" });
+  assert.match(lastText(7001), /Бот остановлен/);
+
+  legal._setLegalReady(true);
+});
 
 test("короткая ссылка ведёт на статью с метками площадки и записи", () => {
   const links = { priemka: { url: "https://ecopolisrf.ru/blog/priemka/" } };
@@ -87,7 +133,7 @@ test("форма без согласия заявку не создаёт; с с
   assert.equal(lead.source, "ecopolis:vk");
   assert.equal(lead.phone, "+79991112233");
   assert.equal(lead.consent.version, "2026-10-1");
-  assert.deepEqual(lines("consents.jsonl").map((c) => `${c.kind}:${c.action}`), ["pd:given", "ads:given"]);
+  assert.deepEqual(lines("consents.jsonl").filter((c) => c.action === "given").map((c) => `${c.kind}:${c.action}`), ["pd:given", "ads:given"]);
   const card = sent.find((s) => s.method === "sendMessage" && String(s.body.chat_id) === "-1001");
   assert.match(card.body.text, /Заявка · Покрытие для площадки/);
   assert.match(card.body.text, /Школа, 450 м²/);
