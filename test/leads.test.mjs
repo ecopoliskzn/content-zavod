@@ -48,7 +48,7 @@ test("заслон читает документы: пустое место и �
   // В проекте тексты ещё не утверждены юристом клиента: приём обязан быть закрыт.
   const gaps = legal.legalGaps();
   assert.ok(gaps.some((g) => /soglasie\.md не утверждён/.test(g)));
-  assert.ok(gaps.some((g) => /не заполнено «\[наименование исполнителя, ИНН\]»/.test(g)));
+  assert.ok(gaps.some((g) => /не заполнено «\[наименование хостинг-провайдера, ИНН\]»/.test(g)));
   assert.equal(legal.legalReady(), false);
 });
 

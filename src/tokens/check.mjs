@@ -220,7 +220,7 @@ export async function refresh({ force = false, now = Date.now() } = {}) {
     if (job.channel === "instagram") {
       // Подписка на события слетает при перевыпуске маркера: оформляем заново сразу.
       const sub = await mod.subscribe();
-      note = sub.kind === "ok" ? ", подписка на события оформлена заново" : `, ПОДПИСКА НА СОБЫТИЯ НЕ ОФОРМИЛАСЬ: ${sub.error}`;
+      note = sub.kind === "ok" ? ", подписка на события оформлена заново" : sub.kind === "skipped" ? ", подписка на события не нужна: комментарии читает опрос" : `, ПОДПИСКА НА СОБЫТИЯ НЕ ОФОРМИЛАСЬ: ${sub.error}`;
     }
     out.push({ channel: job.channel, action: "продлён", until, note });
   }
@@ -303,7 +303,7 @@ async function main() {
       if (r.names.includes("IG_TOKEN")) {
         // Новый маркер Instagram без подписки на события нем: кодовые слова молча не работают.
         const sub = await (await adapter("instagram")).subscribe();
-        console.log(sub.kind === "ok" ? "✓ подписка аккаунта Instagram на события оформлена" : `⚠ подписка на события не оформилась: ${sub.error}. Повторите: node src/tokens/check.mjs --refresh --force`);
+        console.log(sub.kind === "ok" ? "✓ подписка аккаунта Instagram на события оформлена" : sub.kind === "skipped" ? `· подписка на события не оформляется: ${sub.error}` : `⚠ подписка на события не оформилась: ${sub.error}. Повторите: node src/tokens/check.mjs --refresh --force`);
       }
       return 0;
     } catch (e) { console.error(`✗ ${e.message}`); return e.code === "RULE" ? 1 : 2; }

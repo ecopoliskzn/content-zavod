@@ -4,7 +4,7 @@
 //   GET  /health            живость, какие ключи заданы (без значений), когда был выпуск
 //   POST /tg/update         обновления Telegram от релея (заголовок-секрет)
 //   GET  /ig/webhook        подтверждение подписки Meta (после переезда на своё приложение)
-//   POST /ig/webhook        события Instagram: первый месяц их пересылает приложение исполнителя
+//   POST /ig/webhook        события Instagram: приходят после переезда на своё приложение
 //   POST /admin/queue       команды очереди с компьютера оператора (ключ ADMIN_API_TOKEN)
 //   GET  /go/<слаг>         счётчик переходов и переадресация на сайт клиента
 //   GET  /z/<слаг>          форма заявки; POST туда же — приём
@@ -149,8 +149,9 @@ export function createHandler() {
       // Тело читаем сырым: подпись считается по байтам.
       const body = await readBody(req);
       const b = bot();
-      // Первый месяц события пересылает приложение исполнителя и подписывает их секретом
-      // пары. После переезда на своё приложение подписывает сама Meta его секретом.
+      // События подписывает Meta секретом своего приложения. Подпись парой
+      // (IG_FORWARD_SECRET) оставлена на случай пересылки через чужой сервер; решением
+      // владельца 10.10.2026 она не используется, и переменная пуста.
       const { ["подписьВерна"]: verify } = await import("#bot");
       const viaForward = env("IG_FORWARD_SECRET") && verify(body, req.headers["x-forward-signature"], env("IG_FORWARD_SECRET"));
       const viaMeta = env("IG_APP_SECRET") && verify(body, req.headers["x-hub-signature-256"], env("IG_APP_SECRET"));

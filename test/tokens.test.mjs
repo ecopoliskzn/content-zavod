@@ -123,3 +123,19 @@ test("файл окружения, названный явно, единстве
   assert.equal(value, "из-боевого-файла");
   assert.equal(path.basename(target), ".env.local");
 });
+
+test("пока своего приложения Meta нет, аккаунт Instagram на события не подписывается", async () => {
+  const instagram = await import("../src/channels/instagram.mjs");
+  const real = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => { calls++; return new Response("{}", { status: 200 }); };
+  delete process.env.IG_APP_SECRET;
+  try {
+    // Маркер выдан чужим приложением: события ушли бы на его сервер.
+    const sub = await instagram.subscribe();
+    assert.equal(sub.kind, "skipped");
+    assert.equal(calls, 0, "запрос на подписку не уходит вовсе");
+  } finally {
+    globalThis.fetch = real;
+  }
+});
