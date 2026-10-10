@@ -4,12 +4,20 @@
 // ГРАНИЦА ПЕРСОНАЛЬНЫХ ДАННЫХ ПРОХОДИТ ЗДЕСЬ. Сервер в России хранит заявки, подписчиков
 // бота и переписку. В снимок из них попадает только счёт: сколько, с какой площадки, что
 // просили, взяли ли в работу. Имён, телефонов, номеров аккаунтов и текста заявок в
-// снимке нет. Вопросы людей из бота идут обезличенными: без автора, с вычищенными
-// телефонами, почтой и именами аккаунтов. Любое новое поле в снимке проверяется этим
-// правилом до того, как попасть в код.
+// снимке нет. Любое новое поле в снимке проверяется этим правилом до того, как попасть
+// в код, и вопросом: что в это поле может написать сам человек.
+//
+// НА ТОЙ СТОРОНЕ ТЕКСТ ЧИТАЮТ ПРОГРАММЫ. Снимок приходит на компьютер оператора, где
+// работают сессии с искусственным интеллектом на серверах за границей. Поэтому:
+//  · вопросы людей из бота по умолчанию не уезжают вовсе, только их число. Чистка по
+//    шаблонам убирает телефон и почту, но не имя и не адрес, написанные словами;
+//  · публичные комментарии уезжают без автора и с той же чисткой;
+//  · номера Telegram сотрудников клиента из записей очереди убираются.
+// Первые два пункта переключает клиент: zavod.config.json, блок privacy.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
+import { config } from "../lib/config.mjs";
 import { dataPath } from "../lib/env.mjs";
 import { readJson, readJsonl } from "../lib/files.mjs";
 import { mskDate } from "../lib/time.mjs";
@@ -81,6 +89,34 @@ export function questions(events, limit = 100) {
   return out.slice(-limit);
 }
 
+/** Сколько вопросов задали в боте: один счёт, без текста. Чистая функция. */
+export function questionCount(events, now = Date.now(), days = 60) {
+  const from = now - days * 86_400_000;
+  const byDay = {};
+  let total = 0;
+  for (const row of events) {
+    const e = row.event || {};
+    const text = String(e.text || "");
+    if (e.kind !== "message" || !text || text.startsWith("/") || text.length < 12 || !(Date.parse(row.at) >= from)) continue;
+    if (/^(?:ig|vk|th|yt|rt|dz|tg|site)-[\w-]+$/i.test(text)) continue;
+    const day = String(row.at).slice(0, 10);
+    byDay[day] = (byDay[day] || 0) + 1;
+    total++;
+  }
+  return { days, total, byDay };
+}
+
+/**
+ * Запись очереди для снимка: без номеров Telegram. Имя утверждающего остаётся: это
+ * запись о том, кто от имени компании сказал «да», и ради неё согласование и ведётся.
+ */
+export function publicEntry(entry) {
+  const out = { ...entry };
+  if (out.approval) { const { by, ...rest } = out.approval; out.approval = rest; }
+  if (/^tg:\d+$/.test(String(out.by || ""))) out.by = "рабочая группа";
+  return out;
+}
+
 /**
  * Комментарии под публикациями для снимка. Автора сборщик не хранит, но человек мог сам
  * написать в комментарии телефон или почту: текст проходит ту же чистку, что и вопросы.
@@ -101,9 +137,15 @@ function weeklyReports(limit = 8) {
 export function snapshot(now = Date.now()) {
   const metricRows = readJsonl(dataPath("metrics.jsonl"));
   const alerts = readJson(dataPath("alerts.json"), {}) || {};
+  // Что из написанного людьми уезжает с сервера, решает клиент: zavod.config.json, блок
+  // privacy. На компьютере оператора эти тексты читают программы на основе искусственного
+  // интеллекта, поэтому по умолчанию вопросы из бота не уезжают вовсе: только их число.
+  const privacy = config().privacy || {};
+  const botEvents = readJsonl(dataPath("leads", "tg-events.jsonl"));
+  const commentRows = publicComments(readJsonl(dataPath("comments.jsonl")), 100_000);
   return {
     at: new Date(now).toISOString(),
-    queue: all().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)),
+    queue: all().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).map(publicEntry),
     ledger: ledgerRows().slice(-2000),
     heartbeat: readJson(dataPath("heartbeat.json"), {}) || {},
     stopped: existsSync(dataPath("STOP")),
@@ -123,9 +165,11 @@ export function snapshot(now = Date.now()) {
       igSent: readJsonl(dataPath("leads", "ig-sent.jsonl")),
       now,
     }),
-    questions: questions(readJsonl(dataPath("leads", "tg-events.jsonl")).slice(-3000)),
+    questions: privacy.shareBotQuestions === true ? questions(botEvents.slice(-3000)) : [],
+    questionCount: questionCount(botEvents, now),
     // Комментарии под публикациями: текст, площадка, ссылка. Авторов сборщик не хранит вовсе.
-    comments: publicComments(readJsonl(dataPath("comments.jsonl"))),
+    comments: privacy.shareComments === false ? [] : commentRows.slice(-400),
+    commentCount: { total: commentRows.length, open: commentRows.filter((c) => c.status === "new").length },
     reports: weeklyReports(),
     tokens: tokenTable(now).map((t) => ({ name: t.name, set: t.set, daysLeft: t.daysLeft, status: t.status })),
     alerts: Object.entries(alerts).map(([key, at]) => ({ key, at: new Date(at).toISOString() })),

@@ -242,6 +242,59 @@ test("удаление по телефону находит и заявку с �
   assert.equal(erase({ user: "никого" }, { dry: true }).removed, 0);
 });
 
+test("что люди написали в бот, с сервера не уезжает: в снимке только число, пока клиент не разрешил иное", async () => {
+  const { appendJsonl } = await import("../src/lib/files.mjs");
+  const { config, _setConfig } = await import("../src/lib/config.mjs");
+  const { snapshot, questionCount, publicEntry } = await import("../src/queue/snapshot.mjs");
+  const { execute } = await import("../src/queue/commands.mjs");
+  const events = path.join(DATA, "leads", "tg-events.jsonl");
+  const at = new Date().toISOString();
+  appendJsonl(events, { at, event: { kind: "message", from: "8001", text: "Меня зовут Игорь Сафин, школа в Арске, нужна площадка 300 метров" } });
+  appendJsonl(events, { at, event: { kind: "message", from: "8002", text: "vk-priemka" } });
+  appendJsonl(path.join(DATA, "comments.jsonl"), { id: "youtube:q1", platform: "youtube", at, status: "new", link: "https://www.youtube.com/watch?v=x&lc=q1", text: "Сколько сохнет? Мой номер 8 999 111-22-33" });
+
+  // По умолчанию: текста вопроса в снимке нет, число есть.
+  assert.equal(config().privacy.shareBotQuestions, false, "в реестре вопросы из бота закрыты");
+  const closed = snapshot();
+  assert.deepEqual(closed.questions, []);
+  assert.equal(closed.questionCount.total, 1, "метка входа вопросом не считается");
+  assert.doesNotMatch(JSON.stringify(closed), /Сафин|Арск/, "имя и место, написанные словами, с сервера не уехали");
+  // Публичный комментарий уезжает без телефона.
+  assert.equal(closed.comments.length, 1);
+  assert.match(closed.comments[0].text, /Мой номер \[телефон\]/);
+  assert.deepEqual(closed.commentCount, { total: 1, open: 1 });
+
+  const saved = config();
+  try {
+    // Клиент разрешил вопросы и закрыл комментарии.
+    _setConfig({ ...saved, privacy: { shareBotQuestions: true, shareComments: false } });
+    const open = snapshot();
+    assert.equal(open.questions.length, 1);
+    assert.deepEqual(open.comments, []);
+    assert.equal(open.commentCount.total, 1, "число комментариев видно и при закрытом тексте");
+    const refused = await execute("comments", {}, "S6");
+    assert.equal(refused.code, 1, "это отказ по правилу, а не поломка");
+    assert.match(refused.lines[0], /privacy\.shareComments/);
+    assert.equal(refused.data, undefined);
+  } finally {
+    _setConfig(saved);
+  }
+  const allowed = await execute("comments", {}, "S6");
+  assert.equal(allowed.code, 0);
+  assert.match(allowed.data[0].text, /\[телефон\]/);
+
+  // Счёт вопросов: старые за окном не считаются.
+  const now = Date.parse("2026-10-10T12:00:00Z");
+  const q = questionCount([{ at: "2026-10-09T10:00:00Z", event: { kind: "message", text: "Какая толщина нужна под качели?" } }, { at: "2026-06-01T10:00:00Z", event: { kind: "message", text: "Старый вопрос про покрытие во дворе" } }, { at: "2026-10-09T10:00:00Z", event: { kind: "message", text: "спасибо" } }], now);
+  assert.deepEqual(q, { days: 60, total: 1, byDay: { "2026-10-09": 1 } });
+
+  // Запись очереди в снимке: имя утверждающего остаётся, его номер Telegram нет.
+  const e = publicEntry({ id: "x", by: "tg:42", approval: { by: 42, name: "Анна", at: "2026-10-08T10:00:00Z", card: { messageId: 5 } } });
+  assert.deepEqual(e.approval, { name: "Анна", at: "2026-10-08T10:00:00Z", card: { messageId: 5 } });
+  assert.equal(e.by, "рабочая группа");
+  assert.equal(publicEntry({ id: "y", by: "S1" }).by, "S1");
+});
+
 test("снимок для оператора: телефоны, почта и аккаунты вычищены, воронка только счётом", () => {
   assert.equal(mask("Позвоните +7 (999) 111-22-33 или a.b@mail.ru, я @ivan_petrov, vk https://vk.com/ivan"), "Позвоните [телефон] или [почта], я [аккаунт], vk [ссылка на профиль]");
   const now = Date.parse("2026-10-10T12:00:00Z");

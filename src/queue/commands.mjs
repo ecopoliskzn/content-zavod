@@ -187,6 +187,11 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           lines.push(ok ? `комментарий ${args.ref}: ${args.status}` : `комментария ${args.ref} нет`);
           return { code: ok ? 0 : 1, lines };
         }
+        // Клиент запретил отдавать текст комментариев с сервера: это отказ по правилу.
+        const { config } = await import("../lib/config.mjs");
+        if (config().privacy?.shareComments === false) {
+          return { code: 1, lines: ["текст комментариев с сервера не отдаётся: так решено в zavod.config.json (privacy.shareComments). Сводка приходит сотрудникам в рабочую группу, отвечают они сами"] };
+        }
         // Ответ уходит на компьютер оператора: текст отдаём с той же чисткой, что и в снимке.
         // Телефон, который человек сам написал под роликом, с сервера не уезжает.
         const { publicComments } = await import("./snapshot.mjs");

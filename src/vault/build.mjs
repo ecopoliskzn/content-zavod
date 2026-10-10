@@ -176,7 +176,9 @@ export function gather(root = PROJECT_ROOT, mirrorDir = path.join(root, "mirror"
     trends: m("trends.json", []),
     funnel: m("funnel.json", null),
     questions: m("questions.json", []),
+    questionCount: m("questionCount.json", null),
     comments: m("comments.json", []),
+    commentCount: m("commentCount.json", null),
     youtubeChannel: readJson(path.join(root, "content", "youtube", "channel.json"), null),
     youtubeSeries: readJson(path.join(root, "content", "youtube", "series.json"), { series: [] })?.series || [],
     tokens: m("tokens.json", []),
@@ -547,8 +549,17 @@ export function buildVault(input) {
     const T = [frontmatter({ type: "сводка", tags: ["находки"] }), "# Что зашло у других", "", `Узел: ${link(P.node("trends"), "Слежение за конкурентами")}. Число — во сколько раз публикация обогнала обычную для своего канала.`, "", found.length ? table(["Раз", "", "Где", "Канал", "Дата", "Что"], found.map((t) => [`${String(t.ratio).replace(".", ",")}×`, bar(Math.min(t.ratio, 12), 12, 10), t.source, t.channel, String(t.published || "").slice(0, 10), `[${String(t.title).replace(/[[\]|]/g, " ").slice(0, 80)}](${t.url})`])) : "Находок пока нет: список каналов в `src/trends/watchlist.json` пуст или ни у кого не было выброса.", "", `_${AUTO}_`];
     put("Новости/Что зашло у других.md", T.join("\n"));
 
+    // Текст вопросов из бота уезжает с сервера, только если клиент это разрешил
+    // (zavod.config.json, privacy.shareBotQuestions). Иначе в снимке лежит один счёт.
     const q = (input.questions || []).slice(-60).reverse();
-    put("Новости/Вопросы людей.md", [frontmatter({ type: "сводка", tags: ["вопросы"] }), "# Вопросы людей из бота", "", "Обезличено: без автора, телефоны и имена аккаунтов вычищены на сервере. Каждый повторяющийся вопрос — готовая тема.", "", q.length ? q.map((x) => `- ${x.day}: «${x.text}»`).join("\n") : "Вопросов пока не было.", "", `Узел: ${link(P.node("bot"), "Бот для людей")}.`, "", `_${AUTO}_`].join("\n"));
+    const shared = cfg.privacy?.shareBotQuestions === true;
+    const qc = input.questionCount;
+    const qBody = q.length
+      ? ["Обезличено: без автора, телефоны и имена аккаунтов вычищены на сервере. Каждый повторяющийся вопрос — готовая тема.", "", q.map((x) => `- ${x.day}: «${x.text}»`).join("\n")]
+      : shared
+        ? ["Вопросов пока не было."]
+        : [callout("info", "Текст вопросов с сервера не уезжает", "Так решено в настройках завода: то, что люди пишут в бот, остаётся на сервере компании. Сюда приходит только число. Какие вопросы повторяются, раз в неделю называет ответственный за заявки: он видит их в рабочей группе."), "", qc ? `Вопросов за ${qc.days} дней: **${qc.total}**.` : "Счёта пока нет: снимок с сервера ещё не снят."];
+    put("Новости/Вопросы людей.md", [frontmatter({ type: "сводка", total: qc?.total, tags: ["вопросы"] }), "# Вопросы людей из бота", "", ...qBody, "", `Узел: ${link(P.node("bot"), "Бот для людей")}.`, "", `_${AUTO}_`].join("\n"));
   }
 
   /* ── Комментарии под публикациями ── */
@@ -560,7 +571,8 @@ export function buildVault(input) {
     const open = list.filter((c) => c.status === "new").sort((a, b) => String(b.at).localeCompare(String(a.at)));
     const byPlatform = Object.entries(list.reduce((a, c) => { a[c.platform] = (a[c.platform] || 0) + 1; return a; }, {})).sort((a, b) => b[1] - a[1]);
     const L = [frontmatter({ type: "сводка", open: open.length, tags: ["комментарии"] }), "# Комментарии под публикациями", "", `Узел: ${link(P.node("comments"), "Комментарии")}. Здесь только текст и ссылка: имя и аккаунт автора сборщик не сохраняет.`, ""];
-    if (!list.length) L.push(input.live ? "Комментариев пока не было." : callout("info", "Живых данных нет", "Снимок с сервера ещё не снят: `npm run mirror`."), "");
+    if (cfg.privacy?.shareComments === false) L.push(callout("info", "Текст комментариев с сервера не уезжает", "Так решено в настройках завода. Сводка новых комментариев приходит сотрудникам в рабочую группу, отвечают они сами."), "", input.commentCount ? `Комментариев собрано: **${input.commentCount.total}**, ждут ответа: **${input.commentCount.open}**.` : "", "");
+    else if (!list.length) L.push(input.live ? "Комментариев пока не было." : callout("info", "Живых данных нет", "Снимок с сервера ещё не снят: `npm run mirror`."), "");
     else {
       L.push(table(["Состояние", "Сколько"], [["ждут ответа", count("new")], ["ответили", count("answered")], ["ответ не нужен", count("skipped")]]), "");
       if (byPlatform.length) L.push("## По площадкам", "", table(["Площадка", "Комментариев", ""], byPlatform.map(([p, n]) => [where(p), n, bar(n, byPlatform[0][1], 16)])), "");

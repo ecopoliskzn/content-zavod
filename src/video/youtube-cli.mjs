@@ -206,7 +206,9 @@ async function main() {
     const registry = loadRegistry();
     const text = composeDescription(entry, context(registry, entry.extra?.youtubeId || ""));
     console.log(`${entry.title}\n${"─".repeat(60)}\n${text}\n${"─".repeat(60)}`);
-    const verdict = videoGate({ ...entry, text });
+    // Проверяется согласованный текст записи, а не собранное описание: хэштеги и ссылки
+    // под текстом ставит программа, и замечание «хэштеги в тексте» на них было бы ложным.
+    const verdict = videoGate(entry);
     for (const b of verdict.block) console.log(`⛔ ${b}`);
     for (const w of verdict.warn) console.log(`⚠ ${w}`);
     console.log(`знаков: ${text.length} из 5000`);
