@@ -21,7 +21,8 @@ set -euo pipefail
 
 TARGET="${1:-}"
 APP=/opt/ecopolis-zavod
-PARTS=(src packages ops bot legal zavod.config.json package.json)
+# Доктор проверяет наличие промптов сессий и на сервере: они входят в архив версии.
+PARTS=(src packages ops bot legal prompts zavod.config.json package.json)
 if [[ -z "$TARGET" ]]; then
   echo "кому выкладывать: bash ops/deploy.sh zavod@<адрес сервера>" >&2
   exit 2
