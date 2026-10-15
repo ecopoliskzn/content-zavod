@@ -52,6 +52,15 @@ function call({ method = "GET", url, headers = {}, body = "" }) {
 }
 const json = (res) => JSON.parse(res.body);
 
+test("страницы приложения открыты без ключа, произвольные пути закрыты", async () => {
+  for (const url of ["/", "/youtube-app/", "/youtube-app/privacy/", "/youtube-app/terms/"]) {
+    const response = await call({ url });
+    assert.equal(response.status, 200);
+    assert.match(response.body, /Ecopolis Content Zavod/);
+  }
+  assert.equal((await call({ url: "/youtube-app/.env" })).status, 404);
+});
+
 test("живость: какие ключи заданы видно, значений нет", async () => {
   const res = await call({ url: "/health" });
   assert.equal(res.status, 200);

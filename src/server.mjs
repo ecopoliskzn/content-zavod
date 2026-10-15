@@ -33,6 +33,7 @@ import { handleGo } from "./leads/go.mjs";
 import { renderForm, submitForm } from "./leads/form.mjs";
 import { legalReady } from "./leads/legal.mjs";
 import { execute } from "./queue/commands.mjs";
+import { appPage } from "./app-pages.mjs";
 
 const send = (res, status, body, headers = {}) => {
   const isObject = typeof body === "object" && body !== null;
@@ -215,6 +216,11 @@ export function createHandler() {
         ? `<h1>Вход выполнен</h1><p>Передайте оператору этот код. Он действует один час и годится один раз.</p><p><code>${codeValue}</code></p>`
         : `<h1>Вход не выполнен</h1><p>Площадка не вернула код. Попросите у оператора новую ссылку.</p>`;
       return send(res, 200, `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex"><title>Вход</title><style>body{font:17px/1.6 system-ui,sans-serif;max-width:640px;margin:0 auto;padding:28px 18px}code{word-break:break-all;background:#eef0ec;padding:4px 6px;border-radius:6px}</style></head><body>${body}</body></html>`, { "cache-control": "no-store", "referrer-policy": "no-referrer" });
+    }
+
+    if (req.method === "GET" && (p === "/" || p.startsWith("/youtube-app"))) {
+      const html = appPage(p === "/" ? "/youtube-app/" : p);
+      if (html) return send(res, 200, html, { "cache-control": "no-cache", "referrer-policy": "no-referrer", "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'" });
     }
 
     if (req.method === "GET" && p.startsWith("/doc/")) {
