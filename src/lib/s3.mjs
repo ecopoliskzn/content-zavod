@@ -63,7 +63,10 @@ export async function putObject({ endpoint, bucket, key, body, contentType, acce
     const res = await fetch(url, { method: "PUT", headers: { ...headers, "content-length": String(body.length) }, body, signal: AbortSignal.timeout(timeoutMs) });
     if (res.ok) return { ok: true, status: res.status, error: "" };
     const text = await res.text();
-    return { ok: false, status: res.status, error: (text.match(/<Message>([^<]+)</)?.[1] || text.slice(0, 200) || `HTTP ${res.status}`).trim() };
+    // Тело отказа может содержать XML и подписанные детали запроса. В журнал и
+    // HTML-тревогу передаём только безопасный код, а не ответ провайдера целиком.
+    const code = text.match(/<Code>([A-Za-z0-9_.-]{1,100})<\/Code>/)?.[1];
+    return { ok: false, status: res.status, error: code ? `S3 ${code} (HTTP ${res.status})` : `S3 HTTP ${res.status}` };
   } catch (e) {
     return { ok: false, status: 0, error: `сеть: ${e?.cause?.code || e?.name || e?.message || e}` };
   }
