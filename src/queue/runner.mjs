@@ -31,6 +31,7 @@
 // Запуск руками:  node src/queue/runner.mjs [--dry]
 
 import { fileURLToPath } from "node:url";
+import { existsSync, realpathSync } from "node:fs";
 import { config, channel as channelCfg } from "../lib/config.mjs";
 import { dataPath, env, wrongUser } from "../lib/env.mjs";
 import { lock, readJson, writeAtomic, writeJson } from "../lib/files.mjs";
@@ -399,7 +400,9 @@ export function digest(entries, now) {
   return rows.join("\n");
 }
 
-const direct = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+// Node раскрывает current в import.meta.url, а argv оставляет путём через ссылку.
+// Сравниваем реальные пути, иначе cron завершается успешно, не выполнив проход.
+const direct = process.argv[1] && existsSync(process.argv[1]) && realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
 if (direct && wrongUser() && !process.argv.includes("--dry")) {
   // Расписание, поставленное в crontab пользователя root, портит каталог данных с первого прохода.
   console.error(`${new Date().toISOString()} выпуск не запущен: ${wrongUser()}. Расписание ставится так: crontab -u zavod ops/crontab.txt`);
