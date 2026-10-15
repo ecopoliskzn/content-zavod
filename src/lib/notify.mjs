@@ -67,6 +67,12 @@ const SIX_HOURS = 6 * 3600_000;
  */
 export async function alert(key, text, { action, buttons } = {}) {
   if (!action) throw new Error(`тревога «${key}» без действия: напишите, что человеку нажать или открыть`);
+  // До сдачи оператор может отключить только тревоги: карточки согласования и отчёты
+  // продолжают работать. Отметку отправки не ставим, чтобы после включения не молчать.
+  if (env("ALERTS_MUTED") === "1") {
+    console.warn(`[alerts] muted: ${key}`);
+    return { ok: true, skipped: true, muted: true };
+  }
   const seen = readJson(ALERTS(), {}) || {};
   const now = Date.now();
   if (seen[key] && now - seen[key] < SIX_HOURS) return { ok: true, skipped: true };

@@ -32,6 +32,7 @@ export const REGISTRY = [
   { name: "TG_TOPIC_LEADS", where: ["server"], secret: false, need: "optional", what: "номер темы «Заявки»" },
   { name: "TG_TOPIC_REPORTS", where: ["server"], secret: false, need: "optional", what: "номер темы «Отчёты»" },
   { name: "TG_TOPIC_ALERTS", where: ["server", "operator"], secret: false, need: "optional", what: "номер темы «Тревоги»" },
+  { name: "ALERTS_MUTED", where: ["server", "operator"], secret: false, need: "optional", what: "1 — тревоги остаются в журнале без отправки в рабочую группу; снять при сдаче" },
   { name: "TG_TOPIC_NEWS", where: ["server"], secret: false, need: "optional", what: "номер темы «Новости»" },
   { name: "TG_TOPIC_PACKAGES", where: ["server"], secret: false, need: "optional", what: "номер темы «Выложить руками» (Дзен)" },
   { name: "TG_TOPIC_COMMENTS", where: ["server"], secret: false, need: "optional", what: "номер темы «Комментарии»: сводка новых комментариев и ответы на согласование" },
