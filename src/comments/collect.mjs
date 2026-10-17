@@ -15,8 +15,8 @@
 // сохраняются: чтобы ответить, они не нужны, а ссылка ведёт прямо к комментарию.
 //
 // Откуда берём:
-//   YouTube   — ключ API: все ветки канала одним запросом. В ответе ветки лежит не больше
-//               пяти реплик: длинный спор дочитывается отдельным запросом;
+//   YouTube   — собственный OAuth: все страницы опубликованных веток и всех ответов.
+//               Живой сбор разрешён только на российском сервере;
 //   ВКонтакте — сервисный ключ: комментарии под записями последних трёх недель;
 //   Rutube    — открытый JSON, ключ не нужен;
 //   Instagram — те же вызовы, что у опроса кодовых слов;
@@ -25,19 +25,26 @@
 //
 //   node src/comments/collect.mjs [--send] [--dry] [--only=youtube,vk]
 
-import { fileURLToPath } from "node:url";
-import { dataPath, env } from "../lib/env.mjs";
+import { isMain } from '../lib/is-main.mjs';
+import { dataDir, dataPath, env } from "../lib/env.mjs";
 import { appendJsonl, latestById, readJson, writeJson } from "../lib/files.mjs";
 import { request, sleep } from "../lib/http.mjs";
 import { ig, igUserId } from "../lib/ig.mjs";
 import { h, toGroup } from "../lib/notify.mjs";
 import { idFromLink as rutubeId } from "../channels/rutube.mjs";
 import { rows as ledgerRows } from "../queue/ledger.mjs";
+import { readYoutubeComments } from "./youtube.mjs";
 
 const FILE = () => dataPath("comments.jsonl");
 const flag = (name) => process.argv.includes(`--${name}`);
 const opt = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || "").slice(name.length + 3);
 const TITLE = { youtube: "YouTube", vk: "ВКонтакте", rutube: "Rutube", instagram: "Instagram", threads: "Threads" };
+
+/** Старые вопросы остаются в истории, но не появляются в списке новых. */
+export function foundRow(item, now = Date.now()) {
+  const old = now - Date.parse(item.at) > 21 * 86_400_000;
+  return { ...item, text: item.text.slice(0, 1500), status: old ? 'archived' : 'new', foundAt: new Date(now).toISOString() };
+}
 
 export const all = () => [...latestById(FILE()).values()];
 export const byStatus = (status) => all().filter((c) => c.status === status);
@@ -62,17 +69,7 @@ function recent(channel, days) {
 }
 
 async function youtube() {
-  const key = env("YOUTUBE_API_KEY");
-  const channel = env("YOUTUBE_CHANNEL_ID");
-  if (!key || !channel) return { skipped: "нет YOUTUBE_API_KEY или YOUTUBE_CHANNEL_ID" };
-  const r = await request(`https://www.googleapis.com/youtube/v3/commentThreads?part=snippet&allThreadsRelatedToChannelId=${encodeURIComponent(channel)}&order=time&maxResults=100&key=${encodeURIComponent(key)}`, { retries: 1 });
-  if (r.kind !== "ok") return { error: r.error };
-  return {
-    items: (r.data?.items || []).filter((t) => t.snippet?.topLevelComment?.snippet?.authorChannelId?.value !== channel).map((t) => {
-      const s = t.snippet.topLevelComment.snippet;
-      return { id: `youtube:${t.id}`, platform: "youtube", at: s.publishedAt, text: String(s.textOriginal || s.textDisplay || ""), link: `https://www.youtube.com/watch?v=${s.videoId}&lc=${t.id}`, post: s.videoId, replies: t.snippet.totalReplyCount || 0 };
-    }),
-  };
+  return readYoutubeComments();
 }
 
 async function vk() {
@@ -155,26 +152,49 @@ const SOURCES = { youtube, vk, rutube, instagram, threads };
 
 /** Один проход сбора. Возвращает новые комментарии и что пропущено. */
 export async function collect({ dry = false, only = [] } = {}) {
+  // Даже --dry получает тексты людей по сети: на компьютере он не является безопасным
+  // предпросмотром. Запрещаем живой сбор до чтения журнала и до первого запроса.
+  if (!dataDir().startsWith('/opt/')) return { fresh: [], notes: ['живой сбор комментариев разрешён только на российском сервере'], failed: 0 };
   const known = latestById(FILE());
   const fresh = [];
   const notes = [];
+  let failed = 0;
+  const coverage = {};
+  const completedSources = [], skippedSources = [];
   for (const [name, read] of Object.entries(SOURCES)) {
     if (only.length && !only.includes(name)) continue;
     let res;
     try { res = await read(); } catch (e) { res = { error: String(e?.message || e) }; }
-    if (res.skipped) { notes.push(`${TITLE[name]}: ${res.skipped}`); continue; }
-    if (res.error) { notes.push(`${TITLE[name]}: не прочитан (${res.error})`); continue; }
+    if (res.skipped) { skippedSources.push(name); notes.push(`${TITLE[name]}: ${res.skipped}`); continue; }
+    if (res.error) { failed++; notes.push(`${TITLE[name]}: не прочитан (${res.error})`); continue; }
+    completedSources.push(name);
+    if (res.coverage) coverage[name] = res.coverage;
     for (const item of res.items || []) {
-      if (known.has(item.id)) continue;
-      // Комментарии старше трёх недель при первом проходе не поднимаем: отвечать на них поздно.
-      if (Date.now() - Date.parse(item.at) > 21 * 86_400_000) continue;
-      const row = { ...item, text: item.text.slice(0, 1500), status: "new", foundAt: new Date().toISOString() };
-      fresh.push(row);
+      if (known.has(item.id)) {
+        const old = known.get(item.id);
+        if (!dry && name === 'youtube' && (old.text !== item.text.slice(0, 1500) || old.replies !== item.replies)) {
+          const updated = { ...old, ...item, text: item.text.slice(0, 1500), updatedAt: new Date().toISOString() };
+          appendJsonl(FILE(), updated);
+          known.set(item.id, updated);
+        }
+        continue;
+      }
+      // Старые ветки YouTube сохраняем для полноты истории, но не выдаём за новые
+      // вопросы. Новый ответ под старой веткой сам проходит сюда по своей дате.
+      const old = Date.now() - Date.parse(item.at) > 21 * 86_400_000;
+      if (old && name !== 'youtube') continue;
+      const row = foundRow(item);
+      if (!old) fresh.push(row);
       known.set(row.id, row);
       if (!dry) appendJsonl(FILE(), row);
     }
   }
-  return { fresh, notes };
+  if (!dry) {
+    const before = readJson(dataPath('comments-health.json'), {}) || {};
+    writeJson(dataPath('comments-health.json'), { ...before, lastAttemptAt: new Date().toISOString(), failed, completedSources, skippedSources, coverage,
+      ...(completedSources.length && !failed ? { lastSuccessAt: new Date().toISOString() } : {}) });
+  }
+  return { fresh, notes, failed, coverage };
 }
 
 /** Сводка новых комментариев в рабочую группу: одним сообщением. */
@@ -188,13 +208,13 @@ export async function sendDigest(fresh) {
   return sent.ok;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMain(import.meta.url)) {
   const dry = flag("dry");
   collect({ dry, only: opt("only") ? opt("only").split(",") : [] }).then(
-    async ({ fresh, notes }) => {
+    async ({ fresh, notes, failed }) => {
       console.log(`${new Date().toISOString()} новых комментариев: ${fresh.length}${notes.length ? ` · ${notes.join("; ")}` : ""}`);
-      if (dry) for (const c of fresh.slice(0, 20)) console.log(`  ${c.platform.padEnd(9)} ${c.at.slice(0, 10)}  ${c.text.replace(/\s+/g, " ").slice(0, 90)}`);
-      else if (flag("send")) await sendDigest(fresh);
+      if (!dry && flag("send") && fresh.length && !await sendDigest(fresh)) process.exitCode = 2;
+      if (failed) process.exitCode = 2;
     },
     (e) => { console.error(`сбой сбора комментариев: ${e?.stack || e}`); process.exitCode = 2; },
   );

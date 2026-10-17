@@ -14,14 +14,16 @@
 //   node src/metrics/weekly.mjs                 напечатать отчёт за прошлую неделю
 //   node src/metrics/weekly.mjs --send          отправить в рабочую группу и сохранить файл
 //   node src/metrics/weekly.mjs --week=2026-10-05
+//   node src/metrics/weekly.mjs --save          сохранить без отправки людям
 
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { isMain } from '../lib/is-main.mjs';
 import { config } from "../lib/config.mjs";
 import { PROJECT_ROOT, dataPath } from "../lib/env.mjs";
 import { readJsonl, writeAtomic } from "../lib/files.mjs";
 import { h, report } from "../lib/notify.mjs";
 import { lastWeek, summarize } from "./summary.mjs";
+import { historyAt } from './youtube-history.mjs';
 
 const flag = (name) => process.argv.includes(`--${name}`);
 const opt = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || "").slice(name.length + 3);
@@ -78,6 +80,16 @@ export function markdown(s, titles) {
     L.push("| Ролик | Просмотры | Досмотр | Среднее время, с | Подписались |", "|---|---|---|---|---|");
     for (const v of s.video.list) L.push(`| ${v.name} | ${n(v.views)} | ${pct(v.watchPct)} | ${Number.isFinite(v.avgSec) ? Math.round(v.avgSec) : "—"} | ${Number.isFinite(v.subs) ? v.subs : "—"} |`);
   }
+  if (s.youtubeHistory) {
+    const history = s.youtubeHistory;
+    L.push('', '## YouTube: весь доступный владельцу архив', '',
+      `Снимок: ${history.latest.taken}. Видео в описи: ${history.latest.list.length}; статусы: ${Object.entries(history.statuses).map(([k, v]) => `${k} ${v}`).join(', ')}. Это не число только публичных роликов.`,
+      `Данные Analytics по ${history.latest.analyticsUntil || 'не получены'}; состояние: ${history.latest.analyticsState}.`);
+    const w = history.weekly;
+    if (w) L.push(`Сравнение ${w.from} → ${w.to} (${w.elapsedDays} суток): изменение просмотров общего измеренного набора ${n(w.commonDelta.views)}; сопоставлено видео ${w.commonMeasured.views}. Добавлено в опись ${w.added.length}, перестало быть доступно ${w.noLongerAccessible.length}, изменений статуса ${w.statusChanges.length}. Изменение счётчика просмотров не заменяет отчёт Analytics о просмотрах за период.`);
+    else L.push('Недельное сравнение ещё не накоплено: нет сохранённой базы семидневной давности.');
+    if (history.staleDays > 2) L.push(`⚠ Снимок устарел: ${history.staleDays} суток на конец периода отчёта.`);
+  }
   L.push("", "## Лучшие", "");
   for (const p of s.top) L.push(`- ${t(p.channel)} · ${p.slot} · «${p.name}» · ${n(p.views)} просмотров · ${p.ratio ? times(p.ratio) : "нет базы"} · материал: ${p.material || "—"}${p.link ? ` · ${p.link}` : ""}`);
   if (s.bottom.length) {
@@ -112,23 +124,27 @@ export function build(now = Date.now(), weekLabel = "") {
     channelTitles: titles,
     activeChannels: active,
   });
+  // Для прошлой недели не подмешиваем более поздние снимки.
+  summary.youtubeHistory = historyAt(window.to - 1);
   return { summary, titles };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMain(import.meta.url)) {
   try {
     const { summary, titles } = build(Date.now(), opt("week"));
     const md = markdown(summary, titles);
-    if (flag("send")) {
+    if (flag("send") || flag('save')) {
       // Отчёт лежит в каталоге данных: он переживает выкладку кода и уезжает в дубль на
       // компьютер оператора вместе с журналами.
       const file = path.join(dataPath("reports", "weekly"), `${summary.week}.md`);
       // Через общий модуль записи: в нём стоит заслон от запуска под чужим пользователем.
       writeAtomic(file, md);
       writeAtomic(path.join(dataPath("reports", "weekly"), `${summary.week}.json`), JSON.stringify(summary, null, 1));
-      const sent = await report(telegramText(summary, titles));
-      console.log(`${new Date().toISOString()} отчёт за неделю ${summary.week}: ${sent.ok ? "отправлен" : `не ушёл (${sent.error})`}, файл ${path.relative(PROJECT_ROOT, file)}`);
-      if (!sent.ok) process.exitCode = 2;
+      if (flag('send')) {
+        const sent = await report(telegramText(summary, titles));
+        console.log(`${new Date().toISOString()} отчёт за неделю ${summary.week}: ${sent.ok ? "отправлен" : `не ушёл (${sent.error})`}, файл ${path.relative(PROJECT_ROOT, file)}`);
+        if (!sent.ok) process.exitCode = 2;
+      } else console.log(`${new Date().toISOString()} отчёт за неделю ${summary.week}: сохранён без отправки, файл ${path.relative(PROJECT_ROOT, file)}`);
     } else {
       console.log(md);
     }

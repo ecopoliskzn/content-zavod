@@ -1,0 +1,7 @@
+# Только YouTube: добавить после согласованной выкладки и проверки текущего crontab.
+# UTC; Москва +3 часа. Не заменять этим файлом весь crontab: backup/runner сохраняются.
+# Не добавлять, если уже есть общие задания metrics/comments/weekly: сначала сверить их.
+# Без --send: чтение и файлы на сервере, без сообщений людям.
+10 4 * * * umask 077; /usr/bin/flock -n /tmp/zavod-metrics.lock /usr/bin/node /opt/ecopolis-zavod/current/src/metrics/pull.mjs --channel=youtube >> /var/log/zavod/metrics.log 2>&1
+0 5,12 * * * umask 077; /usr/bin/flock -n /tmp/zavod-comments.lock /usr/bin/node /opt/ecopolis-zavod/current/src/comments/collect.mjs --only=youtube >> /var/log/zavod/comments.log 2>&1
+0 6 * * 1 umask 077; /usr/bin/flock -n /tmp/zavod-weekly.lock /usr/bin/node /opt/ecopolis-zavod/current/src/metrics/weekly.mjs --save >> /var/log/zavod/weekly.log 2>&1

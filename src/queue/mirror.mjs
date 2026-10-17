@@ -122,7 +122,7 @@ export async function pull({ toleranceMs = 60_000 } = {}) {
   // Остальные части снимка: сырьё для сессий Codex и для витрины Obsidian. Персональных
   // данных среди них нет: сервер отдаёт счёт. Текст вопросов из бота приходит, только
   // если клиент это разрешил (zavod.config.json, privacy); иначе список пуст, а число есть.
-  for (const part of ["metrics", "metricSeries", "followers", "news", "newsHealth", "trends", "funnel", "questions", "questionCount", "comments", "commentCount", "tokens", "alerts"]) {
+  for (const part of ["metrics", "metricSeries", "followers", "youtubeHistory", "news", "newsHealth", "trends", "funnel", "questions", "questionCount", "comments", "commentCount", "commentsHealth", "tokens", "alerts"]) {
     if (d[part] !== undefined) writeAtomic(mirrorPath(`${part}.json`), JSON.stringify(d[part], null, 1));
   }
   for (const r of d.reports || []) {

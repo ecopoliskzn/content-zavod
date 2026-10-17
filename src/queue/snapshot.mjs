@@ -184,6 +184,8 @@ export function snapshot(now = Date.now()) {
   const privacy = config().privacy || {};
   const botEvents = readJsonl(dataPath("leads", "tg-events.jsonl"));
   const commentRows = publicComments(readJsonl(dataPath("comments.jsonl")), 100_000);
+  const youtubeHistory = readJson(dataPath('youtube', 'latest.json'), null);
+  if (youtubeHistory?.latest?.taken) youtubeHistory.staleDays = Number(((now - Date.parse(youtubeHistory.latest.taken)) / 86400000).toFixed(2));
   return {
     at: new Date(now).toISOString(),
     queue: all().sort((a, b) => `${a.date} ${a.time}`.localeCompare(`${b.date} ${b.time}`)).map(publicEntry),
@@ -199,6 +201,9 @@ export function snapshot(now = Date.now()) {
     // Ряд замеров за две недели: по нему видно, как пост набирал просмотры.
     metricSeries: since(metricRows, now - 14 * 86_400_000).filter((r) => !r.error).map((r) => ({ id: r.id, day: r.day, views: r.views ?? null })),
     followers: readJsonl(dataPath("followers.jsonl")).slice(-600),
+    // Только сведения и цифры собственного канала, без описаний и комментариев людей.
+    youtubeHistory,
+    commentsHealth: readJson(dataPath('comments-health.json'), null),
     news: readJsonl(dataPath("news", "inbox.jsonl")).slice(-1500),
     newsHealth: readJson(dataPath("news", "health.json"), {}) || {},
     trends: readJsonl(dataPath("trends", "outliers.jsonl")).slice(-400),

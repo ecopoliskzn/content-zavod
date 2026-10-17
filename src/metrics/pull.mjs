@@ -13,10 +13,12 @@
 // СБОЙ ПЛОЩАДКИ НЕ ЛОМАЕТ СЪЁМ. Площадка не ответила — у её постов строка с ошибкой,
 // остальные площадки меряются. Отсутствие цифры и ноль — разные вещи: в отчёте пост без
 // замера помечается «не измерено», а не нулём.
+// YouTube дополнительно снимается целиком: youtube/history/<день>.json. Его архив не
+// ограничен журналом завода и возрастом ролика; описания и комментарии туда не входят.
 //
 // Запуск руками:  node src/metrics/pull.mjs [--channel=threads] [--days=14] [--dry]
 
-import { fileURLToPath } from "node:url";
+import { isMain } from '../lib/is-main.mjs';
 import { channelNames } from "../lib/config.mjs";
 import { dataPath } from "../lib/env.mjs";
 import { appendJsonl } from "../lib/files.mjs";
@@ -24,6 +26,7 @@ import { mskDate } from "../lib/time.mjs";
 import { adapter } from "../channels/index.mjs";
 import { rows as ledgerRows } from "../queue/ledger.mjs";
 import { get } from "../queue/store.mjs";
+import { collectHistory } from "./youtube-history.mjs";
 
 const flag = (name) => process.argv.includes(`--${name}`);
 const opt = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || "").slice(name.length + 3);
@@ -60,6 +63,12 @@ export async function pull({ now = Date.now(), only = "", days = 60, dry = false
   }
 
   const out = { measured: 0, failed: 0, channels: {} };
+  // Архив канала не ограничивается публикациями завода и возрастом ролика.
+  if (!only || only === 'youtube') {
+    try { out.youtubeArchive = await collectHistory({ now, dry }); }
+    catch { out.youtubeArchive = { kind: 'network', error: 'история YouTube не записана' }; }
+    if ((out.youtubeArchive.kind && out.youtubeArchive.kind !== 'ok') || (out.youtubeArchive.analyticsState && out.youtubeArchive.analyticsState !== 'ok')) out.failed++;
+  }
   for (const [channel, items] of byChannel) {
     let mod;
     try { mod = await adapter(channel); } catch { continue; }
@@ -97,9 +106,12 @@ export async function pull({ now = Date.now(), only = "", days = 60, dry = false
   return out;
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+if (isMain(import.meta.url)) {
   pull({ only: opt("channel"), days: Number(opt("days")) || 60, dry: flag("dry") }).then(
-    (r) => console.log(`${new Date().toISOString()} измерено ${r.measured}, без ответа ${r.failed} ${JSON.stringify(r.channels)}`),
+    (r) => {
+      console.log(`${new Date().toISOString()} измерено ${r.measured}, без ответа ${r.failed} ${JSON.stringify(r.channels)}${r.youtubeArchive ? ` · архив YouTube ${JSON.stringify(r.youtubeArchive)}` : ''}`);
+      if (r.failed) process.exitCode = 2;
+    },
     (e) => { console.error(`сбой съёма цифр: ${e?.stack || e}`); process.exitCode = 2; },
   );
 }
