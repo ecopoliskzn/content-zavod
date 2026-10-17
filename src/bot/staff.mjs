@@ -3,6 +3,7 @@
 // Всё, что команда клиента делает с заводом, делается из Telegram и с телефона:
 // согласовать, поправить, снять, остановить выпуск, взять заявку. Командная строка и
 // сервер остаются оператору.
+// /myid показывает номер самого отправителя для настройки ролей; прав не выдаёт.
 
 import { list } from "../lib/env.mjs";
 import { h, resolve as resolveAlert, toGroup } from "../lib/notify.mjs";
@@ -34,6 +35,7 @@ const who = (from) => [from?.first_name, from?.last_name].filter(Boolean).join("
 
 const HELP = [
   "<b>Команды рабочей группы</b>",
+  "/myid — мой числовой Telegram ID для настройки роли",
   "/plan — что стоит на сегодня и что ждёт согласования",
   "/day — что вышло сегодня",
   "/waiting — всё, что ждёт «да»",
@@ -53,6 +55,16 @@ export async function handleCommand(message) {
   const thread = message.message_thread_id ? { message_thread_id: message.message_thread_id } : {};
   const reply = (t) => sendMessage(chat, t, thread);
   switch (m[1].toLowerCase()) {
+    case "myid": {
+      // У анонимного администратора from указывает на служебного бота, а не человека.
+      const id = message.from?.id;
+      if (message.sender_chat || message.from?.is_bot || !Number.isSafeInteger(id) || id <= 0) {
+        await reply("Отправьте /myid от своего личного аккаунта, без анонимного режима администратора.");
+        return true;
+      }
+      await reply(`Ваш Telegram ID: <code>${id}</code>\nПередайте этот номер оператору для настройки роли. Команда сама не назначает права.`);
+      return true;
+    }
     case "help":
     case "start":
       await reply(HELP);
