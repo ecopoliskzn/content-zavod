@@ -207,6 +207,7 @@ export function snapshot(now = Date.now()) {
     news: readJsonl(dataPath("news", "inbox.jsonl")).slice(-1500),
     newsHealth: readJson(dataPath("news", "health.json"), {}) || {},
     trends: readJsonl(dataPath("trends", "outliers.jsonl")).slice(-400),
+    trendsDaily: readJson(dataPath("trends", "sites", "latest.json"), null),
     funnel: funnel({
       clicks: readJsonl(dataPath("go-clicks.jsonl")),
       leads: readJsonl(dataPath("leads", "leads.jsonl")),

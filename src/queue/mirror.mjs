@@ -125,6 +125,10 @@ export async function pull({ toleranceMs = 60_000 } = {}) {
   for (const part of ["metrics", "metricSeries", "followers", "youtubeHistory", "news", "newsHealth", "trends", "funnel", "questions", "questionCount", "comments", "commentCount", "commentsHealth", "tokens", "alerts"]) {
     if (d[part] !== undefined) writeAtomic(mirrorPath(`${part}.json`), JSON.stringify(d[part], null, 1));
   }
+  if (d.trendsDaily && /^\d{4}-\d{2}-\d{2}$/.test(d.trendsDaily.date || "")) {
+    writeJson(mirrorPath("trendsDaily.json"), d.trendsDaily);
+    writeJson(mirrorPath("trends", `${d.trendsDaily.date}.json`), d.trendsDaily);
+  }
   for (const r of d.reports || []) {
     mkdirSync(mirrorPath("reports", "weekly"), { recursive: true });
     writeAtomic(mirrorPath("reports", "weekly", `${r.week}.md`), r.md);
