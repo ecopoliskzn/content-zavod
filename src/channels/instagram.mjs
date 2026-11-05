@@ -48,6 +48,21 @@ async function createContainer(body) {
   return r.kind === "ok" && r.data?.id ? { id: r.data.id } : fail(r, "контейнер не создан");
 }
 
+// Изображения Instagram API передаются в JPEG. Проверяем реальный ответ, а не расширение.
+async function imageReady(url){
+  try{
+    const r=await fetch(url,{headers:{range:'bytes=0-1023'},signal:AbortSignal.timeout(20000)});
+    if(!r.ok)return {ok:false,retry:true,error:`изображение недоступно (HTTP ${r.status})`};
+    const reader=r.body.getReader();let prefix=new Uint8Array();
+    try{while(prefix.length<3){const part=await reader.read();if(part.done)break;const joined=new Uint8Array(prefix.length+Math.min(3-prefix.length,part.value.length));joined.set(prefix);joined.set(part.value.subarray(0,3-prefix.length),prefix.length);prefix=joined;}}finally{await reader.cancel();}
+    const type=(r.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+    if(type!=='image/jpeg'||prefix[0]!==255||prefix[1]!==216||prefix[2]!==255)return {ok:false,retry:false,error:'Instagram: нужна отдельная публикационная версия JPEG; PNG/WebP не отправляются в контейнер'};
+    const total=Number(r.headers.get('content-range')?.split('/').at(-1)||r.headers.get('content-length'));
+    if(total>8*1024*1024)return {ok:false,retry:false,error:'Instagram: JPEG превышает 8 МБ'};
+    return {ok:true};
+  }catch{return {ok:false,retry:true,error:'изображение не проверено: сеть или некорректный ответ хранилища'};}
+}
+
 /**
  * @param {{ kind: string, text?: string, media: Array<{type:string,url:string,cover?:string}>, result?: { containerId?: string } }} entry
  * @param {{ onStep?: Function, sleep?: Function }} ctx
@@ -59,6 +74,9 @@ export async function publish(entry, ctx = {}) {
   let containerId = entry.result?.containerId || "";
 
   if (!containerId) {
+    // Все кадры проверяются до первого создания: ошибка позднего кадра не оставляет
+    // ненужные дочерние контейнеры. Существующий контейнер повторно не создаётся.
+    for(const m of media.filter(m=>m.type==='image')){const ready=await imageReady(m.url);if(!ready.ok)return ready;}
     let created;
     if (entry.kind === "reel") {
       const video = media.find((m) => m.type === "video");
