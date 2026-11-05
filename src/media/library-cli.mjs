@@ -5,6 +5,11 @@ import {execFileSync} from 'node:child_process';import {dataDir,env} from '../li
 import {importMedia,rows,libraryStatus,replicate,restoreBlob,adoptPublic,auditLibrary,canImportFile} from './library.mjs';
 const opt=n=>(process.argv.find(x=>x.startsWith(`--${n}=`))||'').slice(n.length+3);
 const flag=n=>process.argv.includes(`--${n}`);
+// Учитываем одновременно входящий пакет и копию в библиотеке, оставляем системе 1 ГБ.
+export function checkTransferSpace(status,bytes){
+ if(!Number.isSafeInteger(status.quotaBytes)||status.quotaBytes<=0||bytes>status.quotaBytes)throw Error('файл превышает квоту сервера; передача не начиналась');
+ if(!Number.isFinite(status.freeBytes)||bytes*2+1024*1024*1024>status.freeBytes)throw Error('недостаточно подтверждённого места для безопасной передачи; исходник сохранён');
+}
 function files(file){if(statSync(file).isFile())return[file];return readdirSync(file,{withFileTypes:true}).filter(x=>!x.name.startsWith('.')&&!x.isSymbolicLink()).flatMap(x=>files(path.join(file,x.name)));}
 export async function libraryCli(){try{
  if(flag('status')){console.log(JSON.stringify(libraryStatus()));return 0;}
@@ -23,6 +28,9 @@ export async function libraryCli(){try{
   if(!/^[a-z][a-z0-9_-]*@[a-zA-Z0-9.-]+$/.test(server))throw Error('неверный SSH-адрес');
   for(const file of files(opt('import'))){
    if(!canImportFile(file))throw Error('неподдерживаемое имя исходника или файл с секретами');
+   const bytes=statSync(file).size;
+   const remoteStatus=JSON.parse(execFileSync('ssh',['-o','BatchMode=yes',server,'cd /opt/ecopolis-zavod/current && node src/media/upload.mjs --status'],{encoding:'utf8'}));
+   checkTransferSpace(remoteStatus,bytes);
    const name=randomUUID(),remote=`/opt/ecopolis-data/media-inbox/${name}`,temp=mkdtempSync(path.join(tmpdir(),'ecopolis-media-'));
    try{
     const metadata=path.join(temp,'options.json');writeFileSync(metadata,JSON.stringify({...options,variant:variantFor(file),originalName:path.basename(file),source:options.source+': '+path.basename(file)}),{mode:0o600});

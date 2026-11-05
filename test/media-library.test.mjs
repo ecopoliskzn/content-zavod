@@ -4,6 +4,13 @@ import {createHash} from 'node:crypto';
 import {tmpdir} from 'node:os';import path from 'node:path';
 const dir=mkdtempSync(path.join(tmpdir(),'library-'));process.env.DATA_DIR=dir;process.env.ZAVOD_ENV_FILE=path.join(dir,'absent.env');
 const lib=await import('../src/media/library.mjs');
+test('передача прекращается до SCP при нехватке места или неизвестной ёмкости',async()=>{
+ const {checkTransferSpace}=await import('../src/media/library-cli.mjs');
+ assert.throws(()=>checkTransferSpace({quotaBytes:100,freeBytes:10},50),/места/);
+ assert.throws(()=>checkTransferSpace({quotaBytes:100,freeBytes:null},50),/места/);
+ assert.throws(()=>checkTransferSpace({quotaBytes:100,freeBytes:2**32},101),/квот/);
+ assert.doesNotThrow(()=>checkTransferSpace({quotaBytes:100,freeBytes:2**32},50));
+});
 test('импорт закрыт, дедупликация и версии не затирают оригиналы',async()=>{
  const file=path.join(dir,'one.jpg');writeFileSync(file,'first');
  const a=await lib.importMedia(file,{material:'case:test',source:'operator',role:'original'});

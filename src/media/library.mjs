@@ -1,7 +1,7 @@
 // Постоянная медиатека: закрытые исходники, неизменяемые версии и единый mediaId.
 // Импорт не публикует. Одобрение очереди разрешает выдачу только публикационной версии.
 // Оригиналы не удаляются автоматически; переполнение квоты останавливает новый импорт.
-import {createReadStream,createWriteStream,existsSync,mkdirSync,statSync,unlinkSync,renameSync,readFileSync} from 'node:fs';
+import {createReadStream,createWriteStream,existsSync,mkdirSync,statSync,statfsSync,unlinkSync,renameSync,readFileSync} from 'node:fs';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
 import {Transform} from 'node:stream';import {pipeline} from 'node:stream/promises';
@@ -79,6 +79,6 @@ export async function resolveEntryMedia(entry,{head=fetch}={}){
  };
  const media=[];for(const m of entry.media||[]){const ready={...m};if(m.mediaId)ready.url=await resolve(m.mediaId);if(m.coverMediaId)ready.cover=await resolve(m.coverMediaId);media.push(ready);}return {...entry,media};
 }
-export function libraryStatus(){const all=rows(),unique=new Map(all.map(r=>[r.sha256,r.bytes]));return {records:all.length,originals:all.filter(r=>r.role==='original').length,versions:all.filter(r=>r.role!=='original').length,bytes:[...unique.values()].reduce((a,b)=>a+b,0),replicated:all.filter(r=>r.replica?.status==='verified').length,quotaBytes:Number(env('MEDIA_LOCAL_MAX_BYTES',String(512*1024*1024))),autoDelete:false};}
+export function libraryStatus(){const all=rows(),unique=new Map(all.map(r=>[r.sha256,r.bytes]));let freeBytes=null;try{const s=statfsSync(dataPath());freeBytes=s.bavail*s.bsize;}catch{}return {records:all.length,originals:all.filter(r=>r.role==='original').length,versions:all.filter(r=>r.role!=='original').length,bytes:[...unique.values()].reduce((a,b)=>a+b,0),replicated:all.filter(r=>r.replica?.status==='verified').length,quotaBytes:Number(env('MEDIA_LOCAL_MAX_BYTES',String(512*1024*1024))),freeBytes,autoDelete:false};}
 export async function auditLibrary(){let valid=0;const bad=[];for(const row of rows()){try{const sha=createHash('sha256');let bytes=0;for await(const chunk of createReadStream(blobPath(row))){sha.update(chunk);bytes+=chunk.length;}if(bytes!==row.bytes||sha.digest('hex')!==row.sha256)throw Error();valid++;}catch{bad.push(row.mediaId);}}return {ok:!bad.length,verified:valid,failedIds:bad};}
 export function mediaRefComplaints(entry){const all=rows(),bad=[];for(const m of entry.media||[])for(const [id,cover] of [[m.mediaId,false],[m.coverMediaId,true]]){if(!id)continue;const row=all.find(r=>r.mediaId===id);if(!row||row.material!==entry.material||row.role==='original')bad.push('готовность: в медиатеке нет доступной публикационной версии этого материала');else if((cover||m.type==='image')&&!row.mime.startsWith('image/')||(!cover&&m.type==='video'&&!row.mime.startsWith('video/')))bad.push('готовность: тип файла медиатеки не соответствует вложению');}return bad;}
