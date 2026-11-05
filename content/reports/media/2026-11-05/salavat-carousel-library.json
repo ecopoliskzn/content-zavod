@@ -1,0 +1,43 @@
+{
+  "material": "case:salavat-kupere-2026-10",
+  "order": [
+    4,
+    3,
+    2,
+    1
+  ],
+  "media": [
+    {
+      "type": "image",
+      "mediaId": "med_53c9656de8414f3a98cd27fadd71743e",
+      "photo": 4,
+      "parent": "med_9a107fb28cb24f5a87bd32391b211e85",
+      "sourceFile": "C:/Users/ecopolis/Documents/Codex/2026-10-13/new-chat/outputs/salavat-kupere-2026-11-05/carousel/upload-ready-text/01.png",
+      "public": false
+    },
+    {
+      "type": "image",
+      "mediaId": "med_42bacf5efb8e475e84807657cb0041e9",
+      "photo": 3,
+      "parent": "med_daf56f4a63f041ccbb982cf2d31c5541",
+      "sourceFile": "C:/Users/ecopolis/Documents/Codex/2026-10-13/new-chat/outputs/salavat-kupere-2026-11-05/carousel/upload-ready-text/02.png",
+      "public": false
+    },
+    {
+      "type": "image",
+      "mediaId": "med_9d70ce5704d147299f1ab3f105524305",
+      "photo": 2,
+      "parent": "med_22e2ee7f303249629627fd6954e4c421",
+      "sourceFile": "C:/Users/ecopolis/Documents/Codex/2026-10-13/new-chat/outputs/salavat-kupere-2026-11-05/carousel/upload-ready-text/03.png",
+      "public": false
+    },
+    {
+      "type": "image",
+      "mediaId": "med_5ac6b4993ef148dbb3fb7a8aa6a2e65d",
+      "photo": 1,
+      "parent": "med_a7efc6ae557d4a2184e6aa79925b028b",
+      "sourceFile": "C:/Users/ecopolis/Documents/Codex/2026-10-13/new-chat/outputs/salavat-kupere-2026-11-05/carousel/upload-ready-text/04.png",
+      "public": false
+    }
+  ]
+}
