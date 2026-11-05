@@ -29,7 +29,7 @@ import { isMain } from '../lib/is-main.mjs';
 import { dataDir, dataPath, env } from "../lib/env.mjs";
 import { appendJsonl, latestById, readJson, writeJson } from "../lib/files.mjs";
 import { request, sleep } from "../lib/http.mjs";
-import { ig, igUserId } from "../lib/ig.mjs";
+import { readInstagramComments } from "./instagram.mjs";
 import { h, toGroup } from "../lib/notify.mjs";
 import { idFromLink as rutubeId } from "../channels/rutube.mjs";
 import { rows as ledgerRows } from "../queue/ledger.mjs";
@@ -108,22 +108,7 @@ async function rutube() {
 }
 
 async function instagram() {
-  const uid = igUserId();
-  if (!uid || !env("IG_TOKEN")) return { skipped: "нет IG_TOKEN" };
-  const feed = await ig(`${uid}/media?fields=id,permalink,comments_count,timestamp&limit=10`, { retries: 0 });
-  if (feed.kind !== "ok") return { error: feed.error };
-  const own = env("IG_USERNAME").toLowerCase();
-  const items = [];
-  for (const m of (feed.data?.data || []).filter((x) => Number(x.comments_count) > 0)) {
-    const r = await ig(`${m.id}/comments?fields=id,text,timestamp,username&limit=50`, { retries: 0 });
-    if (r.kind !== "ok") continue;
-    for (const c of r.data?.data || []) {
-      if (!c.text || (own && String(c.username || "").toLowerCase() === own)) continue;
-      items.push({ id: `instagram:${c.id}`, platform: "instagram", at: c.timestamp, text: String(c.text), link: m.permalink, post: m.id });
-    }
-    await sleep(600);
-  }
-  return { items };
+  return readInstagramComments();
 }
 
 async function threads() {
@@ -165,10 +150,10 @@ export async function collect({ dry = false, only = [] } = {}) {
     if (only.length && !only.includes(name)) continue;
     let res;
     try { res = await read(); } catch (e) { res = { error: String(e?.message || e) }; }
+    if (res.coverage) coverage[name] = res.coverage;
     if (res.skipped) { skippedSources.push(name); notes.push(`${TITLE[name]}: ${res.skipped}`); continue; }
     if (res.error) { failed++; notes.push(`${TITLE[name]}: не прочитан (${res.error})`); continue; }
     completedSources.push(name);
-    if (res.coverage) coverage[name] = res.coverage;
     for (const item of res.items || []) {
       if (known.has(item.id)) {
         const old = known.get(item.id);
