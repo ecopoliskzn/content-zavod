@@ -1,0 +1,39 @@
+{
+  "case": "salavat-kupere",
+  "order": [
+    4,
+    3,
+    2,
+    1
+  ],
+  "media": [
+    {
+      "photo": 4,
+      "type": "image",
+      "url": "https://ecopolisgo.ru/media/d0b9988ef63bbea501900f15cf1b81a5a07f232807d93b66f76c8ba4f0bdc913.jpg",
+      "sha256": "d0b9988ef63bbea501900f15cf1b81a5a07f232807d93b66f76c8ba4f0bdc913",
+      "bytes": 200965
+    },
+    {
+      "photo": 3,
+      "type": "image",
+      "url": "https://ecopolisgo.ru/media/3fafdada78c08155c90c8829c3eb91a981217744cfc607ffe3d0b5926fa55d0b.jpg",
+      "sha256": "3fafdada78c08155c90c8829c3eb91a981217744cfc607ffe3d0b5926fa55d0b",
+      "bytes": 218773
+    },
+    {
+      "photo": 2,
+      "type": "image",
+      "url": "https://ecopolisgo.ru/media/ad1eb811f028d25ff2dc4e28e56b5fa5bcb08ca4466e187857d562ed2ce42a3c.jpg",
+      "sha256": "ad1eb811f028d25ff2dc4e28e56b5fa5bcb08ca4466e187857d562ed2ce42a3c",
+      "bytes": 320858
+    },
+    {
+      "photo": 1,
+      "type": "image",
+      "url": "https://ecopolisgo.ru/media/ae307defddcfbe5cb2831c9c4a916db4f2cddbacbc837d1ef7534c970615c339.jpg",
+      "sha256": "ae307defddcfbe5cb2831c9c4a916db4f2cddbacbc837d1ef7534c970615c339",
+      "bytes": 279976
+    }
+  ]
+}
