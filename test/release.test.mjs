@@ -30,7 +30,7 @@ const { _setAdapter } = await import("../src/channels/index.mjs");
 const ledger = await import("../src/queue/ledger.mjs");
 const { dueAt } = await import("../src/lib/time.mjs");
 
-let behaviour = () => ({ ok: true, id: "root-1", link: "https://www.threads.net/@eco/post/1", done: ["root-1", "r-2"] });
+let behaviour = () => ({ ok: true, id: "root-1", link: "https://www.threads.net/@eco/post/1", done: ["root-1", "r-2"],messageIds:['root-1','r-2'],mediaGroupId:'synthetic-group' });
 const calls = [];
 _setAdapter("threads", { name: "threads", publish: async (entry, ctx) => { calls.push({ name: entry.name, verify: ctx.verify }); return behaviour(entry, ctx); } });
 
@@ -85,6 +85,9 @@ test("выпуск: до слота тихо, после слота запись
   const e = store.get(id);
   assert.equal(e.status, "published");
   assert.equal(e.result.link, "https://www.threads.net/@eco/post/1");
+  assert.deepEqual(e.result.messageIds,['root-1','r-2']);
+  assert.deepEqual(ledger.rows().find(r=>r.id===id && r.status==='published').externalIds,['root-1','r-2']);
+  assert.equal(ledger.rows().find(r=>r.id===id && r.status==='published').mediaGroupId,'synthetic-group');
   assert.equal(ledger.rows().filter((r) => r.id === id && r.status === "published").length, 1);
   // повторный проход ту же запись не трогает
   await runOnce({ now: at(6) });

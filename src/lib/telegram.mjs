@@ -62,6 +62,29 @@ export async function tgUpload(method, fields, fileField, file, { timeoutMs = 18
   return { ...res, result: res.data?.result };
 }
 
+/** Альбом: уникальные attach-поля, повтор имени файла допустим. Сетевого повтора нет. */
+export async function tgUploadMany(method, fields, files, { timeoutMs = 180_000 } = {}) {
+  const refuse = error => ({kind:'refused',status:0,error});
+  const t=target(method); if(!t) return refuse('не настроен Telegram');
+  const names=new Set(); let total=0; const body=new FormData();
+  try {
+    for(const [k,v] of Object.entries(fields)) if(v!==undefined && v!==null) body.append(k,typeof v==='string'?v:JSON.stringify(v));
+    for(const {field,file} of files) {
+      if(!/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(field) || names.has(field) || Object.hasOwn(fields,field)) return refuse('неоднозначное имя attach-поля');
+      names.add(field);
+      const bytes=typeof file==='string'?readFileSync(file):file.buffer;
+      total+=bytes.length;
+      if(bytes.length>10*1024*1024 || total>50*1024*1024) return refuse('фото превышает 10 МБ или альбом превышает 50 МБ');
+      body.append(field,new Blob([bytes],{type:'image/jpeg'}),typeof file==='string'?path.basename(file):file.name);
+    }
+    const media=typeof fields.media==='string'?JSON.parse(fields.media):fields.media;
+    const refs=media.map(m=>String(m.media).startsWith('attach://')?String(m.media).slice(9):'');
+    if(refs.length!==names.size || new Set(refs).size!==refs.length || refs.some(r=>!names.has(r))) return refuse('attach-ссылки не соответствуют файлам');
+  } catch { return refuse('не удалось подготовить multipart альбома'); }
+  const res=await request(t.upload,{method:'POST',headers:t.headers,body,timeoutMs,retries:0});
+  return {...res,result:res.data?.result};
+}
+
 export const sendMessage = (chatId, text, extra = {}) =>
   tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", link_preview_options: { is_disabled: true }, ...extra });
 

@@ -34,6 +34,7 @@ import { renderForm, submitForm } from "./leads/form.mjs";
 import { legalReady } from "./leads/legal.mjs";
 import { execute } from "./queue/commands.mjs";
 import { appPage } from "./app-pages.mjs";
+import { publicMedia } from './media/public.mjs';
 
 const send = (res, status, body, headers = {}) => {
   const isObject = typeof body === "object" && body !== null;
@@ -119,6 +120,8 @@ export function createHandler() {
     const url = new URL(req.url, "http://localhost");
     const p = url.pathname;
 
+    const mediaFile=publicMedia(p,req.method);
+    if(mediaFile) {res.writeHead(mediaFile.status,mediaFile.headers);res.end(mediaFile.body);return;}
     if (req.method === "GET" && p === "/health") {
       const beat = readJson(dataPath("heartbeat.json"), {}) || {};
       return send(res, 200, {

@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync,mkdirSync,writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
@@ -35,6 +35,11 @@ const { handle } = await import("../ops/relay/relay.mjs");
 const { judge, renderSchedule } = await import("../src/queue/mirror.mjs");
 const legal = await import("../src/leads/legal.mjs");
 const handler = createHandler();
+test('HTTP-выдача разрешённого фото сохраняет байты и Content-Type',async()=>{
+  const mediaDir=path.join(DATA,'public-media');mkdirSync(mediaDir,{recursive:true});
+  const file='f'.repeat(64)+'.jpg';writeFileSync(path.join(mediaDir,file),'synthetic photo');
+  const response=await call({url:`/media/${file}`});assert.equal(response.status,200);assert.equal(response.body,'synthetic photo');assert.equal(response.headers['content-type'],'image/jpeg');
+});
 // Приём персональных данных в этих проверках открыт; закрытое состояние проверяется отдельно.
 legal._setLegalReady(true);
 

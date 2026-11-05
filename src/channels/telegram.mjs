@@ -21,6 +21,7 @@
 import { env } from "../lib/env.mjs";
 import { request, sleep } from "../lib/http.mjs";
 import { keyboard, tg, tgUpload } from "../lib/telegram.mjs";
+import { publishAlbum } from './telegram-album.mjs';
 
 export const name = "telegram";
 
@@ -78,6 +79,7 @@ async function findPosted(entry) {
 export async function publish(entry, ctx = {}) {
   const chat = channelId();
   if (!chat) return { ok: false, error: "нет TG_CHANNEL", retry: false };
+  if(entry.media?.length>1) return publishAlbum(entry,chat,ctx);
   const buttons = entry.buttons?.length ? keyboard(entry.buttons) : {};
   const media = entry.media?.[0];
   let res;

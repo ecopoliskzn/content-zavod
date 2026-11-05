@@ -257,7 +257,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       if (result.ok) {
         // Промежуточное состояние (номер контейнера, номер сообщения-пакета) сохраняем:
         // по нему ответ со ссылкой находит запись, а повтор не создаёт второе.
-        const res = { ...(current.result || {}), id: result.id || "", link: result.link || current.result?.link || "", ...(result.manual ? { manual: "пакет отправлен, ждёт ручной выкладки" } : {}) };
+        const res = { ...(current.result || {}), id: result.id || "", link: result.link || current.result?.link || "", ...(result.messageIds ? {messageIds:result.messageIds,mediaGroupId:result.mediaGroupId} : {}), ...(result.manual ? { manual: "пакет отправлен, ждёт ручной выкладки" } : {}) };
         const at = new Date(clock()).toISOString();
         if (result.manual) {
           // Пакет ушёл человеку: на площадке ещё ничего нет. «Вышло» поставит кнопка «Выложено».
@@ -266,7 +266,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
           out.handed.push(entry.name);
         } else {
           await transition(current.id, "published", { done: result.done, result: res, publishedAt: at, note: result.note }, "выпуск");
-          record(current, "published", { externalId: res.id, link: res.link, at });
+          record(current, "published", { externalId: res.id, link: res.link, at, ...(res.messageIds ? {externalIds:res.messageIds,mediaGroupId:res.mediaGroupId} : {}) });
           out.published.push(entry.name);
         }
         resolve(`publish:${current.id}`);
