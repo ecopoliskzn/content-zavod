@@ -33,6 +33,6 @@ test('submit: изменение содержимого во время отпр
 });
 test('ручное подтверждение отсутствующей карточки сохраняет уже доставленный альбом',async()=>{
  const old=globalThis.fetch,calls=[];let cardAttempt=0;
- globalThis.fetch=async(url)=>{if(String(url).startsWith('https://example.org'))return new Response('photo');const method=String(url).split('/').pop();calls.push(method);if(method==='sendMessage'&&cardAttempt++===0)throw Error('synthetic disconnect');return Response.json({ok:true,result:method==='sendMediaGroup'?photos(4):{message_id:200,chat:{id:-10042}}});};
+ globalThis.fetch=async(url)=>{if(String(url).startsWith('https://example.org'))return new Response('photo');const method=String(url).split('/').pop();calls.push(method);if(method==='sendMessage'&&cardAttempt++===0)throw Error('synthetic disconnect');return Response.json({ok:true,result:method==='sendMediaGroup'?photos(4):{message_id:220,chat:{id:-10042}}});};
  try{const id=(await put(entry('photo-card-recovery'))).entry.id;await assert.rejects(()=>submit(id));const {execute}=await import('../src/queue/commands.mjs');const no=await execute('preview-reset',{ref:id});assert.equal(no.code,1);const reset=await execute('preview-reset',{ref:id,'confirm-card-absent':true});assert.equal(reset.code,0);await submit(id);assert.equal(calls.filter(x=>x==='sendMediaGroup').length,1);assert.equal(get(id).status,'review');}finally{globalThis.fetch=old;}
 });

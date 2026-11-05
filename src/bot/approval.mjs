@@ -27,7 +27,7 @@
 import { channel as channelCfg } from "../lib/config.mjs";
 import { list } from "../lib/env.mjs";
 import { groupId, h, toGroup } from "../lib/notify.mjs";
-import { answerCallback, editMessageText, keyboard } from "../lib/telegram.mjs";
+import { answerCallback, editMessageText, keyboard,sendMessage } from "../lib/telegram.mjs";
 import { dueAt, human } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
 import { STATUS_TITLE, preview } from "../queue/format.mjs";
@@ -37,6 +37,7 @@ import {previewPhotos} from './approval-photos.mjs';
 import {lock} from '../lib/files.mjs';
 import {dataPath} from '../lib/env.mjs';
 import { stopState } from "../queue/switch.mjs";
+import {randomBytes} from 'node:crypto';
 import { afterChange as syncYoutube } from "../video/schedule.mjs";
 
 /*
@@ -53,8 +54,10 @@ export const approvers = () => list("APPROVER_IDS");
 const isApprover = (userId) => approvers().includes(String(userId));
 const who = (from) => [from?.first_name, from?.last_name].filter(Boolean).join(" ") || from?.username || String(from?.id || "");
 
-const BUTTONS = (id) => [[{ text: "✅ Одобрить", data: `q:ok:${id}` }, { text: "✏️ Правка", data: `q:fix:${id}` }, { text: "🚫 Снять", data: `q:no:${id}` }]];
-const UNDO = (id) => [[{ text: "↩️ Отозвать согласие", data: `q:undo:${id}` }]];
+const newToken=()=>randomBytes(8).toString('hex');
+const data=(e,action)=>`q:${action}:${e.id}:${e.approval.actionToken}`;
+const BUTTONS = e => [[{ text: "✅ Одобрить", data: data(e,'ok') }, { text: "✏️ Правка", data: data(e,'fix') }, { text: "🚫 Снять", data: data(e,'no') }]];
+const UNDO = e => [[{ text: "↩️ Отозвать согласие", data: data(e,'undo') },{text:'🚫 Снять',data:data(e,'no')}]];
 
 /** Текст карточки: содержимое как на площадке плюс всё, что нужно для решения. */
 export function cardText(entry, verdict = { block: [], warn: [] }, footer = "") {
@@ -120,11 +123,12 @@ export async function submit(id, by = "оператор") {
   if(preview&&(get(id)?.contentHash!==submittedHash||preview.hash!==submittedHash))throw new RuleError('материал изменился при отправке фото; нужна новая карточка согласования');
   if(preview&&entry.approval?.cardSending)throw new RuleError('доставка кнопочной карточки неоднозначна; сначала нужна проверка оператором');
   if(preview&&entry.approval?.card?.messageId&&entry.approval?.cardHash===entry.contentHash)return transition(id,'review',{note:undefined},by);
-  if(preview)entry=await patch(id,{approval:{...(entry.approval||{}),cardSending:true}},by);
-  const sent = await toGroup("approval", cardText(entry, verdict), { buttons: BUTTONS(entry.id),...(preview?{retries:0,extra:{reply_parameters:{message_id:Number(preview.messageIds[0])}}}:{}) });
+  entry=await patch(id,{approval:{...(entry.approval||{}),actionToken:newToken(),...(preview?{cardSending:true}:{})}},by);
+  const sent = await toGroup("approval", cardText(entry, verdict), { buttons: BUTTONS(entry),retries:0,...(preview?{extra:{reply_parameters:{message_id:Number(preview.messageIds[0])}}}:{}) });
   if (!sent.ok) throw Object.assign(new Error(`карточка не ушла в группу: ${sent.error}`), { code: "ENV" });
-  if(preview&&(!Number.isSafeInteger(sent.messageId)||sent.messageId<=0))throw Object.assign(new Error('Telegram не подтвердил ID кнопочной карточки; повтор требует проверки'),{code:'ENV'});
-  if(preview&&get(id)?.contentHash!==submittedHash){await retireCard({...entry,approval:{card:{messageId:sent.messageId}}});throw new RuleError('материал изменился при отправке карточки; старые кнопки сняты');}
+  if(!Number.isSafeInteger(sent.messageId)||sent.messageId<=0)throw Object.assign(new Error('Telegram не подтвердил ID кнопочной карточки; повтор требует проверки'),{code:'ENV'});
+  if(all().some(e=>e.id!==id&&e.approval?.card?.messageId===sent.messageId))throw Object.assign(new Error('ID карточки уже принадлежит другой записи; требуется проверка'),{code:'ENV'});
+  if(get(id)?.contentHash!==submittedHash){await retireCard({...entry,approval:{card:{messageId:sent.messageId}}});throw new RuleError('материал изменился при отправке карточки; старые кнопки сняты');}
   const approval={...(entry.approval||{}),card:{messageId:sent.messageId},cardHash:entry.contentHash,cardSending:false,sentAt:new Date().toISOString()};
   if(preview)await patch(id,{approval},by);
   return transition(entry.id, "review", { approval, note: undefined, nudged: false, fixAsked: undefined }, by);
@@ -137,7 +141,8 @@ async function redraw(entry, footer, buttons) {
   const res = await editMessageText(groupId(), messageId, cardText(entry, check(entry), footer).slice(0, 4000), buttons ? keyboard(buttons) : { reply_markup: { inline_keyboard: [] } });
   // Длинная ветка уходила несколькими сообщениями: кнопки висят на последнем, правим только его шапку.
   if (res.kind !== "ok" && !/message is not modified/i.test(res.error || "")) {
-    await editMessageText(groupId(), messageId, footer || "Карточка обновлена.", buttons ? keyboard(buttons) : { reply_markup: { inline_keyboard: [] } });
+    const retry=await editMessageText(groupId(), messageId, footer || "Карточка обновлена.", buttons ? keyboard(buttons) : { reply_markup: { inline_keyboard: [] } });
+    if(retry.kind!=='ok'&&!/message is not modified/i.test(retry.error||''))throw Object.assign(new Error('кнопки карточки не обновились; выполните queue refresh-card для этой записи'),{code:'ENV'});
   }
 }
 
@@ -152,18 +157,33 @@ export async function retireCard(before) {
   await redraw(before, "✏️ Текст записи изменён: эта карточка больше не действует. Новая придёт следом в эту тему.", null).catch((e) => console.error("[approval] прежняя карточка не обновилась:", e?.message || e));
 }
 
+/** Обновить только конкретную существующую карточку, не менять согласие или статус. */
+export async function refreshCard(id,by='оператор'){
+  const unlock=lock(dataPath('approval-actions',`${id}.lock`),120000);if(!unlock)throw new RuleError('эта карточка уже обрабатывается');
+  try{
+    const entry=get(id);if(!entry||!['review','approved'].includes(entry.status)||!entry.approval?.card?.messageId)throw new RuleError('обновляется существующая карточка ожидающей или одобренной записи');
+    if(all().some(e=>e.id!==id&&e.approval?.card?.messageId===entry.approval.card.messageId))throw new RuleError('ID карточки неоднозначен; обновление остановлено');
+    const current=await patch(id,{approval:{...entry.approval,actionToken:newToken(),cardHash:entry.contentHash}},by,{contentHash:entry.contentHash,card:entry.approval.card.messageId});
+    await redraw(current,current.status==='approved'?'Согласие сохранено. Отозвать согласие или снять можно только эту запись.':'Решение применяется только к этой записи. Используйте кнопки ниже.',current.status==='approved'?UNDO(current):BUTTONS(current));
+    return current;
+  }finally{unlock();}
+}
+
 /**
  * Нажатие кнопки под карточкой. Возвращает true, если нажатие наше (q:…).
  * @param {{ id: string, data: string, from: object, message?: object }} cb
  */
 export async function handleCallback(cb) {
-  const m = String(cb.data || "").match(/^q:(ok|fix|no|undo|next):([0-9a-f]{16})$/);
-  if (!m) return false;
-  const [, action, id] = m;
+  const m = String(cb.data || "").match(/^q:(ok|fix|no|undo|next):([0-9a-f]{16})(?::([0-9a-f]{16}))?$/);
+  if (!m){if(String(cb.data||'').startsWith('q:')){await answerCallback(cb.id,'Кнопка не распознана: решение не применено.',true);return true;}return false;}
+  const [, action, id, token] = m;
   if (!isApprover(cb.from?.id)) {
     await answerCallback(cb.id, "Согласует ответственный со стороны компании. Если это вы, попросите оператора добавить ваш номер.", true);
     return true;
   }
+  const unlock=lock(dataPath('approval-actions',`${id}.lock`),120000);
+  if(!unlock){await answerCallback(cb.id,'Эта карточка уже обрабатывается. Дождитесь обновления.',true);return true;}
+  try{
   const entry = get(id);
   if (!entry) { await answerCallback(cb.id, "Этой записи уже нет в очереди.", true); return true; }
   const name = who(cb.from);
@@ -172,14 +192,21 @@ export async function handleCallback(cb) {
   /* «Да» относится к тексту, который человек видит над кнопкой. Запись могли поправить и
      отправить заново: в теме тогда две карточки, и под первой висит прежний текст. Нажатие
      «Одобрить» под ней одобрило бы текст, которого утверждающий не читал. Поэтому решение
-     о тексте принимается только под текущей карточкой записи. «Снять» и «Отозвать» это
-     правило не трогает: они ничего не выпускают, а «Снять» стоит ещё и под тревогами. */
+     о тексте принимается только под текущей карточкой записи. Отзыв и снятие тоже
+     привязаны к версии и сообщению; у тревоги отдельная подтверждённая привязка. */
   const pressed = Number(cb.message?.message_id) || 0;
   const card = Number(entry.approval?.card?.messageId) || 0;
-  if ((action === "ok" || action === "fix") && pressed && card && pressed !== card) {
-    await answerCallback(cb.id, "Эта карточка устарела: текст записи с тех пор изменили. Решение принимается под новой карточкой, она ниже в этой теме.", true);
+  const ownGroup=String(cb.message?.chat?.id)===String(groupId());
+  const bound=pressed&&pressed===card&&(!entry.approval?.cardHash||entry.approval.cardHash===entry.contentHash)&&
+    (entry.approval?.actionToken?token===entry.approval.actionToken:!token);
+  const recovery=entry.recoveryCard;
+  const alarm=['no','next'].includes(action)&&['failed','expired'].includes(entry.status)&&pressed&&pressed===Number(recovery?.messageId)&&token===recovery?.token&&recovery?.hash===entry.contentHash;
+  const ambiguous=pressed&&all().some(e=>e.id!==id&&e.approval?.card?.messageId===pressed);
+  if (!ownGroup||ambiguous||(!bound&&!alarm)) {
+    await answerCallback(cb.id, "Эта карточка устарела или не относится к выбранной записи. Решение не применено; используйте текущую карточку в рабочей группе.", true);
     return true;
   }
+  const expected={contentHash:entry.contentHash,...(entry.approval?.actionToken?{actionToken:entry.approval.actionToken}:{}),...(bound?{card:entry.approval.card.messageId}:{})};
 
   try {
     if (action === "ok") {
@@ -189,9 +216,9 @@ export async function handleCallback(cb) {
       let moved = "";
       if (entry.kind !== "reply" && dueAt(entry) < Date.now() + 15 * 60_000) {
         const slot = slotFor(entry, all(), channelCfg(entry.channel));
-        if (slot) { await reschedule(entry.id, slot.date, slot.time, actor); moved = " Прежний слот прошёл, поставил в ближайший свободный."; }
+        if (slot) { await reschedule(entry.id, slot.date, slot.time, actor,expected); moved = " Прежний слот прошёл, поставил в ближайший свободный."; }
       }
-      const approved = await transition(entry.id, "approved", { approval: { ...(entry.approval || {}), by: cb.from.id, name, at: new Date().toISOString() }, fixAsked: undefined }, actor);
+      const approved = await transition(entry.id, "approved", { approval: { ...(entry.approval || {}),actionToken:newToken(), by: cb.from.id, name, at: new Date().toISOString() }, fixAsked: undefined }, actor,expected);
       await answerCallback(cb.id, "Одобрено.");
       // Ролик, загруженный до «да», лежит на YouTube без срока: срок ставится сейчас.
       const yt = await syncYoutube(entry.id);
@@ -201,14 +228,14 @@ export async function handleCallback(cb) {
       const said = wait
         ? `✅ Одобрил(а) ${h(name)}.${wait}`
         : entry.kind === "reply" ? `✅ Одобрил(а) ${h(name)}. Текст ответа придёт в тему «Выложить руками» в течение пяти минут.` : `✅ Одобрил(а) ${h(name)}. Выйдет ${human(approved)}.${moved}`;
-      await redraw(approved, `${said}${entry.kind === "reply" ? "" : tail}`, UNDO(entry.id));
+      await redraw(approved, `${said}${entry.kind === "reply" ? "" : tail}`, UNDO(approved));
     } else if (action === "fix") {
       if (!["review", "approved"].includes(entry.status)) { await answerCallback(cb.id, `Запись сейчас «${STATUS_TITLE[entry.status]}».`, true); return true; }
-      await patch(entry.id, { fixAsked: { by: cb.from.id, name, at: new Date().toISOString() } }, actor);
+      await patch(entry.id, { fixAsked: { by: cb.from.id, name, at: new Date().toISOString() } }, actor,expected);
       await answerCallback(cb.id, "Ответьте на эту карточку сообщением: что поправить.", true);
     } else if (action === "no") {
       if (["published", "cancelled", "running"].includes(entry.status)) { await answerCallback(cb.id, `Запись уже «${STATUS_TITLE[entry.status]}».`, true); return true; }
-      const cancelled = await transition(entry.id, "cancelled", { note: `снял(а) ${name}` }, actor);
+      const cancelled = await transition(entry.id, "cancelled", { note: `снял(а) ${name}` }, actor,expected);
       await answerCallback(cb.id, "Снято.");
       // «Не выйдет» про ролик с датой выхода говорится только по ответу YouTube.
       const yt = await syncYoutube(entry.id);
@@ -219,16 +246,18 @@ export async function handleCallback(cb) {
       await redraw(cancelled, `🚫 Снял(а) ${h(name)}.${said ? ` ${said}` : ""}${lag}`, null);
     } else if (action === "undo") {
       if (entry.status !== "approved") { await answerCallback(cb.id, `Отозвать уже нельзя: запись «${STATUS_TITLE[entry.status]}».`, true); return true; }
-      const back = await transition(entry.id, "review", { approval: { card: entry.approval?.card }, note: `согласие отозвал(а) ${name}` }, actor);
+      const back = await transition(entry.id, "review", { approval: {...entry.approval,by:undefined,name:undefined,at:undefined,actionToken:newToken()}, note: `согласие отозвал(а) ${name}` }, actor,expected);
       await answerCallback(cb.id, "Согласие отозвано.");
       const yt = await syncYoutube(entry.id);
       const tail = yt ? `\n${h(yt)}` : "";
-      await redraw(back, `↩️ Согласие отозвал(а) ${h(name)}. Запись снова ждёт решения.${lagNote(true)}${tail}`, BUTTONS(entry.id));
+      await redraw(back, `↩️ Согласие отозвал(а) ${h(name)}. Запись снова ждёт решения.${lagNote(true)}${tail}`, BUTTONS(back));
     } else if (action === "next") {
       if (!["expired", "failed"].includes(entry.status)) { await answerCallback(cb.id, `Запись сейчас «${STATUS_TITLE[entry.status]}».`, true); return true; }
       const slot = slotFor(entry, all(), channelCfg(entry.channel));
       if (!slot) { await answerCallback(cb.id, "Свободных слотов на два месяца вперёд нет.", true); return true; }
-      const moved = await reschedule(entry.id, slot.date, slot.time, actor);
+      const moved = await reschedule(entry.id, slot.date, slot.time, actor,expected);
+      const current=await patch(entry.id,{approval:{...moved.approval,actionToken:newToken()},recoveryCard:undefined},actor,expected);
+      await redraw(current,`Слот перенесён на ${human(current)}.`,UNDO(current));
       await answerCallback(cb.id, `Поставил на ${human(moved)}.`, true);
       await syncYoutube(entry.id);
     }
@@ -237,6 +266,7 @@ export async function handleCallback(cb) {
     if (e.code !== "RULE") console.error("[approval] сбой обработки кнопки", e);
   }
   return true;
+  }finally{unlock();}
 }
 
 /**
@@ -246,19 +276,32 @@ export async function handleCallback(cb) {
 export async function handleReply(message) {
   const replied = message.reply_to_message?.message_id;
   if (!replied || !message.text) return false;
-  const entry = all().find((e) => e.approval?.card?.messageId === replied);
+  if(String(message.chat?.id)!==String(groupId()))return false;
+  if(!isApprover(message.from?.id))return false;
+  const tell=text=>sendMessage(groupId(),text,{...(message.message_thread_id?{message_thread_id:message.message_thread_id}:{}),...(message.message_id?{reply_parameters:{message_id:message.message_id}}:{})});
+  if(/^\s*(?:одобрить|одобряю|одобрено|согласовать|согласовано|да)\s*[.!]?\s*$/iu.test(message.text)){
+    await tell('Текстом согласие не записывается. Нажмите кнопку «Одобрить» под текущей карточкой нужной записи. Старый ответ и другие материалы не меняются.');return true;
+  }
+  const matches=all().filter(e=>e.approval?.card?.messageId===replied);
+  if(matches.length>1){await tell('Карточка неоднозначна: правка не применена. Оператор проверит привязку записей.');return true;}
+  const entry = matches[0];
   if (!entry) return false;
   if (!isApprover(message.from?.id)) return true; // обсуждение под карточкой правкой не считаем
   if (!["review", "approved"].includes(entry.status)) return true;
+  if(!entry.fixAsked){await tell('Для правки нажмите «Правка» под текущей карточкой и затем ответьте на неё. Статус записи не изменён.');return true;}
+  const unlock=lock(dataPath('approval-actions',`${entry.id}.lock`),120000);if(!unlock){await tell('Эта карточка уже обрабатывается. Дождитесь обновления.');return true;}
+  try{
   const name = who(message.from);
   const actor = `tg:${message.from.id}`;
   let current = entry;
-  if (entry.status === "approved") current = await transition(entry.id, "review", { approval: { card: entry.approval?.card } }, actor);
-  const rework = await transition(current.id, "rework", { note: message.text.slice(0, 1500), fixAsked: undefined, reworkBy: name }, actor);
+  const expected={contentHash:entry.contentHash,card:entry.approval.card.messageId,...(entry.approval.actionToken?{actionToken:entry.approval.actionToken}:{})};
+  if (entry.status === "approved") current = await transition(entry.id, "review", { approval: {...entry.approval,by:undefined,name:undefined,at:undefined} }, actor,expected);
+  const rework = await transition(current.id, "rework", { note: message.text.slice(0, 1500), fixAsked: undefined, reworkBy: name }, actor,expected);
   const yt = await syncYoutube(entry.id);
   const tail = yt ? `\n${h(yt)}` : "";
   await redraw(rework, `✏️ На правке. ${h(name)}: «${h(message.text.slice(0, 300))}»\nВернётся новой карточкой.${lagNote(entry.status === "approved")}${tail}`, null);
   return true;
+  }catch(e){if(e.code!=='RULE')throw e;await tell('Карточка изменилась: правка не применена. Используйте текущую карточку.');return true;}finally{unlock();}
 }
 
 /** Что ждёт оператора: записи на правке с текстом замечания. */

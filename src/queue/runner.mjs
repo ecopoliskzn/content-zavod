@@ -31,6 +31,7 @@
 // Запуск руками:  node src/queue/runner.mjs [--dry]
 
 import { fileURLToPath } from "node:url";
+import {randomBytes} from 'node:crypto';
 import { resolveEntryMedia } from '../media/library.mjs';
 import { existsSync, realpathSync } from "node:fs";
 import { config, channel as channelCfg } from "../lib/config.mjs";
@@ -182,9 +183,11 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
         if (!dry) {
           await transition(entry.id, "expired", { note: `просрочена на ${(lateMin / 60).toFixed(1)} ч` }, "выпуск");
           record(entry, "expired");
-          await toGroup("alerts", `⏭ <b>${h(cfg.title)}</b>: «${h(entry.name)}» не вышла, её слот (${human(entry)}) прошёл больше ${rules.lateLimitHours} часов назад.\n«${h(preview(entry))}»`, {
-            buttons: [[{ text: "В ближайший слот", data: `q:next:${entry.id}` }, { text: "Снять", data: `q:no:${entry.id}` }]],
+          const token=randomBytes(8).toString('hex');
+          const alarm=await toGroup("alerts", `⏭ <b>${h(cfg.title)}</b>: «${h(entry.name)}» не вышла, её слот (${human(entry)}) прошёл больше ${rules.lateLimitHours} часов назад.\n«${h(preview(entry))}»`, {
+            buttons: [[{ text: "В ближайший слот", data: `q:next:${entry.id}:${token}` }, { text: "Снять", data: `q:no:${entry.id}:${token}` }]],
           });
+          if(alarm.ok&&alarm.messageId)await patch(entry.id,{recoveryCard:{messageId:alarm.messageId,token,hash:entry.contentHash}},'выпуск');
         }
         continue;
       }
@@ -285,10 +288,12 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       record(current, "failed", { error: result.error });
       out.failed.push(entry.name);
       const part = keep.done?.length ? `\nВышло частей: ${keep.done.length} из ${current.posts?.length ?? 1}${keep.result?.link ? `, начало: ${h(keep.result.link)}` : ""}. Хвост дописывается руками.` : "";
-      await alert(`publish:${current.id}`, `<b>${h(cfg.title)}</b>: «${h(entry.name)}» (${human(entry)}) не вышла с ${attempts + 1} попыток.\n${h(result.error || "причина не названа")}${part}`, {
+      const token=randomBytes(8).toString('hex');
+      const alarm=await alert(`publish:${current.id}`, `<b>${h(cfg.title)}</b>: «${h(entry.name)}» (${human(entry)}) не вышла с ${attempts + 1} попыток.\n${h(result.error || "причина не названа")}${part}`, {
         action: "передайте оператору это сообщение; после починки кнопка вернёт запись в очередь",
-        buttons: [[{ text: "Вернуть в ближайший слот", data: `q:next:${current.id}` }, { text: "Снять", data: `q:no:${current.id}` }]],
+        buttons: [[{ text: "Вернуть в ближайший слот", data: `q:next:${current.id}:${token}` }, { text: "Снять", data: `q:no:${current.id}:${token}` }]],
       });
+      if(alarm.ok&&alarm.messageId)await patch(current.id,{recoveryCard:{messageId:alarm.messageId,token,hash:current.contentHash}},'выпуск');
     }
 
     if (!dry) {

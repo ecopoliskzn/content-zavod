@@ -8,6 +8,7 @@
 //   npm run queue -- check <номер|имя>        проверки: 0 пройдены · 1 претензии · 2 поломка
 //   npm run queue -- submit [<номер|имя>]     на согласование в группу; без номера — все черновики
 //   npm run queue -- inbox                    правки от утверждающего
+//   npm run queue -- refresh-card <id>         restore one card without changing approval
 //   npm run queue -- move <номер|имя> --date=2026-10-16 --time=19:00 | --next
 //   npm run queue -- cancel <номер|имя> [--reason=…]
 //   npm run queue -- slots [--channel=threads] [--count=5]

@@ -97,7 +97,7 @@ export const withFlags = async (flags, fn) => {
   process.argv.push(...add);
   try { return await fn(); } finally { for (const a of add) process.argv.splice(process.argv.indexOf(a), 1); }
 };
-export const press = (data, messageId) => approval.handleCallback({ id: "cb", data, from: { id: 42, first_name: "Анна" }, ...(messageId ? { message: { message_id: messageId, chat: { id: -1001 } } } : {}) });
+export const press = (data, messageId) => {const e=store.get(data.split(':')[2]),token=e?.approval?.actionToken;return approval.handleCallback({ id:'cb',data:token?data+':'+token:data,from:{id:42,first_name:'Анна'},message:{message_id:messageId||e?.approval?.card?.messageId,chat:{id:-1001}}});};
 export const command = (text) => staff.handleCommand({ text, chat: { id: -1001 }, from: { id: 42, first_name: "Анна" } });
 export const thread = (name, date, time, posts) => ({ channel: "threads", kind: "thread", name, material: "blog:primer", date, time, posts: posts || [`«${name}»: подрядчик в Казани сдал площадку, а через год она крошится.`, "Причина нашлась в акте: толщину никто не мерил."] });
 /** Поставить, отправить на согласование и одобрить: запись стоит в расписании. */

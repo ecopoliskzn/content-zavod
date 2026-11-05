@@ -83,20 +83,25 @@ export async function put(raw, by) {
 }
 
 /** Перевести запись в новый статус. patch — что дописать (ссылка, причина, кто одобрил). */
-export async function transition(id, to, patch = {}, by) {
+function expectEntry(was,expected={}){
+  if(expected.contentHash&&was.contentHash!==expected.contentHash||expected.actionToken&&was.approval?.actionToken!==expected.actionToken||expected.card&&was.approval?.card?.messageId!==expected.card)throw new RuleError('карточка устарела: решение не применено');
+}
+export async function transition(id, to, patch = {}, by, expected = {}) {
   return withLock(() => {
     const was = get(id);
     if (!was) throw new RuleError(`записи ${id} нет в очереди`);
+    expectEntry(was,expected);
     if (!canMove(was.status, to)) throw new RuleError(`переход «${was.status} → ${to}» запрещён`);
     return write({ ...was, ...patch, status: to }, by);
   });
 }
 
 /** Дописать поля без смены статуса (номера вышедших реплик, карточка согласования). */
-export async function patch(id, fields, by) {
+export async function patch(id, fields, by, expected = {}) {
   return withLock(() => {
     const was = get(id);
     if (!was) throw new RuleError(`записи ${id} нет в очереди`);
+    expectEntry(was,expected);
     return write({ ...was, ...fields, status: was.status }, by);
   });
 }
@@ -147,10 +152,11 @@ export async function forceHeld(id, fields = {}, by) {
 }
 
 /** Переставить слот. Содержимое не меняется, поэтому согласование сохраняется. */
-export async function reschedule(id, date, time, by) {
+export async function reschedule(id, date, time, by, expected = {}) {
   return withLock(() => {
     const was = get(id);
     if (!was) throw new RuleError(`записи ${id} нет в очереди`);
+    expectEntry(was,expected);
     if (["running", "handed"].includes(was.status) || isFinal(was.status)) throw new RuleError(`запись в статусе «${was.status}», слот не переставляется`);
     const next = { ...was, date, time };
     const bad = validate(normalize(next)).filter((b) => b.startsWith("дата"));

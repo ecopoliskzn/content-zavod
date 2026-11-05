@@ -40,7 +40,7 @@ const thread = (name, over = {}) => ({
   channel: "threads", kind: "thread", name, material: "blog:primer", ...SLOT,
   posts: [`«${name}»: подрядчик в Казани сдал площадку, а через год она крошится.`, "Причина нашлась в акте: толщину никто не мерил."], ...over,
 });
-const press = (data, from = 42) => handleCallback({ id: "cb", data, from: { id: from, first_name: "Анна" } });
+const press = (data, from = 42) => {const e=store.get(data.split(':')[2]),token=e?.approval?.actionToken;return handleCallback({ id: "cb", data:token?data+':'+token:data, from: { id: from, first_name: "Анна" },message:{message_id:e?.approval?.card?.messageId,chat:{id:-1001}} });};
 
 test("на согласование уходит только то, что прошло проверки", async () => {
   const { entry } = await store.put(thread("s-zaglushkoj", { posts: ["Покрытие в Казани служит [здесь срок] лет", "хвост"] }), "S1");
@@ -110,7 +110,7 @@ test("правка: ответ на карточку возвращает зап
   const { entry } = await store.put(thread("na-pravku"), "S1");
   const review = await submit(entry.id);
   await press(`q:fix:${entry.id}`);
-  const handled = await handleReply({ text: "Уберите слово «крошится», клиент обидится", from: { id: 42, first_name: "Анна" }, reply_to_message: { message_id: review.approval.card.messageId } });
+  const handled = await handleReply({ text: "Уберите слово «крошится», клиент обидится",chat:{id:-1001}, from: { id: 42, first_name: "Анна" }, reply_to_message: { message_id: review.approval.card.messageId } });
   assert.equal(handled, true);
   assert.equal(store.get(entry.id).status, "rework");
   assert.match(inbox().find((x) => x.id === entry.id).note, /обидится/);
@@ -423,7 +423,7 @@ test("«Одобрить» под устаревшей карточкой не �
   const newCard = second.approval.card.messageId;
   assert.notEqual(newCard, oldCard);
 
-  const tap = (data, messageId) => handleCallback({ id: "cb", data, from: { id: 42, first_name: "Анна" }, message: { message_id: messageId, chat: { id: -1001 } } });
+  const tap = (data, messageId) => {const token=store.get(data.split(':')[2])?.approval?.actionToken;return handleCallback({ id: "cb", data:token?data+':'+token:data, from: { id: 42, first_name: "Анна" }, message: { message_id: messageId, chat: { id: -1001 } } });};
   sent.length = 0;
   await tap(`q:ok:${entry.id}`, oldCard);
   assert.equal(store.get(entry.id).status, "review", "нажатие под первой карточкой согласием не стало");
@@ -433,7 +433,9 @@ test("«Одобрить» под устаревшей карточкой не �
   // Под текущей карточкой решение принимается как обычно.
   await tap(`q:ok:${entry.id}`, newCard);
   assert.equal(store.get(entry.id).status, "approved");
-  // «Снять» работает из любого сообщения: оно ничего не выпускает и стоит под тревогами.
+  // Старая карточка не снимает новую версию; актуальная кнопка снимает только её.
   await tap(`q:no:${entry.id}`, oldCard);
+  assert.equal(store.get(entry.id).status, "approved");
+  await tap(`q:no:${entry.id}`, newCard);
   assert.equal(store.get(entry.id).status, "cancelled");
 });

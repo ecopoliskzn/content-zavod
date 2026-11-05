@@ -13,7 +13,7 @@ import { readJson, writeJson } from "../lib/files.mjs";
 import { alert, h, report, resolve as resolveAlert } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskTime } from "../lib/time.mjs";
 import { check } from "../gates/index.mjs";
-import { inbox, retireCard, submit } from "../bot/approval.mjs";
+import { inbox, retireCard, submit,refreshCard } from "../bot/approval.mjs";
 import { afterChange as syncYoutube, sayAll, staleOnYoutube, syncAll } from "../video/schedule.mjs";
 import { STATUS_TITLE, freshness, normalize, preview, validate } from "./format.mjs";
 import { record, rows as ledgerRows } from "./ledger.mjs";
@@ -181,6 +181,9 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         if (!items.length) lines.push("правок от утверждающего нет");
         for (const i of items) lines.push(`${i.id} ${i.channel} ${i.name}\n  ${i.by ? i.by + ": " : ""}${i.note}\n  было: ${i.preview}`);
         return { code: 0, lines, data: items };
+      }
+      case 'refresh-card':{
+        const e=find(args.ref,args.channel);await refreshCard(e.id,actor);return {code:0,lines:[`карточка ${e.id} обновлена; статус и согласие сохранены`]};
       }
       case "move": {
         const e = find(args.ref, args.channel);
