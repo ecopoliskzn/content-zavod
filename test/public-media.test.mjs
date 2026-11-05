@@ -1,11 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import path from 'node:path';
 process.env.DATA_DIR=mkdtempSync(path.join(tmpdir(),'public-media-'));
 process.env.ZAVOD_ENV_FILE=path.join(process.env.DATA_DIR,'absent.env');
 const {publicMedia}=await import('../src/media/public.mjs');
+test('внешний веб-маршрут передаёт media приложению, сохраняя закрытый маршрут по умолчанию',()=>{
+  const config=readFileSync(new URL('../ops/nginx/zavod.conf',import.meta.url),'utf8');
+  assert.match(config,/location \/media\/\s*\{\s*proxy_pass http:\/\/127\.0\.0\.1:3100;/);
+  assert.match(config,/location \/\s*\{ return 404;/);
+});
 test('публичная выдача: только отдельный каталог и точные имена по хешу, без backup/списка файлов',()=>{
   const root=path.join(process.env.DATA_DIR,'public-media');mkdirSync(root);
   const name='a'.repeat(64)+'.jpg';writeFileSync(path.join(root,name),'synthetic bytes');
