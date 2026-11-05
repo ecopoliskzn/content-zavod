@@ -9,6 +9,7 @@ import { readJson } from "../lib/files.mjs";
 import { legalReady } from "../leads/legal.mjs";
 import { all } from "../queue/store.mjs";
 import { checkAll, opener, partsOf } from "./rules.mjs";
+import {mediaRefComplaints} from '../media/library.mjs';
 
 const STAMPS = path.join(PROJECT_ROOT, "src", "gates", "stamps.json");
 const SCENARIOS = path.join(PROJECT_ROOT, "bot", "scenarios");
@@ -53,7 +54,7 @@ export function recentOpeners(channel, now = Date.now()) {
  */
 export function check(entry, now = Date.now()) {
   const links = readJson(LINKS, {}) || {};
-  return checkAll(entry, {
+  const verdict=checkAll(entry, {
     stamps: readJson(STAMPS, { phrases: [] })?.phrases || [],
     recentOpeners: recentOpeners(entry.channel, now),
     codeWords: codeWords(),
@@ -67,4 +68,6 @@ export function check(entry, now = Date.now()) {
     // форму не идёт ни на согласование, ни в выпуск: человек пришёл бы к отказу.
     legal: legalReady(),
   });
+  verdict.block.push(...mediaRefComplaints(entry));
+  return verdict;
 }

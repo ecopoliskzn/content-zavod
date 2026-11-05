@@ -29,7 +29,7 @@ export async function request(url, opts = {}) {
       try { data = text ? JSON.parse(text) : null; } catch { /* не JSON — оставляем текст */ }
       const apiError = data && typeof data === "object" && (data.error || data.ok === false);
       if (res.ok && !apiError) return { kind: "ok", status: res.status, data, text, error: "" };
-      const message = describe(data) || text.slice(0, 300) || `HTTP ${res.status}`;
+      const message = (describe(data) || text.slice(0, 300) || `HTTP ${res.status}`).replace(/X-Amz-(?:Credential|Signature|Security-Token)=[^&\s"'<>]+/gi,'X-Amz-[hidden]');
       // 5xx и 429 — временное: повторяем, ключ не виноват.
       const temporary = res.status >= 500 || res.status === 429;
       last = { kind: temporary ? "network" : "refused", status: res.status, data, text, error: message };

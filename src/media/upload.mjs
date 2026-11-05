@@ -21,7 +21,8 @@
 // Ключи хранилища на сервер не нужны вовсе: они лежат только на компьютере оператора.
 
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import {probeVideo} from './probe.mjs';
+export {probeVideo} from './probe.mjs';
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -40,20 +41,6 @@ export const LIMITS = {
 };
 
 /** Сведения о ролике через ffprobe, если он установлен. Нет ffprobe — null, это не ошибка. */
-export function probeVideo(file) {
-  const r = spawnSync("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height,codec_name,pix_fmt,color_transfer:stream_side_data=rotation:format=duration", "-of", "json", file], { encoding: "utf8" });
-  if (r.error || r.status !== 0) return null;
-  try {
-    const data = JSON.parse(r.stdout);
-    const s = data.streams?.[0] || {};
-    const rotation = Math.abs(Number(s.side_data_list?.find((d) => d.rotation !== undefined)?.rotation || 0));
-    // Телефон пишет 1920×1080 с пометкой поворота: настоящая ширина — меньшая сторона.
-    const [width, height] = rotation === 90 || rotation === 270 ? [s.height, s.width] : [s.width, s.height];
-    return { width, height, codec: s.codec_name || "", seconds: Number(data.format?.duration) || 0, hdr: /smpte2084|arib-std-b67/.test(s.color_transfer || "") };
-  } catch {
-    return null;
-  }
-}
 
 /** Претензии к файлу под конкретную площадку. Чистая функция: сведения на вход. */
 export function complaints(target, { ext, sizeMb, video }) {
@@ -119,6 +106,16 @@ export async function uploadFile(file, { key, target } = {}) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  // Новые файлы по умолчанию идут в закрытую медиатеку. Старый прямой публичный
+  // загрузчик остаётся только под явным флагом для ранее согласованных операций.
+  if(!process.argv.includes('--legacy-public')) {
+    const fileArg=process.argv.find(a=>a.startsWith('--file='));
+    if(fileArg&&!process.argv.some(a=>a.startsWith('--import=')))process.argv.push('--import='+fileArg.slice(7));
+  }
+  const libraryMode=process.argv.some(a=>/^--(?:import|material|role|parent|variant|server|sync|restore|adopt-public)=/.test(a)||['--status','--list','--audit'].includes(a));
+  if(libraryMode) {
+    process.exitCode=await (await import('./library-cli.mjs')).libraryCli();
+  } else {
   const opt = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || "").slice(name.length + 3);
   const file = opt("file");
   if (!file) {
@@ -139,5 +136,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       console.error(`✗ ${e?.message || e}`);
       process.exitCode = e?.code === "ENV" ? 2 : 1;
     }
+  }
   }
 }

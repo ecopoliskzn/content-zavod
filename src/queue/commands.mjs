@@ -18,7 +18,7 @@ import { afterChange as syncYoutube, sayAll, staleOnYoutube, syncAll } from "../
 import { STATUS_TITLE, freshness, normalize, preview, validate } from "./format.mjs";
 import { record, rows as ledgerRows } from "./ledger.mjs";
 import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
-import { all, forceFromCopy, forceHanded, forceHeld, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
+import { RuleError, all, forceFromCopy, forceHanded, forceHeld, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
 import { ADOPTED_STOP, clearHold, clearRestored, clearStop, isHeld, isRestored, isTakeover, runnerBusy, setRestored, setStop, stopState } from "./switch.mjs";
 
 const byDue = (a, b) => dueAt(a) - dueAt(b);
@@ -208,6 +208,14 @@ export async function execute(cmd, args = {}, actor = "оператор") {
         const yt = await syncYoutube(done.id);
         if (yt) lines.push(yt);
         return { code: 0, lines };
+      }
+      case 'preview-reset': {
+        const e=find(args.ref,args.channel);
+        if(!['draft','rework'].includes(e.status))throw new RuleError('восстановление превью разрешено только у черновика или правки');
+        if(args['confirm-card-absent']!==true && args['confirm-all-absent']!==true)throw new RuleError('сначала вручную проверьте группу; нужны --confirm-card-absent или --confirm-all-absent');
+        const approval=args['confirm-all-absent']===true?undefined:{...(e.approval||{}),card:undefined,cardSending:false,cardHash:undefined};
+        await patch(e.id,{approval,note:'оператор вручную подтвердил отсутствие доставки; автоматического повтора не было'},actor);
+        return {code:0,lines:['Отметка сброшена после подтверждения оператора. Отправка не запускалась; используйте submit.']};
       }
       case "extra": {
         // Служебные поля записи (номер ролика на YouTube, номер загрузки). Содержимое,

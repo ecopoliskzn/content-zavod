@@ -12,7 +12,7 @@ function captionLength(text) {
   // сам синтаксис HTML; отказ не меняет исходный текст и не снимает проверки.
   return [...String(text).replace(/<[^>]*>/g,'').replace(/&(?:amp|lt|gt|quot);/g,'x').replace(/&#(?:\d+|x[\da-f]+);/gi,'x')].length;
 }
-async function photoBytes(url) {
+export async function photoBytes(url) {
   if(url.startsWith('local:')) {
     const root=realpathSync(dataPath('media'));
     const file=realpathSync(path.resolve(root,url.slice(6)));
@@ -33,7 +33,7 @@ export async function publishAlbum(entry,chat,ctx={}) {
   if(count<2||count>10||entry.media.some(m=>!['image','photo'].includes(m.type))) return fail('альбом Telegram: требуется от 2 до 10 фотографий');
   if(entry.buttons?.length) return fail('кнопки не поддерживаются sendMediaGroup; согласуйте запись без кнопок');
   if(captionLength(entry.text)>1024) return fail('подпись альбома превышает 1024 знака после разбора разметки');
-  const hash=createHash('sha256').update(JSON.stringify([entry.text,entry.media])).digest('hex');
+  const hash=createHash('sha256').update(JSON.stringify([entry.text,entry.media.map(m=>m.mediaId?{type:m.type,mediaId:m.mediaId,coverMediaId:m.coverMediaId||null}:m)])).digest('hex');
   const previous=entry.result || {};
   if(previous.tgAlbumComplete && previous.tgAlbumHash===hash && previous.messageIds?.length===count && new Set(previous.messageIds).size===count && previous.mediaGroupId) {
     return {ok:true,id:previous.messageIds[0],messageIds:previous.messageIds,mediaGroupId:previous.mediaGroupId,link:previous.link || '',note:'полный ответ альбома сохранён прошлой попыткой'};

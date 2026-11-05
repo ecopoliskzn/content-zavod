@@ -89,6 +89,13 @@ export const REGISTRY = [
   { name: "RUTUBE_CATEGORY", where: ["server"], secret: false, need: "optional", what: "номер категории ролика: 67 «Бизнес и предпринимательство» (по умолчанию), 17 «Обучение», 13 «Разное»" },
 
   // ── Хранилище файлов ─────────────────────────────────────────────────────
+  {name:'MEDIA_S3_ENDPOINT',where:['server'],secret:false,need:'optional',what:'закрытый S3 медиатеки, отдельный от backup'},
+  {name:'MEDIA_S3_BUCKET',where:['server'],secret:false,need:'optional',what:'приватный бакет оригиналов и публикационных версий'},
+  {name:'MEDIA_S3_REGION',where:['server'],secret:false,need:'optional',what:'регион медиатеки из кабинета провайдера'},
+  {name:'MEDIA_S3_ACCESS_KEY',where:['server'],secret:true,need:'optional',what:'ключ только приватной медиатеки'},
+  {name:'MEDIA_S3_SECRET_KEY',where:['server'],secret:true,need:'optional',what:'секрет только приватной медиатеки'},
+  {name:'MEDIA_LOCAL_MAX_BYTES',where:['server'],secret:false,need:'optional',what:'квота локальных оригиналов, по умолчанию 512 МБ'},
+  {name:'MEDIA_SSH_TARGET',where:['operator'],secret:false,need:'optional',what:'SSH-адрес единственного сервера медиатеки'},
   { name: "S3_ENDPOINT", where: ["operator"], secret: false, need: "channel:instagram", what: "адрес объектного хранилища: https://s3.twcstorage.ru или https://storage.yandexcloud.net" },
   { name: "S3_BUCKET", where: ["operator"], secret: false, need: "channel:instagram", what: "имя бакета с публичным чтением" },
   { name: "S3_REGION", where: ["operator"], secret: false, need: "optional", what: "регион: ru-1 у Timeweb, ru-central1 у Яндекса" },

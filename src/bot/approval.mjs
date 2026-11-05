@@ -33,6 +33,9 @@ import { check } from "../gates/index.mjs";
 import { STATUS_TITLE, preview } from "../queue/format.mjs";
 import { slotFor } from "../queue/slots.mjs";
 import { RuleError, all, get, patch, reschedule, transition } from "../queue/store.mjs";
+import {previewPhotos} from './approval-photos.mjs';
+import {lock} from '../lib/files.mjs';
+import {dataPath} from '../lib/env.mjs';
 import { stopState } from "../queue/switch.mjs";
 import { afterChange as syncYoutube } from "../video/schedule.mjs";
 
@@ -69,7 +72,8 @@ export function cardText(entry, verdict = { block: [], warn: [] }, footer = "") 
     // Разметку поста не экранируем наполовину: показываем текст как есть, без тегов.
     rows.push(h(String(entry.text || "").replace(/<[^>]+>/g, "")), "");
   }
-  for (const m of entry.media || []) rows.push(`${m.type === "video" ? "🎬 Ролик" : "🖼 Картинка"}: ${h(m.url)}`);
+  if(entry.approval?.preview?.complete&&entry.approval.preview.hash===entry.contentHash)rows.push(`🖼 Фотографии для согласования — в связанном альбоме выше (${entry.approval.preview.messageIds.length}).`);
+  else for (const m of entry.media || []) rows.push(`${m.type === "video" ? "🎬 Ролик" : "🖼 Картинка"}: ${m.mediaId ? `закрытая версия из медиатеки · ${h(m.mediaId)}` : h(m.url)}`);
   for (const row of entry.buttons || []) for (const b of row) rows.push(`🔘 Кнопка «${h(b.text)}» → ${h(b.url)}`);
   if (entry.link) rows.push(`🔗 Ссылка в тексте ведёт на: ${h(entry.link)}`);
   // У ролика под согласованным текстом программа сама ставит ссылки и хэштеги. Человек
@@ -104,14 +108,27 @@ export function cardText(entry, verdict = { block: [], warn: [] }, footer = "") 
  * что можно выпускать.
  */
 export async function submit(id, by = "оператор") {
-  const entry = get(id);
+  const unlock=lock(dataPath('approval-locks',`${id}.lock`),60*60*1000);if(!unlock)throw new RuleError('отправка карточки уже выполняется');
+  try {
+  let entry = get(id);
   if (!entry) throw new RuleError(`записи ${id} нет в очереди`);
   if (!["draft", "rework"].includes(entry.status)) throw new RuleError(`запись в статусе «${STATUS_TITLE[entry.status]}», на согласование уходят черновики`);
   const verdict = check(entry);
   if (verdict.block.length) throw new RuleError(`проверки не пройдены:\n- ${verdict.block.join("\n- ")}`);
-  const sent = await toGroup("approval", cardText(entry, verdict), { buttons: BUTTONS(entry.id) });
+  const submittedHash=entry.contentHash;
+  const preview=await previewPhotos(entry,entry.approval?.preview,async state=>{entry=await patch(id,{approval:{...(entry.approval||{}),preview:state}},by);});
+  if(preview&&(get(id)?.contentHash!==submittedHash||preview.hash!==submittedHash))throw new RuleError('материал изменился при отправке фото; нужна новая карточка согласования');
+  if(preview&&entry.approval?.cardSending)throw new RuleError('доставка кнопочной карточки неоднозначна; сначала нужна проверка оператором');
+  if(preview&&entry.approval?.card?.messageId&&entry.approval?.cardHash===entry.contentHash)return transition(id,'review',{note:undefined},by);
+  if(preview)entry=await patch(id,{approval:{...(entry.approval||{}),cardSending:true}},by);
+  const sent = await toGroup("approval", cardText(entry, verdict), { buttons: BUTTONS(entry.id),...(preview?{retries:0,extra:{reply_parameters:{message_id:Number(preview.messageIds[0])}}}:{}) });
   if (!sent.ok) throw Object.assign(new Error(`карточка не ушла в группу: ${sent.error}`), { code: "ENV" });
-  return transition(entry.id, "review", { approval: { card: { messageId: sent.messageId }, sentAt: new Date().toISOString() }, note: undefined, nudged: false, fixAsked: undefined }, by);
+  if(preview&&(!Number.isSafeInteger(sent.messageId)||sent.messageId<=0))throw Object.assign(new Error('Telegram не подтвердил ID кнопочной карточки; повтор требует проверки'),{code:'ENV'});
+  if(preview&&get(id)?.contentHash!==submittedHash){await retireCard({...entry,approval:{card:{messageId:sent.messageId}}});throw new RuleError('материал изменился при отправке карточки; старые кнопки сняты');}
+  const approval={...(entry.approval||{}),card:{messageId:sent.messageId},cardHash:entry.contentHash,cardSending:false,sentAt:new Date().toISOString()};
+  if(preview)await patch(id,{approval},by);
+  return transition(entry.id, "review", { approval, note: undefined, nudged: false, fixAsked: undefined }, by);
+  } finally {unlock();}
 }
 
 async function redraw(entry, footer, buttons) {

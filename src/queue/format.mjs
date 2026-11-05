@@ -114,7 +114,7 @@ export function entryId(channel, name) {
  * связи между роликами, они меняются с выходом каждой новой части и согласия не требуют.
  */
 function content(e) {
-  const base = [e.channel, e.kind, e.title || "", e.text || "", e.posts || [], (e.media || []).map((m) => [m.type, m.url, m.cover || ""]), e.buttons || [], e.link || "", e.tags || []];
+  const base = [e.channel, e.kind, e.title || "", e.text || "", e.posts || [], (e.media || []).map((m) => m.mediaId || m.coverMediaId ? [m.type,m.url || '',m.cover || '',m.mediaId || '',m.coverMediaId || ''] : [m.type, m.url, m.cover || ""]), e.buttons || [], e.link || "", e.tags || []];
   const video = [e.hashtags || [], e.goSlug || "", e.botKey || "", e.article || ""];
   // Поля ролика добавляются, только когда они заданы: у записей без них отпечаток прежний.
   return video.some((v) => (Array.isArray(v) ? v.length : v)) ? [...base, video] : base;
@@ -180,7 +180,8 @@ export function validate(e) {
   for (const m of media) {
     if (!["image", "video"].includes(m.type)) bad.push(`вложение: тип «${m.type}», нужен image или video`);
     // Файл площадка забирает сама и только по публичному адресу: с диска и с сайта не берёт.
-    if (!isHttps(m.url)) bad.push("вложение: нужен публичный адрес с https://, а не путь на диске");
+    if(m.mediaId && !/^med_[a-f0-9]{32}$/.test(m.mediaId)) bad.push('вложение: неверный mediaId');
+    if (!m.mediaId && !isHttps(m.url)) bad.push("вложение: нужен публичный адрес с https://, а не путь на диске");
     if (m.cover && !isHttps(m.cover)) bad.push("обложка: нужен публичный адрес с https://");
   }
   const videos = media.filter((m) => m.type === "video").length;

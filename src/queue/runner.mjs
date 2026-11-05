@@ -31,6 +31,7 @@
 // Запуск руками:  node src/queue/runner.mjs [--dry]
 
 import { fileURLToPath } from "node:url";
+import { resolveEntryMedia } from '../media/library.mjs';
 import { existsSync, realpathSync } from "node:fs";
 import { config, channel as channelCfg } from "../lib/config.mjs";
 import { dataPath, env, wrongUser } from "../lib/env.mjs";
@@ -242,7 +243,8 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : await adapter(entry.channel);
       let result;
       try {
-        result = await mod.publish(current, {
+        const withMedia=await resolveEntryMedia(current);
+        result = await mod.publish(withMedia, {
           sleep,
           verify: attempts > 0 || stuck || Boolean(entry.done?.length),
           onStep: async (done, link) => { current = await patch(current.id, { done, result: { ...(current.result || {}), link } }, "выпуск"); },

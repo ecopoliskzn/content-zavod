@@ -85,8 +85,8 @@ export async function tgUploadMany(method, fields, files, { timeoutMs = 180_000 
   return {...res,result:res.data?.result};
 }
 
-export const sendMessage = (chatId, text, extra = {}) =>
-  tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", link_preview_options: { is_disabled: true }, ...extra });
+export const sendMessage = (chatId, text, extra = {}, options = {}) =>
+  tg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", link_preview_options: { is_disabled: true }, ...extra }, options);
 
 export const editMessageText = (chatId, messageId, text, extra = {}) =>
   tg("editMessageText", { chat_id: chatId, message_id: messageId, text, parse_mode: "HTML", link_preview_options: { is_disabled: true }, ...extra });
