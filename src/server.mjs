@@ -120,8 +120,8 @@ export function createHandler() {
     const url = new URL(req.url, "http://localhost");
     const p = url.pathname;
 
-    const mediaFile=publicMedia(p,req.method);
-    if(mediaFile) {res.writeHead(mediaFile.status,mediaFile.headers);res.end(mediaFile.body);return;}
+    const mediaFile=publicMedia(p,req.method,req.headers);
+    if(mediaFile) {res.writeHead(mediaFile.status,mediaFile.headers);if(mediaFile.stream)mediaFile.stream.on('error',()=>res.destroy()).pipe(res);else res.end(mediaFile.body);return;}
     if (req.method === "GET" && p === "/health") {
       const beat = readJson(dataPath("heartbeat.json"), {}) || {};
       return send(res, 200, {
