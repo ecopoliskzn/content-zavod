@@ -2,14 +2,14 @@
 // Фиксирует только публикационный комплект и режим времени, не читает данные людей.
 import fs from 'node:fs';import crypto from 'node:crypto';
 import {env} from '../../src/lib/env.mjs';import {request} from '../../src/lib/http.mjs';
-const phase=process.argv[2]||'pre-install';if(!['before','pre-install','after'].includes(phase))throw Error('фаза before/pre-install/after');
+const phase=process.argv[2]||'pre-install';if(!['before','pre-install','current','after'].includes(phase))throw Error('фаза before/pre-install/current/after');
 const records=[];
 for(const channel of ['youtube','instagram']){
  const r=await request(env('QUEUE_API_BASE').replace(/\/+$/,'')+'/admin/queue',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env('ADMIN_API_TOKEN')},body:JSON.stringify({cmd:'show',args:{ref:'hibiny-1-ecm-7925',channel},actor:'оператор'}),timeoutMs:60000});
  if(r.kind!=='ok'||r.data?.code!==0)throw Error('не удалось прочитать '+channel);
  const e=r.data.data;const payload={};for(const k of ['channel','kind','name','material','title','text','posts','media','hashtags','goSlug','goLabel','series','seeAlso','facts','ask'])if(e[k]!==undefined)payload[k]=e[k];
  const payloadSha256=crypto.createHash('sha256').update(JSON.stringify(payload)).digest('hex');
- records.push({id:e.id,channel:e.channel,status:e.status,date:e.date,time:e.time,timing:e.timing||null,contentHash:e.contentHash||null,payloadSha256,payload,hasUploadedYoutubeId:Boolean(e.extra?.youtubeId)});
+ records.push({id:e.id,channel:e.channel,status:e.status,date:e.date,time:e.time,timing:e.timing||null,contentHash:e.contentHash||null,payloadSha256,payload,approvalAt:e.approval?.at||null,hasUploadedYoutubeId:Boolean(e.extra?.youtubeId),youtubeId:e.extra?.youtubeId||null,youtubePublishAt:e.extra?.youtubePublishAt||null,note:e.note||null});
 }
 const out={captured:new Date().toISOString(),phase,records};
 if(phase==='after'){
