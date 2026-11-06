@@ -64,9 +64,9 @@ export async function handle(request, env, doFetch = fetch) {
       if (res.status===404) return new Response(null,{status:404});
       const type=(res.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
       const length=Number(res.headers.get('content-length'));
-      if (res.status!==200 || type!=='image/jpeg' || !Number.isFinite(length) || length<=0 || length>8*1024*1024) {await res.body?.cancel();return new Response(null,{status:502});}
+      if (res.status!==200 || type!=='image/jpeg' || !Number.isFinite(length) || length<=0 || length>8*1024*1024) {await res.body?.cancel();return new Response(null,{status:502,headers:{'x-media-proxy-error':res.status!==200?'origin-http-'+res.status:type!=='image/jpeg'?'origin-type':'origin-size'}});}
       return new Response(request.method==='HEAD'?null:res.body,{status:200,headers:{'content-type':'image/jpeg','content-length':String(length),'cache-control':'no-store','x-content-type-options':'nosniff'}});
-    } catch {return new Response(null,{status:502});}
+    } catch {return new Response(null,{status:502,headers:{'x-media-proxy-error':'origin-network'}});}
   }
 
   // ── Telegram → сервер завода ──
