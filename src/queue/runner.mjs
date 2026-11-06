@@ -32,7 +32,7 @@
 
 import { fileURLToPath } from "node:url";
 import {randomBytes} from 'node:crypto';
-import { resolveEntryMedia } from '../media/library.mjs';
+import { publicationMedia } from '../media/for-publish.mjs';
 import { existsSync, realpathSync } from "node:fs";
 import { config, channel as channelCfg } from "../lib/config.mjs";
 import { dataPath, env, wrongUser } from "../lib/env.mjs";
@@ -254,7 +254,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : await adapter(entry.channel);
       let result;
       try {
-        const withMedia=await resolveEntryMedia(current);
+        const withMedia=await publicationMedia(current);
         result = await mod.publish(withMedia, {
           sleep,
           verify: attempts > 0 || stuck || Boolean(entry.done?.length),
