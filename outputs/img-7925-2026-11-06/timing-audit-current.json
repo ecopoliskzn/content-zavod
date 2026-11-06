@@ -1,11 +1,11 @@
 {
-  "captured": "2026-11-06T11:28:39.732Z",
+  "captured": "2026-11-06T11:37:32.025Z",
   "phase": "current",
   "records": [
     {
       "id": "fda3e7578d62a698",
       "channel": "youtube",
-      "status": "approved",
+      "status": "failed",
       "date": "2026-11-06",
       "time": "14:23",
       "timing": null,
