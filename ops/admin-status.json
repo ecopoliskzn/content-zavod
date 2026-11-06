@@ -1,16 +1,17 @@
 {
   "checkedAt": "2026-11-06T11:47:55Z",
   "source": "S0 deploy plus independent VERSION/3100-health check; backup/free-space figures from orchestrator audit at 10:57Z",
-  "server": {"version": "60bda74", "release": "20261106-114541-60bda74", "freeKiB": 26528904, "newCodeInstalled": true, "healthOk":true},
+  "server": {"version": "1a8d1dc", "release": "20261106-120156-1a8d1dc", "versionCheckedAt":"2026-11-06T12:11:02Z", "freeKiB": 26528904, "newCodeInstalled": true, "healthOk":true,"healthCheckedAt":"2026-11-06T11:47:55Z"},
   "git": {
-    "githubMain": "967a3405358d229bff0bf907c27f18eae0796b3f",
-    "localMain": "60bda7463130a3c3356b9420b2019e3b038841f3",
-    "localAheadCount": 10,
+    "githubMain": "60bda7463130a3c3356b9420b2019e3b038841f3",
+    "githubCheckedAt":"2026-11-06T12:11:02Z",
+    "localMainAtCheck": "48e1b9c082ff254bd2af04f80aa73990b5dc3385",
+    "localAheadCountAtCheck": 5,
     "gitAuthor": "Codex",
     "technicalOwner": "S0",
     "originatingChatConfirmed": false,
     "newTimingCleanupCommit": "1f949ff9ac24f13e45e3f0b5707d2fa99430d81b",
-    "pushStatus":"Not executed: auto-review requires explicit approval of the exact payload through 60bda74"
+    "pushStatus":"Exact 10-commit payload through 60bda74 explicitly approved and pushed; ls-remote independently confirmed. Later local commits were not included."
   },
   "backup": {
     "checkedAt":"2026-11-06T10:57:00Z",
@@ -22,6 +23,6 @@
     "restoreCoverage": "Earlier isolated media restore covered 8 records; current full library and independent copy not verified"
   },
   "approvalCleanup": {"deleted": [277,278,282,283,289,290], "keptAfterRefusal": [179], "currentMessagesProtected": true},
-  "blocking": ["GitHub push refused by auto-review pending explicit approval of the exact 60bda74 payload; no bypass"],
-  "pending": ["S2 resumes already uploaded approved YouTube after the installed source fix", "Finish Instagram delivery with S2 as sole publisher", "Verify independent encrypted Russian backup and current isolated restore", "Confirm original chat ownership of beba30f and 5306d4b", "Implement GitHub approval decision"]
+  "blocking": [],
+  "pending": ["Refresh publication status with S2; preceding publication snapshot is historical", "Verify independent encrypted Russian backup and current isolated restore", "Confirm original chat ownership of beba30f and 5306d4b", "Later local Git commits are outside the approved 60bda74 push payload"]
 }
