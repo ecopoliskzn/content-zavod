@@ -9,6 +9,7 @@
 //   POST /api/<метод>         сервер завода зовёт Bot API → передаём в Telegram;
 //   POST /upload/<метод>      то же с файлом (фото, видео): тело уходит потоком, как пришло;
 //   ANY  /ig/<путь>           сервер завода зовёт Instagram API → передаём, подставив маркер;
+//   GET/HEAD /media/<hash>.jpg только уже открытая публикационная JPEG-версия с origin;
 //   GET  /health              жив ли релей.
 //
 // ЧТО НЕ ДЕЛАЕТ. Ничего не хранит и ничего не пишет в журнал, кроме кода ответа. Через
@@ -51,6 +52,22 @@ export async function handle(request, env, doFetch = fetch) {
   const p = url.pathname;
 
   if (request.method === "GET" && p === "/health") return json(200, { ok: true, relay: "ecopolis-zavod" });
+
+  // Только ранее открытые origin-файлы: не медиатека, не backup и не произвольный URL.
+  // Поток не кэшируется и не сохраняется. Секреты и cookie посетителя не пересылаются.
+  if (p.startsWith('/media/')) {
+    if (!['GET','HEAD'].includes(request.method) || url.search || !/^\/media\/[a-f0-9]{64}\.jpg$/.test(p)) return new Response(null,{status:404});
+    try {
+      const origin = new URL(env.ORIGIN_URL);
+      if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) return new Response(null,{status:502});
+      const res = await doFetch(origin.origin+p,{method:request.method,headers:{accept:'image/jpeg'},redirect:'error',signal:AbortSignal.timeout(20000)});
+      if (res.status===404) return new Response(null,{status:404});
+      const type=(res.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
+      const length=Number(res.headers.get('content-length'));
+      if (res.status!==200 || type!=='image/jpeg' || !Number.isFinite(length) || length<=0 || length>8*1024*1024) {await res.body?.cancel();return new Response(null,{status:502});}
+      return new Response(request.method==='HEAD'?null:res.body,{status:200,headers:{'content-type':'image/jpeg','content-length':String(length),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+    } catch {return new Response(null,{status:502});}
+  }
 
   // ── Telegram → сервер завода ──
   if (request.method === "POST" && p === "/tg/webhook") {
