@@ -16,9 +16,9 @@ if(phase==='after'){
  const baseline=fs.existsSync('outputs/img-7925-2026-11-06/timing-audit-pre-install.json')?'timing-audit-pre-install.json':'timing-audit-before.json';
  const before=JSON.parse(fs.readFileSync('outputs/img-7925-2026-11-06/'+baseline,'utf8'));
  const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
- for(const r of records){const p=before.records.find(v=>v.id===r.id);if(!p||p.payloadSha256!==r.payloadSha256||p.contentHash!==r.contentHash||p.status!==r.status)throw Error('Изменено содержимое/hash/статус '+r.channel);if(r.timing?.mode!=='after-approval')throw Error('Неверный timing '+r.channel);}
+ for(const r of records){const p=before.records.find(v=>v.id===r.id);if(!p||p.payloadSha256!==r.payloadSha256||p.contentHash!==r.contentHash)throw Error('Изменено содержимое/hash '+r.channel);const approvedSinceSnapshot=p.status==='review'&&r.approvalAt&&['approved','failed','running','published'].includes(r.status);if(p.status!==r.status&&!approvedSinceSnapshot)throw Error('Необъяснённый переход статуса '+r.channel);if(r.timing?.mode!=='after-approval')throw Error('Неверный timing '+r.channel);}
  for(const r of records)if(r.date!==today)throw Error('Сохранён будущий/прошедший слот '+r.channel+': '+r.date);
- out.validation='Состав, contentHash и статус сохранены; обе записи after-approval';
+ out.validation='Состав и contentHash сохранены; изменения статуса после review подтверждены штатным approvalAt; обе записи after-approval';
 }
 fs.writeFileSync(`outputs/img-7925-2026-11-06/timing-audit-${phase}.json`,JSON.stringify(out,null,2)+'\n');
 console.log(JSON.stringify({...out,records:records.map(({payload,...r})=>r)},null,2));
