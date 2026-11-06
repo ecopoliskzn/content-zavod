@@ -8,6 +8,7 @@
 import { dataPath } from "../lib/env.mjs";
 import { appendJsonl, readJsonl } from "../lib/files.mjs";
 import { isTakeover } from "./switch.mjs";
+import {sameStorySeries} from './slots.mjs';
 
 const FILE = () => dataPath("ledger.jsonl");
 
@@ -36,9 +37,10 @@ export function published({ sinceMs = 0, channel } = {}) {
 }
 
 /** Когда на площадке что-то выходило в последний раз (мс) и сколько вышло за сутки. */
-export function channelLoad(channel, now = Date.now()) {
-  const mine = rows().filter((r) => r.channel === channel && r.status === "published");
+export function channelLoad(channel, now = Date.now(),entry) {
+  const mine = rows().filter((r) => r.channel === channel && r.status === "published"&&!sameStorySeries(entry,r));
   const last = mine.reduce((m, r) => Math.max(m, Date.parse(r.at)), 0);
   const dayStart = now - 24 * 3600_000;
-  return { last, lastDay: mine.filter((r) => Date.parse(r.at) >= dayStart).length };
+  const units=new Set(mine.filter(r=>Date.parse(r.at)>=dayStart).map(r=>r.kind==='story'&&r.material?'stories:'+r.material:r.id));
+  return { last, lastDay: units.size };
 }

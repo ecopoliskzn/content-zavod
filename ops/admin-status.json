@@ -1,0 +1,25 @@
+{
+  "checkedAt": "2026-11-06T10:57:00Z",
+  "source": "Read-only audit by the project orchestrator, passed to S0",
+  "server": {"version": "50f55d6", "freeKiB": 26528904, "newCodeInstalled": false},
+  "git": {
+    "githubMain": "967a3405358d229bff0bf907c27f18eae0796b3f",
+    "localMain": "5306d4bd319a7ba2d545d658a8f4a911c17cad0b",
+    "localAhead": ["beba30f", "5306d4b"],
+    "gitAuthor": "Codex",
+    "technicalOwner": "S0",
+    "originatingChatConfirmed": false,
+    "newTimingCleanupCommit": null
+  },
+  "backup": {
+    "localGeneral": {"at": "2026-11-06T00:30:00Z", "bytes": 14209872},
+    "localMedia": {"at": "2026-11-05T12:44:00Z", "bytes": 1021328},
+    "independentRussianCopyVerified": false,
+    "lastKnownExternalError": "SignatureDoesNotMatch",
+    "lastRestoreVerifiedAt": null,
+    "restoreCoverage": "Earlier isolated media restore covered 8 records; current full library and independent copy not verified"
+  },
+  "approvalCleanup": {"deleted": [277,278,282,283,289,290], "keptAfterRefusal": [179], "currentMessagesProtected": true},
+  "blocking": ["Automatic approval review could not complete because of usage limit; no bypass", "Commit and server installation pending"],
+  "pending": ["Install verified commissioning/timing and approval cleanup code", "Reset two confirmed automatic hibiny review dates via queue commands", "Finish Instagram relay delivery diagnosis with S2 as sole publisher", "Verify independent encrypted Russian backup and current isolated restore", "Confirm original chat ownership of beba30f and 5306d4b"]
+}

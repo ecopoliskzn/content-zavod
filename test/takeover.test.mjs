@@ -25,6 +25,7 @@ const asServer = async (fn) => { onServer(); try { return await fn(); } finally 
 onServer();
 
 const store = await import("../src/queue/store.mjs");
+const {config}=await import('../src/lib/config.mjs');config().release.mode='scheduled';
 const ledger = await import("../src/queue/ledger.mjs");
 const { execute } = await import("../src/queue/commands.mjs");
 const { runOnce } = await import("../src/queue/runner.mjs");
@@ -69,9 +70,9 @@ const withFlags = async (flags, fn) => {
 };
 const press = data => {const e=store.get(data.split(':')[2]),token=e?.approval?.actionToken;return handleCallback({ id:'cb',data:token?data+':'+token:data,from:{id:42,first_name:'Анна'},message:{message_id:e?.approval?.card?.messageId,chat:{id:-1001}}});};
 const command = (text) => staff.handleCommand({ text, chat: { id: -1001 }, from: { id: 42, first_name: "Анна" } });
-const thread = (name, date, time, posts) => ({ channel: "threads", kind: "thread", name, material: "blog:primer", date, time, posts: posts || [`«${name}»: подрядчик в Казани сдал площадку, а через год она крошится.`, "Причина нашлась в акте: толщину никто не мерил."] });
+const thread = (name, date, time, posts) => ({ channel: "threads", kind: "thread", name, material: "blog:primer", date, time,timing:{mode:'at',date,time}, posts: posts || [`«${name}»: подрядчик в Казани сдал площадку, а через год она крошится.`, "Причина нашлась в акте: толщину никто не мерил."] });
 const approved = async (raw) => {
-  const { entry } = await store.put(raw, "S1");
+  const { entry } = await store.put({...raw,timing:{mode:'at',date:raw.date,time:raw.time}}, "S1");
   await submit(entry.id, "S1");
   await press(`q:ok:${entry.id}`);
   return store.get(entry.id);

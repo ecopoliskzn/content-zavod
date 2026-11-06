@@ -20,10 +20,11 @@ globalThis.fetch = async (url, init) => {
   const method = String(url).split("/").pop();
   const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
   sent.push({ method, body });
-  return new Response(JSON.stringify({ ok: true, result: { message_id: ++messageId, chat: { id: -1001 } } }), { status: 200 });
+  return new Response(JSON.stringify({ ok: true, result: { message_id: ++messageId, chat: { id: -1001 },...(method==='sendVideo'?{video:{file_id:'synthetic'}}:{}) } }), { status: 200 });
 };
 
 const store = await import("../src/queue/store.mjs");
+const {config}=await import('../src/lib/config.mjs');config().release.mode='scheduled';
 const { submit, handleCallback, handleReply, inbox } = await import("../src/bot/approval.mjs");
 const { runOnce, morning, digest } = await import("../src/queue/runner.mjs");
 const { _setAdapter } = await import("../src/channels/index.mjs");
@@ -38,7 +39,7 @@ const SLOT = { date: "2030-03-12", time: "19:00" }; // вторник, вече�
 const at = (min) => dueAt(SLOT) + min * 60_000;
 const thread = (name, over = {}) => ({
   channel: "threads", kind: "thread", name, material: "blog:primer", ...SLOT,
-  posts: [`«${name}»: подрядчик в Казани сдал площадку, а через год она крошится.`, "Причина нашлась в акте: толщину никто не мерил."], ...over,
+  posts: [`«${name}»: подрядчик в Казани сдал площадку, а через год она крошится.`, "Причина нашлась в акте: толщину никто не мерил."], ...over,timing:{mode:'at',date:over.date||SLOT.date,time:over.time||SLOT.time},
 });
 const press = (data, from = 42) => {const e=store.get(data.split(':')[2]),token=e?.approval?.actionToken;return handleCallback({ id: "cb", data:token?data+':'+token:data, from: { id: from, first_name: "Анна" },message:{message_id:e?.approval?.card?.messageId,chat:{id:-1001}} });};
 
@@ -55,8 +56,8 @@ test("карточка уходит в группу с кнопками, зап�
   assert.equal(review.status, "review");
   assert.ok(review.approval.card.messageId);
   const card = sent.find((s) => s.method === "sendMessage");
-  assert.match(card.body.text, /На согласование · Threads/);
-  assert.match(card.body.text, /ограниченным доступом/);
+  assert.match(card.body.text, /Threads · Ветка/);
+  assert.doesNotMatch(card.body.text, /ограниченным доступом/);
   assert.equal(card.body.reply_markup.inline_keyboard[0].length, 3);
 });
 
@@ -172,7 +173,7 @@ test("ответ на комментарий: уходит сотруднику 
   sent.length = 0;
   await submit(entry.id, "S6");
   const card = sent.find((s) => s.method === "sendMessage");
-  assert.match(card.body.text, /ответ на комментарий · YouTube/);
+  assert.match(card.body.text, /YouTube · Ответ на комментарий/);
   assert.match(card.body.text, /Какая толщина нужна под качели\?/);
   await press(`q:ok:${entry.id}`);
   assert.deepEqual({ date: store.get(entry.id).date, time: store.get(entry.id).time }, slot, "ответ в сетку площадки не переставляется");
@@ -234,7 +235,7 @@ test("пакет на ручную выкладку: «передано», а н
   _setAdapter("dzen", { name: "dzen", publish: async (entry, ctx) => { await ctx.onState({ packageMessageId: 7001 }); return { ok: true, manual: true, note: "пакет отправлен в группу" }; } });
   const slot = { date: "2030-03-21", time: "11:00" };
   const text = "Примыкания относятся к самым уязвимым местам резинового покрытия. ".repeat(14);
-  const { entry } = await store.put({ channel: "dzen", kind: "article", name: "paket-dzen", material: "blog:primer", ...slot, title: "Где покрытие отслаивается чаще всего", text }, "S1");
+  const { entry } = await store.put({ channel: "dzen", kind: "article", name: "paket-dzen", material: "blog:primer", ...slot,timing:{mode:'at',...slot}, title: "Где покрытие отслаивается чаще всего", text }, "S1");
   await submit(entry.id, "S1");
   await press(`q:ok:${entry.id}`);
   const run = await runOnce({ now: dueAt(slot) + 60_000 });
@@ -274,7 +275,7 @@ test("ролик YouTube с датой выхода: «Отозвать», «С�
     status: async (id) => ({ kind: "ok", privacy: "private", publishAt: yt.publishAt, raw: { id, status: { privacyStatus: "private" } } }),
     setSchedule: async (video, publishAt) => { yt.calls.push(publishAt); if (yt.fail) return { ok: false, error: "квота исчерпана" }; yt.publishAt = publishAt; return { ok: true }; },
   });
-  const slot = { date: "2030-04-02", time: "15:00" };
+  const slot = { date: "2030-04-02", time: "15:00",timing:{mode:'at',date:'2030-04-02',time:'15:00'} };
   const iso = new Date(dueAt(slot)).toISOString();
   const { entry } = await store.put({ channel: "youtube", kind: "short", name: "rolik-so-srokom", material: "blog:primer", ...slot, title: "Вместо нового асфальта под площадкой уложили выравнивающий слой", text: "Основание под площадкой было неровным.", media: [{ type: "video", url: "https://s3.example.ru/rolik.mp4" }], hashtags: ["покрытие"] }, "S2");
   await submit(entry.id, "S2");
@@ -387,8 +388,8 @@ test("ролик на другой площадке ждёт премьеры н
   let youtubeReady = false;
   _setAdapter("youtube", { name: "youtube", publish: async () => (youtubeReady ? { ok: true, id: "ccccccccccc", link: "https://www.youtube.com/watch?v=ccccccccccc" } : { ok: false, error: "ролик не загружен на YouTube", retry: true }) });
   const base = { material: "blog:primer", title: "Толщину покрытия проверили вырубкой при заказчике", text: "Толщину по внешнему виду не оценить.", media: [{ type: "video", url: "https://s3.example.ru/p.mp4" }], hashtags: ["покрытие"] };
-  const yt = (await store.put({ channel: "youtube", kind: "short", name: "zhdet-premery", ...day, time: "10:00", ...base }, "S2")).entry;
-  const rt = (await store.put({ channel: "rutube", kind: "short", name: "zhdet-premery", ...day, time: "10:10", ...base }, "S2")).entry;
+  const yt = (await store.put({ channel: "youtube", kind: "short", name: "zhdet-premery", ...day, time: "10:00",timing:{mode:'at',...day,time:'10:00'}, ...base }, "S2")).entry;
+  const rt = (await store.put({ channel: "rutube", kind: "short", name: "zhdet-premery", ...day, time: "10:10",timing:{mode:'at',...day,time:'10:10'}, ...base }, "S2")).entry;
   for (const e of [yt, rt]) { await submit(e.id, "S2"); await press(`q:ok:${e.id}`); }
   // 10:15: слот Rutube наступил, а премьера на YouTube не состоялась.
   const first = await runOnce({ now: dueAt({ ...day, time: "10:15" }) });

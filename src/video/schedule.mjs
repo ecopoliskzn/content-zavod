@@ -41,6 +41,7 @@ import { dueAt, mskDate, mskTime } from "../lib/time.mjs";
 import * as youtube from "../channels/youtube.mjs";
 import { all, get, patch } from "../queue/store.mjs";
 import { isTakeover, stopState } from "../queue/switch.mjs";
+import {effectiveDue} from '../queue/timing.mjs';
 
 /** «Не трогать»: срок на YouTube остаётся каким был. */
 export const KEEP = null;
@@ -69,7 +70,7 @@ export function wantedPublishAt(entry, { now = Date.now(), stopped = false } = {
   if (entry.status !== "approved" || stopped) return "";
   // Одобрен новый текст, а на ролике прежний: до команды --update срока быть не должно.
   if (staleOnYoutube(entry)) return "";
-  const due = dueAt(entry);
+  const due = effectiveDue(entry,now);
   // Слот ближе десяти минут: срок уже не переставляем, в слот ролик откроет выпуск.
   return due > now + 10 * 60_000 ? new Date(due).toISOString() : KEEP;
 }

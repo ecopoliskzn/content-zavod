@@ -45,6 +45,8 @@ import { check } from "../gates/index.mjs";
 import { ownsQueue, staleOnYoutube, syncAll as syncYoutube } from "../video/schedule.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
 import { channelLoad, record } from "./ledger.mjs";
+import {refreshCard} from '../bot/approval.mjs';
+import {commissioning,effectiveDue,requestedPeriodEnded} from './timing.mjs';
 import { all, compact, forcePublished, get, patch, transition } from "./store.mjs";
 import { isHeld, isRestored, isTakeover, stopState } from "./switch.mjs";
 import { adoptServerState, sayAdopted, takeoverDoubt } from "./takeover.mjs";
@@ -157,7 +159,13 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
          Продолжаем со сверкой: вышедшее найдётся на площадке. */
       const stuck = entry.status === "running" && now - Date.parse(entry.startedAt || entry.at) > STUCK_MIN * 60_000;
       if (entry.status !== "approved" && !stuck) continue;
-      const due = dueAt(entry);
+      if(requestedPeriodEnded(entry,now)){
+        out.waiting.push(entry.name);
+        const note='Указанный оператором период закончился: нужен новый срок, согласие на содержимое сохранено.';
+        if(!dry&&entry.note!==note)await patch(entry.id,{note},'выпуск');
+        continue;
+      }
+      const due = effectiveDue(entry,now);
       if (!(due <= now)) continue;
       const attempts = entry.attempts ?? 0;
       const lateMin = (now - due) / 60_000;
@@ -166,7 +174,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       // после согласования, не считается в потолок площадки и не «просрочивается».
       const isReply = entry.kind === "reply";
 
-      if (!isReply && lateMin > rules.lateLimitHours * 60 && !(entry.done?.length)) {
+      if (!commissioning()&&!isReply && lateMin > rules.lateLimitHours * 60 && !(entry.done?.length)) {
         /* Ролик YouTube с датой выхода открывает сам YouTube. После долгого простоя
            сервера он давно открыт, и «не вышла» было бы неправдой: сначала спрашиваем
            площадку. Остальные адаптеры такого не умеют, и для них правило прежнее. */
@@ -201,9 +209,9 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
         if (first && get(first.id)?.status !== "published") { out.waiting.push(entry.name); continue; }
       }
 
-      const load = channelLoad(entry.channel, now);
+      const load = channelLoad(entry.channel, now,entry);
       // Догон после простоя и потолки площадки. Повтор и продолжение сюда не относятся.
-      if (attempts === 0 && !stuck && !isReply) {
+      if (!commissioning()&&attempts === 0 && !stuck && !isReply) {
         const lateCatchUp = lateMin > rules.lateAfterMin && (night || now - load.last < rules.catchUpGapMin * 60_000);
         const tooSoon = cfg.minGapMin && now - load.last < cfg.minGapMin * 60_000;
         const dayFull = cfg.perDay && load.lastDay >= cfg.perDay;
@@ -275,6 +283,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
           out.published.push(entry.name);
         }
         resolve(`publish:${current.id}`);
+        if(current.approval?.card?.messageId)await refreshCard(current.id,'выпуск').catch(()=>{});
         continue;
       }
 

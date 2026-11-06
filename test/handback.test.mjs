@@ -75,7 +75,7 @@ test("запись, которую оператор посмотрел и вер
 
   // Оператор посмотрел площадку: записей там нет. Возвращает обе в расписание.
   for (const name of ["x-server-nachal", "z-oshibka-na-servere"]) {
-    assert.equal((await execute("move", { ref: name, channel: "threads", next: true, local: true }, "оператор")).code, 0);
+    assert.equal((await execute("move", { ref: name, channel: "threads",date:'2030-03-13',time:name==='x-server-nachal'?'14:30':'19:00', local: true }, "оператор")).code, 0);
   }
   assert.deepEqual([local(ids.x).status, local(ids.x).humanMoved, local(ids.z).status], ["approved", true, "approved"]);
 
@@ -434,7 +434,7 @@ test("«стоп», пришедший посреди прохода, остан
   fresh();
   onServer();
   const a = await approved(thread("a-vetka", "2030-03-12", "19:00"));
-  const { entry: b } = await store.put({ channel: "vk", kind: "post", name: "b-post-vk", material: "blog:primer", date: "2030-03-12", time: "19:00", text: "Площадку в Казани приняли после дождя, и через год покрытие пошло пузырями." }, "S1");
+  const { entry: b } = await store.put({ channel: "vk", kind: "post", name: "b-post-vk", material: "blog:primer", date: "2030-03-12", time: "19:00",timing:{mode:'at',date:'2030-03-12',time:'19:00'}, text: "Площадку в Казани приняли после дождя, и через год покрытие пошло пузырями." }, "S1");
   await approval.submit(b.id, "S1");
   await press(`q:ok:${b.id}`);
   assert.deepEqual([a.status, store.get(b.id).status], ["approved", "approved"]);

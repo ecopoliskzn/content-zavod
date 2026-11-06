@@ -17,8 +17,8 @@ import { inbox, retireCard, submit,refreshCard } from "../bot/approval.mjs";
 import { afterChange as syncYoutube, sayAll, staleOnYoutube, syncAll } from "../video/schedule.mjs";
 import { STATUS_TITLE, freshness, normalize, preview, validate } from "./format.mjs";
 import { record, rows as ledgerRows } from "./ledger.mjs";
-import { aheadOfPremiere, nextSlot, premiereOf, slotFor, slotTaken } from "./slots.mjs";
-import { RuleError, all, forceFromCopy, forceHanded, forceHeld, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
+import { aheadOfPremiere, premiereOf, slotFor, slotTaken,requestTiming } from "./slots.mjs";
+import { RuleError, recordOperatorApproval, all, forceFromCopy, forceHanded, forceHeld, forcePublished, get, history, patch, put, reschedule, transition } from "./store.mjs";
 import { ADOPTED_STOP, clearHold, clearRestored, clearStop, isHeld, isRestored, isTakeover, runnerBusy, setRestored, setStop, stopState } from "./switch.mjs";
 
 const byDue = (a, b) => dueAt(a) - dueAt(b);
@@ -77,17 +77,15 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           }
           const queue = all();
           const cfg = channelCfg(e.channel);
-          if (!e.date || !e.time) {
-            // Слот по рабочей сетке площадки; ролик на остальных площадках — после премьеры на YouTube.
+          if(e.kind!=='reply'){
+            e.timing=requestTiming(e,args);
+            const requested={date:e.date,time:e.time};
             const slot = slotFor(e, queue, cfg);
-            if (!slot) throw Object.assign(new Error(`у площадки ${e.channel} нет свободных слотов на два месяца вперёд`), { code: "RULE" });
+            if (!slot) throw new RuleError('в заданном периоде или допустимых окнах нет свободного времени');
             Object.assign(e, slot);
-          } else if (e.kind !== "reply") {
-            // Время задано руками: сетку оно обходит, поэтому о каждом отступлении говорим.
-            if (slotTaken(queue.filter((x) => x.channel === e.channel), e.date, e.time, e.id)) lines.push(`внимание: слот ${e.date} ${e.time} на ${e.channel} уже занят другой записью`);
-            if (cfg.slots?.length && !cfg.slots.includes(e.time)) lines.push(`внимание: времени ${e.time} нет среди слотов площадки ${e.channel} (${cfg.slots.join(", ")})`);
+            if(e.timing.mode==='at'&&(requested.date!==slot.date||requested.time!==slot.time))lines.push(`внимание: указанный срок ограничен доступным окном площадки; выбрано ${human(e)}`);
             const premiere = premiereOf(queue, e);
-            if (premiere && dueAt(e) <= premiere) lines.push(`внимание: этот же ролик выходит на YouTube ${mskDate(premiere)} в ${mskTime(premiere)}, а здесь стоит раньше. YouTube идёт первым: поставьте запись без --date и --time, слот подберётся сам`);
+            if (premiere && dueAt(requested) <= premiere) lines.push(`внимание: YouTube идёт первым (${mskDate(premiere)} в ${mskTime(premiere)}); выбран срок после премьеры: ${human(e)}`);
           }
           const before = get(e.id);
           const { entry, result } = await put(e, actor);
@@ -185,15 +183,19 @@ export async function execute(cmd, args = {}, actor = "оператор") {
       case 'refresh-card':{
         const e=find(args.ref,args.channel);await refreshCard(e.id,actor);return {code:0,lines:[`карточка ${e.id} обновлена; статус и согласие сохранены`]};
       }
+      case 'record-approval':{
+        const e=find(args.ref,args.channel);
+        if(args['confirm-prior-approval']!==true&&args['confirm-prior-approval']!=='true')throw new RuleError('нужно явно подтвердить уже данное письменное разрешение оператора');
+        const verdict=check(e);if(verdict.block.length)throw new RuleError(`проверки не пройдены:\n- ${verdict.block.join('\n- ')}`);
+        const approved=await recordOperatorApproval(e.id,{hash:args['content-hash'],basis:args.basis},actor);
+        return {code:0,lines:[`зафиксировано решение оператора для ${approved.id}, contentHash ${approved.contentHash}; ближайший проход, рубильники сохранены`,...verdict.warn.map(w=>'⚠ '+w)]};
+      }
       case "move": {
         const e = find(args.ref, args.channel);
-        let { date, time } = args;
-        if (args.next || !date || !time) {
-          const slot = slotFor(e, all(), channelCfg(e.channel));
-          if (!slot) throw Object.assign(new Error("свободных слотов нет"), { code: "RULE" });
-          ({ date, time } = slot);
-        }
-        const moved = await reschedule(e.id, date, time, actor);
+        const timing=requestTiming(e,Object.keys(args).some(k=>['next','now','urgent','date','time','from','to','delay'].includes(k))?args:{next:true});
+        const slot=slotFor({...e,timing},all(),channelCfg(e.channel));
+        if(!slot)throw new RuleError('в заданном периоде или допустимых окнах нет свободного времени');
+        const moved = await reschedule(e.id, slot.date, slot.time, actor,{},timing);
         lines.push(`переставлена на ${human(moved)}: ${row(moved)}`);
         const premiere = premiereOf(all(), moved);
         if (premiere && dueAt(moved) <= premiere) lines.push(`внимание: этот же ролик выходит на YouTube ${mskDate(premiere)} в ${mskTime(premiere)}, а здесь стоит раньше. YouTube идёт первым: npm run queue -- move ${moved.name} --channel=${moved.channel} --next`);
@@ -393,11 +395,10 @@ export async function execute(cmd, args = {}, actor = "оператор") {
           const out = [];
           let after = Date.now();
           for (let i = 0; i < (Number(args.count) || 5); i++) {
-            const s = nextSlot(channelCfg(n), taken, after, "", String(args.kind || ""));
+            const s = slotFor({channel:n,kind:String(args.kind||''),timing:{mode:'after-approval'}},taken,channelCfg(n),after);
             if (!s) break;
             out.push(`${s.date} ${s.time}`);
-            taken.push({ id: `tmp${i}`, ...s, status: "approved" });
-            after = dueAt(s);
+            taken.push({ id: `tmp${i}`,channel:n, ...s, status: "approved" });
           }
           lines.push(`${n}: ${out.join(", ") || "свободных слотов нет"}`);
         }

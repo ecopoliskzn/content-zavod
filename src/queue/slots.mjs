@@ -1,23 +1,15 @@
-// Слоты выхода. У каждой площадки своя сетка времени в zavod.config.json.
-//
-// Зачем сетка, а не «выпусти через час». Расписание читают люди клиента, и предсказуемые
-// часы проще согласовывать. А ещё есть замер: у Threads вечерние слоты 19–21 давали
-// медиану 196 просмотров против 69 у слотов 11–13. Сетку поэтому правят по цифрам
-// недельного отчёта, а не на глаз.
-//
-// ДВА СПИСКА У ПЛОЩАДКИ, и это разные вещи:
-//   slots — в какие часы площадка вообще может выпускать. Потолок;
-//   grid  — рабочая сетка: в какие из этих часов и по каким дням запись встаёт сама.
-// Без второго списка план «две ветки в день, ролик трижды в неделю» жил только в
-// документе: постановка брала ближайший свободный слот из всех, и четыре ветки, написанные
-// за одну сессию, вставали на один день. Время, указанное руками (--date, --time), сетку
-// обходит: так ставят срочное.
+// Выход по постоянному решению оператора 06.11.2026: сразу после одобрения.
+// Явный срок/период имеет приоритет, срочное ждёт только ближайшего прохода.
+// Окно — свободное время с учётом дневного потолка, минимальной паузы и ночи,
+// а не обязательное ожидание вечернего grid. Старая сетка оставлена как справочник.
 //
 // РОЛИК ИДЁТ СЛЕДОМ ЗА YOUTUBE. YouTube — основная видео-площадка: тот же ролик в
 // Instagram, ВКонтакте и на Rutube выходит после него, а не до. Записи одного ролика на
 // разных площадках носят одно имя, по нему и находится премьера.
 
-import { dueAt, mskDate, addDays } from "../lib/time.mjs";
+import { dueAt, mskDate,mskTime, addDays } from "../lib/time.mjs";
+import {config} from '../lib/config.mjs';
+import {commissioning} from './timing.mjs';
 
 const GONE = ["cancelled", "expired", "failed"];
 const VIDEO_KINDS = ["video", "short", "reel"];
@@ -79,10 +71,14 @@ export function slotTaken(taken, date, time, selfId = "") {
  * @param {object[]} entries вся очередь
  * @param {{ channel: string, kind: string, name: string }} entry
  */
-export function premiereOf(entries, entry) {
+export function premiereOf(entries, entry, now=Date.now()) {
   if (entry.channel === "youtube" || !VIDEO_KINDS.includes(entry.kind) || !entry.name) return 0;
   const first = entries.find((e) => e.channel === "youtube" && e.name === entry.name && e.status !== "cancelled");
-  return first ? dueAt(first) || 0 : 0;
+  if(!first)return 0;
+  if(first.status==='published')return Date.parse(first.publishedAt)||dueAt(first)||0;
+  // Дата старой сетки не является волей оператора. Выпуск всё равно проверит,
+  // что YouTube действительно вышел, прежде чем открывать остальные площадки.
+  return ['at','period'].includes(first.timing?.mode)||['approved','running'].includes(first.status)?dueAt(first)||now:now;
 }
 
 /**
@@ -93,11 +89,56 @@ export function premiereOf(entries, entry) {
  * @param {object} channelCfg настройки площадки записи
  */
 export function slotFor(entry, entries, channelCfg, now = Date.now()) {
-  const premiere = premiereOf(entries, entry);
-  // Слот берётся с запасом в четверть часа от момента after, поэтому от премьеры
-  // отступаем на 14 минут назад: ролик встанет не раньше чем через минуту после неё.
-  const after = Math.max(now, premiere ? premiere - 14 * 60_000 : 0);
-  return nextSlot(channelCfg, entries.filter((e) => e.channel === entry.channel), after, entry.id, entry.kind);
+  const timing=requestTiming(entry),rules=config().release||{},minute=60000;
+  const delay=(timing.delayMin??0)*minute;
+  const priorApproval=['approved','failed','expired'].includes(entry.status)&&Date.parse(entry.approval?.at);
+  let earliest=delay?Math.max(now,(priorApproval||now)+delay):Math.floor(now/minute)*minute,latest=now+60*86400000;
+  if(timing.mode==='urgent')earliest=Math.floor(now/minute)*minute;
+  if(timing.mode==='at'){const wanted=dueAt(timing);earliest=wanted>=now?wanted:Math.floor(now/minute)*minute;latest=earliest;}
+  if(timing.mode==='period'){earliest=Math.max(now,operatorMoment(timing.from));latest=operatorMoment(timing.to);}
+  const premiere=premiereOf(entries,entry,now);if(premiere)earliest=Math.max(earliest,premiere+(commissioning()?0:minute));
+  if(!['at','period'].includes(timing.mode))latest=Math.max(now,earliest)+60*86400000;
+  if(commissioning())return earliest<=latest?{date:mskDate(earliest),time:mskTime(earliest)}:null;
+  let candidate=Math.ceil(earliest/minute)*minute;
+  const busy=entries.filter(e=>e.channel===entry.channel&&e.id!==entry.id&&e.kind!=='reply'&&!GONE.includes(e.status)&&!sameStorySeries(entry,e));
+  const gap=Math.max(1,Number(channelCfg.minGapMin)||0)*minute;
+  const open=(rules.nightToHour??7)*60,close=(rules.nightFromHour??22.5)*60;
+  for(let n=0;n<60*1440&&candidate<=latest;n++){
+    const date=mskDate(candidate),start=dueAt({date,time:'00:00'}),minutes=(candidate-start)/minute;
+    if(minutes<open){candidate=start+open*minute;continue;}
+    if(minutes>=close){candidate=dueAt({date:addDays(date,1),time:'00:00'})+open*minute;continue;}
+    const units=new Set(busy.filter(e=>e.date===date).map(e=>e.kind==='story'&&e.material?'stories:'+e.material:e.id));
+    if(channelCfg.perDay&&units.size>=channelCfg.perDay){candidate=dueAt({date:addDays(date,1),time:'00:00'})+open*minute;continue;}
+    const conflict=busy.find(e=>Math.abs((e.publishedAt?Date.parse(e.publishedAt):dueAt(e))-candidate)<gap);
+    if(conflict){candidate=Math.ceil(((conflict.publishedAt?Date.parse(conflict.publishedAt):dueAt(conflict))+gap)/minute)*minute;continue;}
+    return {date,time:mskTime(candidate)};
+  }
+  return null;
+}
+
+/** Одобренные кадры одного материала — одна серия, между ними пауза постов не нужна. */
+export const sameStorySeries=(a,b)=>a?.channel==='instagram'&&b?.channel==='instagram'&&a.kind==='story'&&b.kind==='story'&&Boolean(a.material)&&a.material===b.material;
+
+function operatorMoment(value){
+  const str=String(value||''),ms=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(str)?Date.parse(str+':00+03:00'):NaN;
+  if(!Number.isFinite(ms)||mskDate(ms)+'T'+mskTime(ms)!==str)throw Object.assign(new Error('период: нужен точный срок ГГГГ-ММ-ДДTЧЧ:ММ по Москве'),{code:'RULE'});
+  return ms;
+}
+
+/** Явные флаги оператора перекрывают сохранённое пожелание времени. */
+export function requestTiming(entry,args={}){
+  let timing;
+  if(args.now||args.urgent)timing={mode:'urgent'};
+  else if(args.from||args.to)timing={mode:'period',from:args.from,to:args.to};
+  else if(args.date||args.time)timing={mode:'at',date:args.date||entry.date,time:args.time||entry.time};
+  else if(args.delay!==undefined)timing={mode:'after-approval',delayMin:Number(args.delay)};
+  else if(args.next)timing={mode:'after-approval'};
+  else timing=entry.timing||{mode:'after-approval'};
+  if(!['urgent','at','period','after-approval'].includes(timing.mode))throw Object.assign(new Error('неизвестный способ выбора срока'),{code:'RULE'});
+  if(timing.delayMin!==undefined&&(!Number.isSafeInteger(timing.delayMin)||timing.delayMin<0||timing.delayMin>10080))throw Object.assign(new Error('задержка: целое число минут от 0 до 10080'),{code:'RULE'});
+  if(timing.mode==='at')operatorMoment(timing.date+'T'+timing.time);
+  if(timing.mode==='period'&&operatorMoment(timing.from)>operatorMoment(timing.to))throw Object.assign(new Error('начало периода позже конца'),{code:'RULE'});
+  return {...timing};
 }
 
 /** Записи того же ролика на других площадках, которые стоят не позже премьеры на YouTube. */

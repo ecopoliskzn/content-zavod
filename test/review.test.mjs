@@ -21,7 +21,7 @@ let messageId = 500;
 globalThis.fetch = async (url, init) => {
   const body = init?.body && typeof init.body === "string" ? JSON.parse(init.body) : {};
   sent.push({ method: String(url).split("/").pop(), body });
-  return new Response(JSON.stringify({ ok: true, result: { message_id: ++messageId, chat: { id: -1001 } } }), { status: 200 });
+  return new Response(JSON.stringify({ ok: true, result: { message_id: ++messageId, chat: { id: -1001 },...(String(url).endsWith('/sendVideo')?{video:{file_id:'synthetic'}}:{}) } }), { status: 200 });
 };
 
 const { adlaw, facts, intakeIn, normalNumber, numberTokensIn, ready } = await import("../src/gates/rules.mjs");
@@ -36,6 +36,7 @@ const { atRisk, renderSchedule } = await import("../src/queue/mirror.mjs");
 const { legalGaps, LEGAL_CONFIRMATIONS, LEGAL_DOCS } = await import("../src/leads/legal.mjs");
 const { dueAt } = await import("../src/lib/time.mjs");
 const config = (await import("../src/lib/config.mjs")).config();
+config.release.mode='scheduled';
 
 const post = (text, over = {}) => ({ channel: "telegram", kind: "post", name: "p", text, ...over });
 
@@ -155,10 +156,10 @@ test("ролик на других площадках встаёт после п
   const monday = Date.parse("2030-03-11T06:00:00+03:00");
   const reel = { id: "i", channel: "instagram", kind: "reel", name: "vyrubki" };
   assert.equal(premiereOf([premiere], reel), dueAt(premiere));
-  // Без правила рилс встал бы в понедельник 18:30, раньше премьеры в четверг.
-  assert.deepEqual(slotFor(reel, [premiere], config.channels.instagram, monday), { date: "2030-03-14", time: "18:30" });
-  assert.deepEqual(slotFor({ id: "r", channel: "rutube", kind: "short", name: "vyrubki" }, [premiere], config.channels.rutube, monday), { date: "2030-03-14", time: "15:10" });
-  assert.deepEqual(slotFor({ id: "v", channel: "vk", kind: "video", name: "vyrubki" }, [premiere], config.channels.vk, monday), { date: "2030-03-14", time: "18:00" });
+  // Сохраняется порядок площадок, без ожидания фиксированного вечернего grid.
+  assert.deepEqual(slotFor(reel, [premiere], config.channels.instagram, monday), { date: "2030-03-14", time: "15:01" });
+  assert.deepEqual(slotFor({ id: "r", channel: "rutube", kind: "short", name: "vyrubki" }, [premiere], config.channels.rutube, monday), { date: "2030-03-14", time: "15:01" });
+  assert.deepEqual(slotFor({ id: "v", channel: "vk", kind: "video", name: "vyrubki" }, [premiere], config.channels.vk, monday), { date: "2030-03-14", time: "15:01" });
   // Пост с тем же именем премьеры не ждёт: правило только для роликов.
   assert.equal(premiereOf([premiere], { channel: "vk", kind: "post", name: "vyrubki" }), 0);
   // Премьеру переставили позже: записи, оставшиеся раньше неё, названы.
@@ -333,17 +334,21 @@ test("постановка ролика: Instagram встаёт после пр�
   const yt = await execute("add", { entries: [video("youtube", "short", "premiera")] }, "S2");
   assert.equal(yt.code, 0);
   const premiere = store.all().find((e) => e.channel === "youtube" && e.name === "premiera");
-  assert.equal(premiere.time, "15:00", "YouTube встаёт по рабочей сетке");
+  assert.equal(premiere.timing.mode,'after-approval',"обычный срок пересчитается после согласия");
+  assert.ok(Math.abs(dueAt(premiere)-Date.now())<60000);
   await execute("add", { entries: [video("instagram", "reel", "premiera")] }, "S2");
   const reel = store.all().find((e) => e.channel === "instagram" && e.name === "premiera");
   assert.equal(reel.date, premiere.date, "рилс выходит в день премьеры");
   assert.ok(dueAt(reel) > dueAt(premiere), "и после неё");
   // Время руками раньше премьеры: команда не молчит.
-  const early = await execute("add", { entries: [video("rutube", "short", "premiera", { date: premiere.date, time: "10:10" })] }, "S2");
-  assert.match(early.lines.join("\n"), /YouTube идёт первым/);
-  // Время вне слотов площадки: тоже сказано.
-  const odd = await execute("add", { entries: [{ channel: "telegram", kind: "post", name: "srochno", material: "blog:primer", date: premiere.date, time: "13:37", text: "Площадку в Казани приняли после дождя." }] }, "S1");
-  assert.match(odd.lines.join("\n"), /времени 13:37 нет среди слотов/);
+  const earlier=new Date(dueAt(premiere)-60000+3*3600000).toISOString();
+  const early = await execute("add", { entries: [video("rutube", "short", "premiera")] }, "S2");
+  assert.equal(early.code,0);
+  const refused = await execute('move',{ref:'premiera',channel:'rutube',date:earlier.slice(0,10),time:earlier.slice(11,16)},'S2');
+  assert.equal(refused.code,1,'точный срок до премьеры не переносится молча');
+  // Явный срок не отвергается из-за несовпадения с прежним grid.
+  const odd = await execute("add", {date:'2030-06-04',time:'13:37', entries: [{ channel: "telegram", kind: "post", name: "srochno", material: "blog:primer", text: "Площадку в Казани приняли после дождя." }] }, "S1");
+  assert.equal(odd.code,0);assert.equal(store.all().find(e=>e.name==='srochno').timing.mode,'at');
 });
 
 test("submit по имени ролика отправляет все его черновики; одна запись требует площадку только там, где нужна одна", async () => {
@@ -512,7 +517,7 @@ test("запись правили после загрузки ролика: по
   const { yt, schedule } = await fakeYoutube();
   const slot = { date: "2030-06-04", time: "15:00" };
   const iso = new Date(dueAt(slot)).toISOString();
-  const raw = video("youtube", "short", "pravili-posle-zagruzki", slot);
+  const raw = video("youtube", "short", "pravili-posle-zagruzki", {...slot,timing:{mode:'at',...slot}});
   const { entry } = await store.put(raw, "S2");
   await approve(entry.id);
   // Загрузка: номер ролика и отпечаток отправленного текста. Срок встаёт тут же.

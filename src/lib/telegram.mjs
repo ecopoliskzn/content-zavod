@@ -49,7 +49,7 @@ export async function tg(method, body = {}, { timeoutMs = 15_000, retries = 1 } 
  * Метод с файлом (sendPhoto, sendVideo, sendDocument): multipart, байтами.
  * @param {string|{ buffer: Buffer|Uint8Array, name: string }} file путь на диске либо байты с именем
  */
-export async function tgUpload(method, fields, fileField, file, { timeoutMs = 180_000 } = {}) {
+export async function tgUpload(method, fields, fileField, file, { timeoutMs = 180_000,retries=0 } = {}) {
   const t = target(method);
   if (!t) return { kind: "refused", status: 0, data: null, error: "не настроен ни релей, ни прямой токен" };
   const body = new FormData();
@@ -58,7 +58,7 @@ export async function tgUpload(method, fields, fileField, file, { timeoutMs = 18
   const fileName = typeof file === "string" ? path.basename(file) : file.name;
   if (bytes.length > 50 * 1024 * 1024) return { kind: "refused", status: 0, data: null, error: `файл ${(bytes.length / 1048576).toFixed(0)} МБ: облачный Bot API берёт до 50 МБ, ролик нужно пережать` };
   body.append(fileField, new Blob([bytes]), fileName);
-  const res = await request(t.upload, { method: "POST", headers: t.headers, body, timeoutMs });
+  const res = await request(t.upload, { method: "POST", headers: t.headers, body, timeoutMs,retries });
   return { ...res, result: res.data?.result };
 }
 

@@ -4,8 +4,9 @@ import {readFileSync} from 'node:fs';
 import {env} from '../lib/env.mjs';import {h,tgUpload,tgUploadMany} from '../lib/telegram.mjs';
 import {photoBytes} from '../channels/telegram-album.mjs';
 import {rows,blobPath} from '../media/library.mjs';
+import {previewVideo} from './approval-video.mjs';
 export async function previewPhotos(entry,previous,onState){
- const photos=(entry.media||[]).filter(m=>m.type==='image');if(!photos.length)return null;
+ const photos=(entry.media||[]).filter(m=>m.type==='image');if(!photos.length)return previewVideo(entry,previous,onState);
  if(photos.length>10)throw Error('для согласования поддерживается до 10 фото одним альбомом');
  if(previous?.sending)throw Error('доставка предыдущего превью неоднозначна; автоматический повтор запрещён, нужна проверка оператором');
  if(previous?.complete&&previous.hash===entry.contentHash&&previous.messageIds?.length===photos.length)return previous;
@@ -19,7 +20,7 @@ export async function previewPhotos(entry,previous,onState){
  }
  const pending={hash:entry.contentHash,sending:true,complete:false};await onState(pending);
  const fields={chat_id:env('TG_GROUP_ID'),...(env('TG_TOPIC_APPROVAL')?{message_thread_id:Number(env('TG_TOPIC_APPROVAL'))}:{})};
- const caption=`Фотографии для согласования · ${h(entry.name)}`;
+ const caption='Фотографии для согласования';
  let r;if(files.length===1)r=await tgUpload('sendPhoto',{...fields,caption,parse_mode:'HTML'},'photo',files[0].file);
  else r=await tgUploadMany('sendMediaGroup',{...fields,media:files.map((f,i)=>({type:'photo',media:`attach://${f.field}`,...(i===0?{caption,parse_mode:'HTML'}:{})}))},files);
  if(r.kind!=='ok'){if(r.kind==='refused')await onState({...pending,sending:false});throw Error('фото для согласования не доставлены; при сетевом обрыве сначала нужна проверка оператором');}

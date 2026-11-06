@@ -9,6 +9,9 @@
 //   npm run queue -- submit [<номер|имя>]     на согласование в группу; без номера — все черновики
 //   npm run queue -- inbox                    правки от утверждающего
 //   npm run queue -- refresh-card <id>         restore one card without changing approval
+//   npm run queue -- move <id> --now           next eligible runner pass, after approval
+//   npm run queue -- move <id> --from=2030-06-01T10:00 --to=2030-06-01T12:00
+//   npm run queue -- move <id> --delay=30
 //   npm run queue -- move <номер|имя> --date=2026-10-16 --time=19:00 | --next
 //   npm run queue -- cancel <номер|имя> [--reason=…]
 //   npm run queue -- slots [--channel=threads] [--count=5]

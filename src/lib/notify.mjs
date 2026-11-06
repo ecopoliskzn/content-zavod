@@ -41,17 +41,19 @@ export async function toGroup(topic, text, { buttons, extra = {}, retries = 1 } 
   if (!chat) return { ok: false, error: "нет TG_GROUP_ID: рабочая группа не задана" };
   let last = { ok: false, error: "пустой текст" };
   const parts = chunks(text);
+  const messageIds=[];
   for (let i = 0; i < parts.length; i++) {
     const isLast = i === parts.length - 1;
     const res = await sendMessage(chat, parts[i], { ...topicExtra(topic), ...(isLast && buttons ? keyboard(buttons) : {}), ...extra }, {retries});
     last = res.kind === "ok" ? { ok: true, messageId: res.result?.message_id } : { ok: false, error: res.error };
+    if(last.ok)messageIds.push(last.messageId);
     if (!last.ok) {
       // Сбой отправки не глотаем молча: в журнале процесса он обязан быть виден.
       console.error(`[notify] сообщение в группу (${topic}) не ушло: ${res.error}`);
       break;
     }
   }
-  return last;
+  return {...last,messageIds};
 }
 
 export const report = (text) => toGroup("reports", text);

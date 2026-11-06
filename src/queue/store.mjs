@@ -18,6 +18,9 @@ import { dataPath } from "../lib/env.mjs";
 import { appendJsonl, latestById, lock, readJsonl, writeAtomic } from "../lib/files.mjs";
 import { sleep } from "../lib/http.mjs";
 import { canMove, contentHash, entryHash, isFinal, normalize, validate } from "./format.mjs";
+import {slotFor} from './slots.mjs';
+import {channel as channelCfg} from '../lib/config.mjs';
+import {mskDate,mskTime,dueAt} from '../lib/time.mjs';
 
 export class RuleError extends Error {
   constructor(message) {
@@ -50,6 +53,14 @@ export function get(id) {
 }
 
 function write(entry, by) {
+  const previous=get(entry.id),approval=previous?.approval;
+  if(approval?.card?.messageId||approval?.preview?.messageIds?.length){
+    // Только квитанции сообщений, без текста и участников. Они переживают сброс
+    // approval при смене содержимого и позволяют доказанно убрать старый комплект.
+    const receipt={groupId:approval.groupId,topicId:approval.topicId,cardHash:approval.cardHash,card:approval.card,preview:approval.preview?{hash:approval.preview.hash,complete:approval.preview.complete,messageIds:approval.preview.messageIds}:undefined};
+    const records=[...(previous.approvalHistory||[]),...(entry.approvalHistory||[]),receipt];
+    entry={...entry,approvalHistory:[...new Map(records.map(r=>[JSON.stringify(r),r])).values()]};
+  }
   return appendJsonl(FILE(), { ...entry, hash: entryHash(entry), contentHash: contentHash(entry), at: new Date().toISOString(), by: by || "система" });
 }
 
@@ -72,7 +83,7 @@ export async function put(raw, by) {
     if ((was.done?.length ?? 0) > 0) throw new RuleError("часть ветки уже вышла: замена задвоит начало. Хвост дописывается руками");
     const merged = { ...was, ...next, status: was.status, attempts: was.attempts ?? 0, approval: was.approval, done: was.done, result: was.result };
     if (was.contentHash === contentHash(merged)) {
-      if (was.hash === entryHash(merged)) return { entry: was, result: "без изменений" };
+      if (was.hash === entryHash(merged)&&JSON.stringify(was.facts||[])===JSON.stringify(merged.facts||[])) return { entry: was, result: "без изменений" };
       return { entry: write(merged, by), result: "обновлена" };
     }
     if (["review", "approved", "failed", "expired"].includes(was.status)) {
@@ -85,6 +96,30 @@ export async function put(raw, by) {
 /** Перевести запись в новый статус. patch — что дописать (ссылка, причина, кто одобрил). */
 function expectEntry(was,expected={}){
   if(expected.contentHash&&was.contentHash!==expected.contentHash||expected.actionToken&&was.approval?.actionToken!==expected.actionToken||expected.card&&was.approval?.card?.messageId!==expected.card)throw new RuleError('карточка устарела: решение не применено');
+}
+/** Согласие и выбор свободного срока записываются вместе под общим замком очереди. */
+export async function approveEntry(id,approval,by,expected={},now=Date.now()){
+  return withLock(()=>{
+    const was=get(id);if(!was)throw new RuleError('записи нет в очереди');expectEntry(was,expected);
+    if(was.status!=='review')throw new RuleError('согласовать можно только запись, которая ждёт решения');
+    // Указание ждать хранится только в timing. Дата старой сетки согласие не задерживает.
+    const slot=was.kind==='reply'?{date:was.date,time:was.time}:was.timing?.mode==='at'?{date:was.timing.date,time:was.timing.time}:slotFor(was,all(),channelCfg(was.channel),now);
+    if(!slot)throw new RuleError('в заданном периоде или допустимых окнах нет свободного времени; уточните срок');
+    return write({...was,...slot,timing:was.timing||{mode:'after-approval'},status:'approved',approval,fixAsked:undefined},by);
+  });
+}
+/** Только явно разрешённое оператором исключение для трёх записей текущего кейса.
+ * Проверки выполняет команда до вызова; замок и точный хеш исключают подмену версии. */
+export async function recordOperatorApproval(id,{hash,basis},by){
+  return withLock(()=>{
+    const was=get(id);if(!was)throw new RuleError('записи нет в очереди');
+    if(was.material!=='case:salavat-kupere-2026-10'||!['telegram','vk','threads'].includes(was.channel))throw new RuleError('исключение разрешено только для Telegram/VK/Threads текущего кейса Салават Купере');
+    if(!['draft','rework','review'].includes(was.status))throw new RuleError('запись уже имеет решение или находится в выпуске');
+    if(!/^[a-f0-9]{16}$/.test(String(hash))||hash!==was.contentHash)throw new RuleError('содержимое изменилось: нужен точный текущий contentHash');
+    if(typeof basis!=='string'||basis.trim().length<16||basis.length>1000)throw new RuleError('укажите основание письменного разрешения оператора');
+    const now=Date.now();
+    return write({...was,date:mskDate(now),time:mskTime(now),timing:{mode:'urgent'},status:'approved',approval:{kind:'operator-exception',contentHash:was.contentHash,basis:basis.trim(),attestedBy:by,at:new Date(now).toISOString()},fixAsked:undefined},by);
+  });
 }
 export async function transition(id, to, patch = {}, by, expected = {}) {
   return withLock(() => {
@@ -152,13 +187,13 @@ export async function forceHeld(id, fields = {}, by) {
 }
 
 /** Переставить слот. Содержимое не меняется, поэтому согласование сохраняется. */
-export async function reschedule(id, date, time, by, expected = {}) {
+export async function reschedule(id, date, time, by, expected = {},timing) {
   return withLock(() => {
     const was = get(id);
     if (!was) throw new RuleError(`записи ${id} нет в очереди`);
     expectEntry(was,expected);
     if (["running", "handed"].includes(was.status) || isFinal(was.status)) throw new RuleError(`запись в статусе «${was.status}», слот не переставляется`);
-    const next = { ...was, date, time };
+    const next = { ...was, date, time,...(timing?{timing}:{}) };
     const bad = validate(normalize(next)).filter((b) => b.startsWith("дата"));
     if (bad.length) throw new RuleError(bad.join("; "));
     // Просроченная и упавшая после перестановки снова ждут своего слота.

@@ -44,6 +44,7 @@ import { setEnv } from "../lib/envfile.mjs";
 import { readJson, writeJson } from "../lib/files.mjs";
 import { request, sleep } from "../lib/http.mjs";
 import { dueAt } from "../lib/time.mjs";
+import {effectiveDue} from '../queue/timing.mjs';
 import { probe, setSchedule, status, upload } from "../channels/youtube.mjs";
 import { video as videoGate } from "../gates/rules.mjs";
 import { describeContext } from "./describe.mjs";
@@ -234,7 +235,7 @@ async function doUpload() {
   } else {
     const description = composeDescription(entry, context(registry));
     if (description.length > 5000) { console.error(`описание с блоком ссылок ${description.length} знаков, предел YouTube 5000: сократите текст`); return 1; }
-    const due = dueAt(entry);
+    const due = effectiveDue(entry);
     /* Дата выхода ставится только одобренной записи: неодобренный ролик сам не откроется.
        И только с запасом в полчаса. Загрузка идёт минуты, и всё это время запись на сервере
        ещё не знает номера ролика: если её снимут посреди загрузки, срок, решённый в начале,

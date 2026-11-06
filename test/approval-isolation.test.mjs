@@ -53,3 +53,8 @@ test('одновременный двойной callback и обновление
  await approval.refreshCard(e.id);e=store.get(e.id);assert.equal(e.approval.at,approvalAt);assert.equal(e.contentHash,hash);assert.ok(button(e,'no'));await tap(e,'undo',{data:old});assert.equal(store.get(e.id).status,'approved');
  assert.deepEqual(store.all().filter(x=>x.id!==e.id).map(x=>[x.id,x.status,x.approval?.actionToken]),before);
 });
+test('просроченный callback Telegram не записывает решение',async()=>{
+ const e=await create('expired-query'),old=globalThis.fetch;
+ globalThis.fetch=async(url,init)=>String(url).endsWith('/answerCallbackQuery')?Response.json({ok:false,error_code:400,description:'query is too old and response timeout expired'},{status:400}):old(url,init);
+ try{await tap(e,'ok');assert.equal(store.get(e.id).status,'review');}finally{globalThis.fetch=old;}
+});

@@ -134,7 +134,7 @@ export function freshness(queue = [], ledger = []) {
 }
 
 /** Отпечаток «что и когда»: по нему дубль расписания понимает, отстала ли копия. */
-export const entryHash = (e) => fnv16(JSON.stringify([content(e), e.date, e.time]));
+export const entryHash = (e) => fnv16(JSON.stringify([content(e), e.date, e.time,...(e.timing?[e.timing]:[])]));
 
 /** Приводит сырую запись к формату. Лишние поля не выбрасываются, только чистятся известные. */
 export function normalize(raw) {
@@ -167,6 +167,11 @@ const isHttps = (u) => /^https:\/\/[^\s]+$/.test(String(u || ""));
  */
 export function validate(e) {
   const bad = [];
+  if(e.timing&&!['after-approval','at','urgent','period'].includes(e.timing.mode))bad.push('срок: неизвестный способ выбора времени');
+  if(e.timing?.mode==='period'){
+    const stamp=v=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(v||''))?Date.parse(v+':00+03:00'):NaN;
+    const from=stamp(e.timing.from),to=stamp(e.timing.to);if(!Number.isFinite(from)||!Number.isFinite(to)||from>to)bad.push('срок: нужен корректный период от/до по Москве');
+  }
   if (!/^[0-9a-f]{16}$/.test(e.id || "")) bad.push("номер записи: нужно 16 шестнадцатеричных знаков");
   if (!KINDS[e.channel]) bad.push(`площадка «${e.channel}»: такой нет (есть ${Object.keys(KINDS).join(", ")})`);
   else if (e.kind !== "reply" && !KINDS[e.channel].includes(e.kind)) bad.push(`вид «${e.kind}» на площадке ${e.channel} не выходит (можно ${KINDS[e.channel].join(", ")})`);

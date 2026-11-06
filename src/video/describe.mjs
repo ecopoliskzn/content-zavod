@@ -11,7 +11,12 @@ import { readJson } from "../lib/files.mjs";
 import { composeDescription, pinnedComment } from "./series.mjs";
 
 export function describeContext(extra = {}) {
+  const registry=readJson(path.join(PROJECT_ROOT,'content','youtube','series.json'),{series:[]})||{series:[]};
+  const snapshot=readJson(path.join(PROJECT_ROOT,'content','youtube','channel.json'),{list:[]})||{list:[]};
+  const titles=Object.fromEntries((snapshot.list||[]).map(v=>[v.id,v.title]));
+  for(const series of registry.series||[])for(const v of series.videos||[])if(v.id&&v.title)titles[v.id]=v.title;
   return {
+    registry,titles,
     base: env("PUBLIC_BASE_URL"),
     bot: env("TG_BOT_USERNAME"),
     about: config().client.about || "",
