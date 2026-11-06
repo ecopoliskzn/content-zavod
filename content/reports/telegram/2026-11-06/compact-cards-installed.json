@@ -1,0 +1,20 @@
+{
+  "date": "2026-11-06",
+  "installedVersion": "60bda74",
+  "release": "20261106-114541-60bda74",
+  "cardViewFirstVerifiedVersion": "7578e0b",
+  "serverIndependentlyVerifiedAt": "2026-11-06T11:47:55Z",
+  "health": {"endpoint": "http://127.0.0.1:3100/health", "verifiedByDeploy": true},
+  "cardView": "compact-v1",
+  "verifiedBy": "editMessageText API response on the client VPS; returned text compared to requested rendered text",
+  "cards": [
+    {"entryId":"fda3e7578d62a698","messageId":291,"status":"failed","editOk":true,"verifiedText":true,"buttonCount":2,"contentUnchanged":true,"approvalUnchanged":true},
+    {"entryId":"f07defb6acd90d31","messageId":292,"status":"approved","editOk":true,"verifiedText":true,"buttonCount":2,"contentUnchanged":true,"approvalUnchanged":true,"nativeVideoPreviewMessageId":293},
+    {"entryId":"ffe75ad066f9ea5f","messageId":270,"status":"failed","editOk":true,"verifiedText":true,"buttonCount":2,"contentUnchanged":true,"approvalUnchanged":true,"reusedPhotoPreviewMessageIds":[266,267,268,269]}
+  ],
+  "timing": {"instagram":"2026-11-06 14:40 Europe/Moscow","mode":"after-approval","youtube":"2026-11-06 14:23 Europe/Moscow; failed on redundant S3 resolution, not waiting until tomorrow"},
+  "publicationRunnerInvokedByS0": false,
+  "cleanDeploymentTests": {"projectPassed":347,"botPassed":143,"vaultBrokenLinks":0,"doctorMissingLocalSettings":8,"doctorWarnings":5},
+  "pendingAtThisSnapshot": ["S2 resumes the already approved YouTube release as sole publisher; 60bda74 source fix is installed", "Instagram video delivery still requires a working publication media path", "GitHub push of the exact 10-commit payload through 60bda74 awaits explicit approval requested by auto-review"],
+  "uiScreenshotVerified": false
+}
