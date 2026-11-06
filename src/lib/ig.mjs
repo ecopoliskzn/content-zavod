@@ -22,8 +22,12 @@ export async function ig(path, { method = "GET", body, timeoutMs = 30_000, retri
   const relay = env("IG_RELAY_URL");
   const init = { method, timeoutMs, retries, retryDelayMs: 10_000, headers: {} };
   if (body !== undefined) {
-    init.body = JSON.stringify(body);
-    init.headers["content-type"] = "application/json";
+    // Контейнеры Graph API принимают параметры формы. JSON остаётся у сообщений:
+    // recipient/message там вложенные объекты и имеют другой контракт.
+    const endpoint=path.split('?')[0];
+    const publishing=method==='POST'&&(endpoint.endsWith('/media')||endpoint.endsWith('/media_publish'));
+    init.body = publishing?new URLSearchParams(Object.entries(body).filter(([,v])=>v!==undefined&&v!==null).map(([k,v])=>[k,String(v)])):JSON.stringify(body);
+    init.headers["content-type"] = publishing?'application/x-www-form-urlencoded':"application/json";
   }
   if (relay) {
     init.headers["x-relay-secret"] = env("IG_RELAY_SECRET");
