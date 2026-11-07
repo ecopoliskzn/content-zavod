@@ -129,7 +129,7 @@ test('боевой verifier требует publication bytes, совпадени
  const forged=structuredClone(value);forged.variants[0].entry.status='approved';assert.equal(verifyIntakeResult(forged,job),false);
  const mismatch=structuredClone(value);mismatch.variants[0].text='Другой текст';assert.equal(verifyIntakeResult(mismatch,job),false);
  const originalRef=structuredClone(value);originalRef.variants[0].entry.media[0].mediaId=original.mediaId;originalRef.variants[0].mediaIds=[original.mediaId];assert.equal(verifyIntakeResult(originalRef,job),false);
- writeFileSync(lib.blobPath(pub),'corrupted');assert.equal(verifyIntakeResult(value,job),false);
+ writeFileSync(lib.blobPath(pub),'corrupted');assert.equal(verifyIntakeResult(value,job),false);writeFileSync(lib.blobPath(pub),readFileSync(file));
 });
 test('claim квитанция потеряна после серверного успеха: requestId восстанавливает ровно прежнее владение',async()=>{
  const f=fixture(),id=await ready(f),j=f.app.jobs()[0],requestId='1'.repeat(32),first=f.app.claim(j.id,'S1',requestId);
@@ -147,7 +147,33 @@ test('цифры с источником: вопрос, ответ, сверка
  f.app.question(j.id,'S1',lease.token,{text:'Пришлите источник площади',allowOmit:true});
  await f.app.handleUpdate({update_id:77,message:{message_id:77,from:{id:11},chat:{id:-100123},message_thread_id:9,text:'Источник: https://ecopolisrf.ru/cases/example/ — площадь 250 м².',reply_to_message:{message_id:f.app.show(id).card.messageId}}});
  assert.equal(f.app.show(id).questions[0].status,'answered');
- const facts={sources:[{id:'client-case',kind:'client-page',locator:'https://ecopolisrf.ru/cases/example/',text:'Площадь покрытия 250 м².'}],facts:[{claim:'Площадь покрытия 250 м².',sourceId:'client-case',confirmed:true}]};
+ const facts={sources:[{id:'client-case',kind:'client-page',locator:'https://ecopolisrf.ru/cases/example/',text:'Площадь покрытия 250 м².'}],facts:[{claim:'Площадь покрытия 250 м².',sourceId:'client-case',confirmed:true}],resolutions:[{questionId:f.app.show(id).questions[0].id,type:'source',sourceId:'client-case',claims:['Площадь покрытия 250 м².']}]};
  assert.equal(f.app.facts(id,f.app.show(id).revision,j.id,'S1',lease.token,facts).ok,true);assert.equal(f.app.release(j.id,'S1',lease.token).ok,true);
  assert.equal(f.app.prepare(id,f.app.show(id).revision,'11').ok,true);const next=f.app.jobs().at(-1);assert.equal(next.input.facts[0].source,'https://ecopolisrf.ru/cases/example/');assert.equal(next.input.facts[0].claim,'Площадь покрытия 250 м².');assert.equal(f.app.claim(next.id,'S1').ok,true);
+});
+test('пустая/несвязанная проверка источников не закрывает отвеченный вопрос',async()=>{
+ const f=fixture(),id=await ready(f),j=f.app.jobs()[0],lease=f.app.claim(j.id,'S1');f.app.question(j.id,'S1',lease.token,{text:'Уточните происхождение цифры',allowOmit:false});
+ await f.app.handleUpdate({update_id:90,message:{message_id:90,from:{id:11},chat:{id:-100123},message_thread_id:9,text:'Не знаю',reply_to_message:{message_id:f.app.show(id).card.messageId}}});
+ const q=f.app.show(id).questions[0];assert.equal(q.status,'answered');
+ assert.equal(f.app.facts(id,f.app.show(id).revision,j.id,'S1',lease.token,{sources:[],facts:[]}).ok,true);assert.equal(f.app.show(id).questions[0].status,'answered');
+ assert.equal(f.app.facts(id,f.app.show(id).revision,j.id,'S1',lease.token,{sources:[],facts:[],resolutions:[{questionId:q.id,type:'source',sourceId:'missing',claims:['unknown']}]}).ok,false);assert.equal(f.app.show(id).questions[0].status,'answered');
+});
+test('редакторская аннотация источника не требует повторной кнопки автора: реальный формат post с 40 мм → result → review',async()=>{
+ const lib=await import('../src/media/library.mjs'),{verifyIntakeResult}=await import('../src/bot/media-intake-runtime.mjs'),{deliverIntakeResults}=await import('../src/bot/media-intake-delivery.mjs');
+ const file=path.join(isolation,'workflow.png');writeFileSync(file,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfWQAAAAASUVORK5CYII=','base64'));
+ const f=fixture({config:{...config,targets:[{...config.targets[0]},{...config.targets[0],channel:'vk',account_ref:'own-vk',format:'photopost'}]},verifyResult:verifyIntakeResult,importFile:async a=>({...await lib.importMedia(file,{material:a.material,source:a.source,variant:a.variant}),verified:true,readable:true})});
+ const p=photo();p.message.caption='Длина образца 40 мм. Показать фото образца.';await f.app.handleUpdate(p);const id=f.app.list()[0].id;await f.app.handleUpdate(cb(f.app,id,'rights',f.app.show(id).revision));await f.app.handleUpdate(cb(f.app,id,'prepare',f.app.show(id).revision));
+ const j=f.app.jobs()[0],lease=f.app.claim(j.id,'S1','a'.repeat(32)),rev=f.app.show(id).revision;
+ const annotation=f.app.facts(id,rev,j.id,'S1',lease.token,{sources:[{id:'client-document',kind:'client-document',locator:'документ клиента: синтетический акт измерения, 07.11.2026',text:'Длина образца 40 мм.'}],facts:[{claim:'Длина образца 40 мм.',sourceId:'client-document',confirmed:true}]});
+ assert.equal(annotation.ok,true);assert.equal(f.app.show(id).revision,rev);assert.equal(f.app.show(id).mode,'submitted');assert.notEqual(annotation.inputHash,j.inputHash);
+ const latest=f.app.jobs()[0],original=latest.input.files[0],publication=await lib.importMedia(file,{material:'intake:'+id,source:'synthetic derivative',role:'publication',parent:original.mediaId,variant:'approved-later'});
+ const text='Образец длиной 40 мм показан на фото. Рассмотрите его поверхность.';
+ const value={inputHash:latest.inputHash,editorialReview:{result:'passed',policyVersion:'pilot-1'},variants:latest.targets.map(t=>({channel:t.channel,format:t.format,text,mediaIds:[publication.mediaId],entry:{channel:t.channel,kind:'post',name:`mi-${id}-${rev}`,material:'intake:'+id,text,media:[{type:'image',mediaId:publication.mediaId}],facts:latest.input.facts,date:'2026-11-07',time:'12:00'}}))};
+ assert.equal(f.app.result(j.id,'S1',lease.token,value).ok,true);
+ const queue=new Map(),{normalize,contentHash}=await import('../src/queue/format.mjs');
+ const sent=await deliverIntakeResults(f.app,{getEntry:id=>queue.get(id),executeQueue:async(cmd,args)=>{if(cmd==='add'){const e=normalize(args.entries);queue.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});}else{const e=queue.get(args.ref);e.status='review';e.approval={card:{messageId:500}};}return{code:0};}});
+ assert.equal(sent.submitted,2);assert.ok([...queue.values()].every(e=>e.status==='review'));assert.equal(f.app.readiness(id).P9.result,'blocked');
+});
+test('release повторяется после потери квитанции и не снимает нового владельца',async()=>{
+ const f=fixture(),id=await ready(f),j=f.app.jobs()[0],old=f.app.claim(j.id,'S1');assert.equal(f.app.release(j.id,'S1',old.token).ok,true);const next=f.app.claim(j.id,'S2');assert.equal(next.ok,true);const retry=f.app.release(j.id,'S1',old.token);assert.equal(retry.duplicate,true);assert.equal(f.app.jobs()[0].claim.owner,'S2');
 });

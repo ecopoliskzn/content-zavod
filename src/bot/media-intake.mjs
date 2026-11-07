@@ -207,9 +207,23 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
    const source=src.kind==='author_statement'?`интервью: ${fact.namedSource}, ${fact.sourceDate}; ${src.locator}`:src.locator;
    checked.push({claim:fact.claim,source,sourceId:src.id,status:src.kind==='author_statement'?'author_statement_reviewed':'confirmed_source',checkedBy:owner,checkedAt:now()});
   }
-  r.facts=checked;r.factSources=sources.filter(s=>s.kind!=='author_statement');for(const q of r.questions.filter(q=>q.status==='answered')){q.status='resolved';q.resolution='reviewed-source';q.checkedBy=owner;}change(r,'brief');return{ok:true,revision:r.revision};
+  const resolutions=value.resolutions||[];if(!Array.isArray(resolutions))return{ok:false,reason:'resolutions'};
+  for(const resolution of resolutions){const q=r.questions.find(q=>q.id===resolution.questionId&&q.status!=='resolved');
+   if(!q)return{ok:false,reason:'question'};
+   if(resolution.type==='omit'){if(!q.allowOmit)return{ok:false,reason:'omit_not_allowed'};}
+   else if(resolution.type==='source'){if(!Array.isArray(resolution.claims)||!resolution.claims.length||resolution.claims.some(claim=>!checked.some(f=>f.claim===claim&&f.sourceId===resolution.sourceId)))return{ok:false,reason:'question_source'};}
+   else return{ok:false,reason:'resolution_type'};
+  }
+  r.facts=checked;r.factSources=sources.filter(s=>s.kind!=='author_statement');r.facts_revision=(r.facts_revision||0)+1;
+  for(const resolution of resolutions){const q=r.questions.find(q=>q.id===resolution.questionId);q.status='resolved';q.resolution=resolution.type;q.sourceId=resolution.sourceId||null;q.claims=resolution.claims||[];q.checkedBy=owner;}
+  // Аннотация уже принятого содержания не меняет клиентское задание/manifest.
+  // Меняем только зависимости редакторского пакета; прежний результат с иным hash отвергается.
+  if(j.revision===r.revision){j.input.facts=r.facts.map(({claim,source})=>({claim,source}));j.input.sources=sources;j.input.factsRevision=r.facts_revision;j.inputHash=hash(j.input);}
+  r.card.dirty=true;return{ok:true,revision:r.revision,factsRevision:r.facts_revision,inputHash:j.revision===r.revision?j.inputHash:null,job:j.revision===r.revision?clone(j):null};
  });}
- function release(id,owner,token){return store.tx(s=>{const j=s.jobs[id];if(!j||j.claim?.owner!==owner||j.claim.token!==token)return{ok:false,reason:'claim'};if(j.status!=='claimed')return{ok:false,reason:'status'};j.status=s.materials[j.materialId].revision===j.revision?'queued':'superseded';j.previousClaim=j.claim;j.claim=null;return{ok:true,status:j.status};});}
+ function release(id,owner,token){return store.tx(s=>{const j=s.jobs[id];
+  if(j?.previousClaim?.owner===owner&&j.previousClaim.token===token)return{ok:true,duplicate:true,status:j.status};
+  if(!j||j.claim?.owner!==owner||j.claim.token!==token)return{ok:false,reason:'claim'};if(j.status!=='claimed')return{ok:false,reason:'status'};j.status=s.materials[j.materialId].revision===j.revision?'queued':'superseded';j.previousClaim=j.claim;j.claim=null;return{ok:true,status:j.status};});}
  function retry(id,revision,actor){return store.tx(s=>{const r=s.materials[id];if(!r||r.revision!==revision||!actorCan(cfg(),r,actor))throw Error('нет права или версия устарела');for(const f of r.files)if(f.status==='failed')f.status='pending';return{ok:true};});}
  return{ingest,flush,handleUpdate:async u=>{const r=ingest(u);await flush();return r;},list:()=>Object.values(store.read().materials).map(r=>({id:r.id,revision:r.revision,mode:r.mode,files:r.files.length})),show:id=>clone(store.read().materials[id]),
   readiness,card,edit,prepare,jobs:()=>Object.values(store.read().jobs).map(clone),claim,result,question,facts,release,retry,store};
