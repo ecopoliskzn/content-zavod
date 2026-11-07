@@ -4,7 +4,8 @@ import {existsSync,readFileSync,mkdirSync,writeFileSync,renameSync} from 'node:f
 import {dataPath,env,list} from '../lib/env.mjs';
 import {tg} from '../lib/telegram.mjs';
 import {createIntake} from './media-intake.mjs';
-import {verifyIntakeResult} from './media-intake-delivery.mjs';
+import {verifyIntakeResult,entryFromIntakeVariant} from './media-intake-delivery.mjs';
+import {contentHash} from '../queue/format.mjs';
 export {verifyIntakeResult};
 
 const dir=()=>dataPath('media-intake');
@@ -21,6 +22,18 @@ export function instance(){
 export const ingest=update=>instance().ingest(update);
 export const flush=()=>instance().flush();
 export const handleUpdate=async update=>{const accepted=ingest(update);if(accepted.accepted)await flush();return accepted;};
+
+// Предвыпускной gate для S0: изменение исходного задания нельзя обойти старой
+// карточкой очереди. Не затрагивает чужие материалы и не публикует ничего сам.
+export function publicationBlockers(entry){
+ if(!String(entry?.material||'').startsWith('intake:'))return[];
+ try{const id=entry.material.slice(7),state=instance().store.read(),r=state.materials[id];
+  if(!r||r.mode!=='submitted'||entry.name!==`mi-${id}-${r.revision}`)return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
+  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===r.revision&&j.status==='completed'&&j.artifactsVerified),v=j?.result?.variants?.find(v=>v.channel===entry.channel);
+  if(!v||contentHash(entryFromIntakeVariant(v,j))!==contentHash(entry))return['готовность: публикационная версия не соответствует проверенному результату задания'];
+  return[];
+ }catch{return['готовность: состояние входящего задания недоступно; выпуск удержан до сверки'];}
+}
 
 function validateConfig(c){
  if(!c||typeof c.enabled!=='boolean'||!/^-[0-9]+$/.test(String(c.groupId))||!Number.isSafeInteger(c.topicId)||c.topicId<0)throw Error('нужны рабочая группа и тема');
@@ -48,6 +61,7 @@ export async function admin(command,args={},actor='operator'){
   case 'intake-release':data=app.release(args.id,args.owner,args.token);break;
   case 'intake-question':data=app.question(args.id,args.owner,args.token,args.question);break;
   case 'intake-facts':data=app.facts(args.id,args.revision,args.jobId,args.owner,args.token,args.facts);break;
+  case 'intake-context':data=app.context(args.id,args.owner,args.token);break;
   case 'intake-edit':{const changed=app.edit(args.id,args.revision,args.userId,args.patch);data={ok:true,id:changed.id,revision:changed.revision};break;}
   case 'intake-prepare':data=app.prepare(args.id,args.revision,args.userId);break;
   case 'intake-retry':data=app.retry(args.id,args.revision,args.userId);break;

@@ -161,7 +161,7 @@ test('пустая/несвязанная проверка источников 
 test('редакторская аннотация источника не требует повторной кнопки автора: реальный формат post с 40 мм → result → review',async()=>{
  const lib=await import('../src/media/library.mjs'),{verifyIntakeResult}=await import('../src/bot/media-intake-runtime.mjs'),{deliverIntakeResults}=await import('../src/bot/media-intake-delivery.mjs');
  const file=path.join(isolation,'workflow.png');writeFileSync(file,Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jfWQAAAAASUVORK5CYII=','base64'));
- const f=fixture({config:{...config,targets:[{...config.targets[0]},{...config.targets[0],channel:'vk',account_ref:'own-vk',format:'photopost'}]},verifyResult:verifyIntakeResult,importFile:async a=>({...await lib.importMedia(file,{material:a.material,source:a.source,variant:a.variant}),verified:true,readable:true})});
+ const f=fixture({config:{...config,limits:{...config.limits,maxPending:1},targets:[{...config.targets[0]},{...config.targets[0],channel:'vk',account_ref:'own-vk',format:'photopost'}]},verifyResult:verifyIntakeResult,importFile:async a=>({...await lib.importMedia(file,{material:a.material,source:a.source,variant:a.variant}),verified:true,readable:true})});
  const p=photo();p.message.caption='Длина образца 40 мм. Показать фото образца.';await f.app.handleUpdate(p);const id=f.app.list()[0].id;await f.app.handleUpdate(cb(f.app,id,'rights',f.app.show(id).revision));await f.app.handleUpdate(cb(f.app,id,'prepare',f.app.show(id).revision));
  const j=f.app.jobs()[0],lease=f.app.claim(j.id,'S1','a'.repeat(32)),rev=f.app.show(id).revision;
  const annotation=f.app.facts(id,rev,j.id,'S1',lease.token,{sources:[{id:'client-document',kind:'client-document',locator:'документ клиента: синтетический акт измерения, 07.11.2026',text:'Длина образца 40 мм.'}],facts:[{claim:'Длина образца 40 мм.',sourceId:'client-document',confirmed:true}]});
@@ -173,7 +173,25 @@ test('редакторская аннотация источника не тре
  const queue=new Map(),{normalize,contentHash}=await import('../src/queue/format.mjs');
  const sent=await deliverIntakeResults(f.app,{getEntry:id=>queue.get(id),executeQueue:async(cmd,args)=>{if(cmd==='add'){const e=normalize(args.entries);queue.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});}else{const e=queue.get(args.ref);e.status='review';e.approval={card:{messageId:500}};}return{code:0};}});
  assert.equal(sent.submitted,2);assert.ok([...queue.values()].every(e=>e.status==='review'));assert.equal(f.app.readiness(id).P9.result,'blocked');
+ const {syncIntakeQueue}=await import('../src/bot/media-intake-sync.mjs'),sync=()=>syncIntakeQueue(f.app,{getEntry:id=>queue.get(id),blocked:false,backup:null});sync();assert.match(f.app.card(id).text,/На согласовании/);
+ for(const e of queue.values()){e.status='approved';e.approval={at:'2026-11-07T10:00:00Z',card:{messageId:500},cardHash:e.contentHash,preview:{complete:true}};}
+ sync();assert.equal(f.app.readiness(id).P9.result,'passed');
+ const tg=[...queue.values()].find(e=>e.channel==='telegram'),vk=[...queue.values()].find(e=>e.channel==='vk');tg.status='published';tg.result={id:'synthetic-post',link:'https://t.me/synthetic/1'};vk.status='handed';sync();
+ assert.equal(f.app.show(id).workflowClosed,false);assert.equal(f.app.readiness(id).targets.telegram.P12.result,'passed');assert.notEqual(f.app.readiness(id).targets.vk.P12.result,'passed');assert.match(f.app.card(id).text,/ожидает ручной выкладки/);
+ vk.status='failed';sync();assert.match(f.app.card(id).text,/технический владелец/);
+ vk.status='published';vk.result={id:'synthetic-vk',link:'https://vk.com/wall-1_1'};sync();assert.equal(f.app.show(id).workflowClosed,true);assert.equal(f.app.readiness(id).P12.result,'passed');assert.equal(f.app.readiness(id).P14.result,'blocked');assert.match(f.app.card(id).text,/Итог/);
+ assert.equal(f.app.prepare(id,f.app.show(id).revision,'11').ok,false);assert.equal(f.app.ingest(photo(99,'another-material')).accepted,true);
 });
 test('release повторяется после потери квитанции и не снимает нового владельца',async()=>{
  const f=fixture(),id=await ready(f),j=f.app.jobs()[0],old=f.app.claim(j.id,'S1');assert.equal(f.app.release(j.id,'S1',old.token).ok,true);const next=f.app.claim(j.id,'S2');assert.equal(next.ok,true);const retry=f.app.release(j.id,'S1',old.token);assert.equal(retry.duplicate,true);assert.equal(f.app.jobs()[0].claim.owner,'S2');
+});
+test('контекст только владельцу: актуальный ответ доступен без новой передачи и без token/author',async()=>{
+ const f=fixture(),id=await ready(f),j=f.app.jobs()[0],lease=f.app.claim(j.id,'S1');f.app.question(j.id,'S1',lease.token,{text:'Источник цифры?',allowOmit:true});
+ await f.app.handleUpdate({update_id:102,message:{message_id:102,from:{id:11},chat:{id:-100123},message_thread_id:9,text:'В документе клиента',reply_to_message:{message_id:f.app.show(id).card.messageId}}});
+ const c=f.app.context(j.id,'S1',lease.token);assert.equal(c.ok,true);assert.equal(c.revision,j.revision);assert.equal(c.mode,'submitted');assert.equal(c.questions[0].answer,'В документе клиента');assert.equal(c.job.claim.token,undefined);assert.equal(c.author,undefined);assert.equal(f.app.context(j.id,'S2',lease.token).ok,false);
+});
+test('бюджет после аннотации проверяется атомарно: отказ не меняет facts/hash/вопросы',async()=>{
+ const f=fixture({config:{...config,limits:{...config.limits,maxJobInput:3000}}}),id=await ready(f),j=f.app.jobs()[0],lease=f.app.claim(j.id,'S1');
+ const before=f.app.show(id),inputHash=f.app.jobs()[0].inputHash;
+ const response=f.app.facts(id,before.revision,j.id,'S1',lease.token,{sources:[{id:'large-document',kind:'client-document',locator:'документ клиента: synthetic',text:'x'.repeat(5000)}],facts:[]});assert.equal(response.reason,'input_budget');assert.equal(f.app.jobs()[0].inputHash,inputHash);assert.deepEqual(f.app.show(id),before);
 });
