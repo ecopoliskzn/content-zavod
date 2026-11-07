@@ -1,28 +1,33 @@
 {
-  "checkedAt": "2026-11-06T11:47:55Z",
-  "source": "S0 deploy plus independent VERSION/3100-health check; backup/free-space figures from orchestrator audit at 10:57Z",
-  "server": {"version": "1a8d1dc", "release": "20261106-120156-1a8d1dc", "versionCheckedAt":"2026-11-06T12:11:02Z", "freeKiB": 26528904, "newCodeInstalled": true, "healthOk":true,"healthCheckedAt":"2026-11-06T11:47:55Z"},
+  "checkedAt": "2026-11-07T16:41:56Z",
+  "source": "Live VPS metadata, isolated restore, own S3 client and independent botocore; safe aggregate reports in content/reports/backup/2026-11-07/",
+  "server": {"version": "1a8d1dc", "release": "20261106-120156-1a8d1dc", "versionCheckedOn":"2026-11-07", "freeKiB": 26462168, "newCodeInstalled": true, "healthOk":true,"healthCheckedAt":"2026-11-07T16:41:56Z","runnerAt":"2026-11-07T16:40:01.473Z"},
   "git": {
     "githubMain": "60bda7463130a3c3356b9420b2019e3b038841f3",
-    "githubCheckedAt":"2026-11-06T12:11:02Z",
-    "localMainAtCheck": "48e1b9c082ff254bd2af04f80aa73990b5dc3385",
-    "localAheadCountAtCheck": 5,
+    "githubCheckedOn":"2026-11-07",
+    "localMainAtCheck": "8a9112db4e65b87f5c68ceb1609dcade484be448",
+    "localAheadCountAtCheck": 7,
     "gitAuthor": "Codex",
     "technicalOwner": "S0",
-    "originatingChatConfirmed": false,
+    "pendingCommitOwnersVerified": true,
+    "pendingCommitAudit":"ops/handoff/github-readiness-2026-11-07.md",
     "newTimingCleanupCommit": "1f949ff9ac24f13e45e3f0b5707d2fa99430d81b",
     "pushStatus":"Exact 10-commit payload through 60bda74 explicitly approved and pushed; ls-remote independently confirmed. Later local commits were not included."
   },
   "backup": {
-    "checkedAt":"2026-11-06T10:57:00Z",
-    "localGeneral": {"at": "2026-11-06T00:30:00Z", "bytes": 14209872},
-    "localMedia": {"at": "2026-11-05T12:44:00Z", "bytes": 1021328},
+    "checkedAt":"2026-11-07T16:41:56Z",
+    "localGeneral": {"at": "2026-11-07T00:30:01Z", "bytes": 29921712,"sha256":"d26b8656bfb19602417d62b1b9c2dc51318d94e4eda54b6b78fbc54373717529","mediaIncluded":true,"dailyCronVerified":true},
+    "localMedia": {"at": "2026-11-07T16:39:09Z", "bytes": 14940288,"sha256":"94da540e543f75881db2dceed04ab2b5e0f8d3d084e2204d1fd31d95530ab665","isolatedRestoreVerified":true,"mode":"manual restore drill; not a separate cron"},
     "independentRussianCopyVerified": false,
     "lastKnownExternalError": "SignatureDoesNotMatch",
-    "lastRestoreVerifiedAt": null,
-    "restoreCoverage": "Earlier isolated media restore covered 8 records; current full library and independent copy not verified"
+    "lastRestoreVerifiedAt": "2026-11-07T16:35:59.564955Z",
+    "lastExternalRestoreVerifiedAt":null,
+    "restoreCoverage": "General archive and fresh media snapshot restored on VPS; 18 records, 5 originals, 13 publication versions, no hash failures; plaintext temporary copy removed",
+    "externalFailureVerifiedBy":["own SigV4 client","independent installed botocore"],
+    "externalClockOffsetSeconds":0,
+    "report":"content/reports/backup/2026-11-07/audit.json"
   },
   "approvalCleanup": {"deleted": [277,278,282,283,289,290], "keptAfterRefusal": [179], "currentMessagesProtected": true},
-  "blocking": [],
-  "pending": ["Refresh publication status with S2; preceding publication snapshot is historical", "Verify independent encrypted Russian backup and current isolated restore", "Confirm original chat ownership of beba30f and 5306d4b", "Later local Git commits are outside the approved 60bda74 push payload"]
+  "blocking": ["External backup access still fails SignatureDoesNotMatch; independent copy/restore unverified"],
+  "pending": ["Read current support response or verify existing backup credentials through owner-controlled access; no key rotation without decision", "After access repair, PUT encrypted backup, download on Russian VPS, verify SHA256 and isolated restore", "Later local Git commits are outside the approved 60bda74 push payload", "Publication media bucket is separate and does not prove backup health"]
 }
