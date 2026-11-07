@@ -8,6 +8,7 @@
 //   POST /tg/webhook          Telegram присылает сюда обновления бота → передаём серверу завода;
 //   POST /api/<метод>         сервер завода зовёт Bot API → передаём в Telegram;
 //   POST /upload/<метод>      то же с файлом (фото, видео): тело уходит потоком, как пришло;
+//   POST /download/getFile   закрытый поток файла по file_id, без выдачи URL с токеном;
 //   ANY  /ig/<путь>           сервер завода зовёт Instagram API → передаём, подставив маркер;
 //   GET/HEAD /media/<hash>.jpg только уже открытая публикационная JPEG-версия с origin;
 //   GET  /health              жив ли релей.
@@ -89,6 +90,37 @@ export async function handle(request, env, doFetch = fetch) {
   }
 
   // ── сервер завода → Telegram ──
+  if (p === '/download/getFile') {
+    if (request.method !== 'POST' || url.search) return json(404,{ok:false});
+    if (!same(request.headers.get('x-relay-secret'),env.TG_RELAY_SECRET)) return json(401,{ok:false});
+    if (!env.TG_BOT_TOKEN) return json(503,{ok:false});
+    let input;
+    try {
+      const reader=request.body?.getReader();if(!reader)return json(400,{ok:false});
+      const chunks=[];let size=0;
+      try {while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>2048){await reader.cancel();return json(400,{ok:false});}chunks.push(value);}}
+      finally{reader.releaseLock();}
+      const bytes=new Uint8Array(size);let offset=0;for(const c of chunks){bytes.set(c,offset);offset+=c.length;}
+      input=JSON.parse(new TextDecoder().decode(bytes));
+      if(!input||Object.keys(input).length!==1||typeof input.file_id!=='string'||! /^[A-Za-z0-9_-]{1,512}$/.test(input.file_id))return json(400,{ok:false});
+    }catch{return json(400,{ok:false});}
+    const max=20*1024*1024,signal=AbortSignal.timeout(60000);
+    try {
+      const meta=await doFetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/getFile`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input),redirect:'error',signal});
+      if(!meta.ok)return json(502,{ok:false});
+      const text=await meta.text();if(text.length>8192)return json(502,{ok:false});
+      const result=JSON.parse(text),file=result.result;
+      if(!result.ok||!file||typeof file.file_path!=='string'||! /^[A-Za-z0-9_/-]+\.[A-Za-z0-9]{1,8}$/.test(file.file_path)||file.file_path.startsWith('/')||file.file_path.split('/').some(s=>!s||s==='.'||s==='..')||!Number.isSafeInteger(file.file_size)||file.file_size<=0||file.file_size>max)return json(502,{ok:false});
+      const upstream=await doFetch(`https://api.telegram.org/file/bot${env.TG_BOT_TOKEN}/${file.file_path}`,{method:'GET',redirect:'error',signal});
+      if(!upstream.ok||!upstream.body){await upstream.body?.cancel();return json(502,{ok:false});}
+      const reader=upstream.body.getReader();let received=0;
+      const body=new ReadableStream({
+        async pull(controller){try{const {done,value}=await reader.read();if(done){if(received!==file.file_size)throw Error('size');controller.close();return;}received+=value.byteLength;if(received>file.file_size||received>max)throw Error('size');controller.enqueue(value);}catch{await reader.cancel().catch(()=>{});controller.error(new Error('Telegram file transfer incomplete'));}},
+        cancel(){return reader.cancel();}
+      });
+      return new Response(body,{headers:{'content-type':'application/octet-stream','content-length':String(file.file_size),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+    }catch{return json(502,{ok:false});}
+  }
   const tg = p.match(/^\/(api|upload)\/([A-Za-z]{3,40})$/);
   if (request.method === "POST" && tg) {
     if (!same(request.headers.get("x-relay-secret"), env.TG_RELAY_SECRET)) return json(401, { ok: false, description: "секрет релея не подошёл" });
