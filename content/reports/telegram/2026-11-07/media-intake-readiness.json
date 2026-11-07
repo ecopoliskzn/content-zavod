@@ -1,0 +1,18 @@
+{
+  "checkedAt":"2026-11-07T18:32:23.774Z",
+  "scope":"Read-only readiness check of the existing bot/webhook; no message history or attachment payload",
+  "serverVersion":"1a8d1dc",
+  "bot":{"expectedBotConfirmed":true,"canReadAllGroupMessagesFlag":false},
+  "webhook":{"set":true,"expectedRelayHost":true,"expectedPath":true,"queryEmpty":true,"allowedUpdates":["message","callback_query"],"pendingUpdates":0,"lastErrorAt":null,"secretConfigured":true},
+  "group":{"expectedWorkingGroupConfirmed":true,"ownMembershipQueryOk":true,"botStatus":"administrator","canManageTopics":true},
+  "protectedDownloadProbe":{"path":"/download/getFile","method":"POST with empty body, no file ID","status":404},
+  "sourceInspection":{"mediaIntakeInOnTelegram":false,"webhookAcknowledgesBeforeBackgroundProcessing":true,"protectedTelegramFileDownloadInRelaySource":false},
+  "specificPilotMediaObserved":false,
+  "specificPilotMediaSaved":false,
+  "getUpdatesCalled":false,
+  "messageHistoryRead":false,
+  "groupMessagesSent":false,
+  "rightsOrWebhookChanged":false,
+  "deploymentPerformed":false,
+  "nextPhase":"Design only, per later operator instruction; no implementation, integration or activation"
+}
