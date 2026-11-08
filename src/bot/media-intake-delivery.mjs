@@ -5,38 +5,48 @@ import {lock} from '../lib/files.mjs';import {rows,blobPath} from '../media/libr
 import {execute} from '../queue/commands.mjs';import {get} from '../queue/store.mjs';
 import {normalize,validate,contentHash} from '../queue/format.mjs';import {check} from '../gates/index.mjs';
 import {mskDate,mskTime} from '../lib/time.mjs';
+import {targetKey,targetEntryName,targetSpec} from './media-intake-targets.mjs';
 /** Транспортные поля задаёт код по заданию; модель поставляет только содержимое. */
 export function entryFromIntakeVariant(v,job){
- const target=job.targets.find(t=>t.channel===v.channel);
- if(!target||target.format!==v.format||!['album','photopost','photo-post','carousel'].includes(v.format)||typeof v.text!=='string'||!v.text.trim())throw Error('target');
+ const target=job.targets.find(t=>targetKey(t)===targetKey(v)),spec=targetSpec(target);
+ if(!target||!spec||typeof v.text!=='string'||!v.text.trim())throw Error('target');
  const raw=v.entry||{};
- if(raw.text!==v.text||Object.keys(raw).some(k=>!['channel','kind','name','material','text','media','facts','date','time'].includes(k)))throw Error('payload');
- if(raw.channel!==v.channel||raw.kind!=='post'||raw.name!==`mi-${job.materialId}-${job.revision}`||raw.material!==`intake:${job.materialId}`)throw Error('identity');
- const facts=job.input.facts||[];
- if(JSON.stringify(raw.facts||[])!==JSON.stringify(facts)||!Array.isArray(raw.media)||raw.media.some(m=>Object.keys(m).some(k=>!['type','mediaId'].includes(k))||m.type!=='image'))throw Error('media_or_facts');
+ if(raw.text!==v.text||Object.keys(raw).some(k=>!['channel','kind','name','material','title','text','posts','media','facts','date','time','tags','hashtags','series'].includes(k)))throw Error('payload');
+ const name=targetEntryName(job,target);
+ if(raw.channel!==v.channel||raw.kind!==spec.kind||raw.name!==name||raw.material!==`intake:${job.materialId}`)throw Error('identity');
+ const facts=job.input.targetFacts?.[targetKey(target)]||job.input.targetFacts?.[v.channel]||job.input.facts||[],media=raw.media||[];
+ if(JSON.stringify(raw.facts||[])!==JSON.stringify(facts)||!Array.isArray(media)||media.some(m=>Object.keys(m).some(k=>!['type','mediaId','coverMediaId'].includes(k))||!m.mediaId||!['image','video'].includes(m.type)||m.coverMediaId&&m.type!=='video'))throw Error('media_or_facts');
+ if(spec.min&&media.length<spec.min||spec.max&&media.length>spec.max||spec.media==='none'&&media.length||spec.media==='video'&&media.some(m=>m.type!=='video')||['image','optional-image'].includes(spec.media)&&media.some(m=>m.type!=='image'))throw Error('media_format');
+ if(v.channel==='instagram'&&v.text.length>2200)throw Error('caption');
  const t=job.input.timing||{mode:'after_approval'},at=t.at?Date.parse(t.at):Date.now();
  let timing;
  if(t.mode==='after_approval'||t.mode==='choose_later')timing={mode:'after-approval'};
  else if(t.mode==='not_before')timing={mode:'not-before',date:mskDate(at),time:mskTime(at),notBefore:t.at};
  else if(t.mode==='at')timing={mode:'at',date:mskDate(at),time:mskTime(at),expireAt:t.at};
  else throw Error('timing');
- return normalize({channel:v.channel,kind:'post',name:`mi-${job.materialId}-${job.revision}`,material:`intake:${job.materialId}`,text:v.text,media:raw.media.map(m=>({type:m.type,mediaId:m.mediaId})),facts,date:mskDate(at),time:mskTime(at),timing});
+ return normalize({...raw,channel:v.channel,kind:spec.kind,name,material:`intake:${job.materialId}`,text:v.text,media:media.map(m=>({...m})),facts,date:mskDate(at),time:mskTime(at),timing});
 }
 export function verifyIntakeResult(value,job){
  try{
   if(value?.inputHash!==job.inputHash||value.editorialReview?.result!=='passed'||value.editorialReview.policyVersion!==job.input?.policyVersion||!Array.isArray(value.variants)||value.variants.length!==job.targets.length)return false;
   const all=rows(),originals=new Set(job.input.files.map(f=>f.mediaId)),seen=new Set();
+  // Штатный runner связывает видеопремьеру по имени. Пока он не умеет связь
+  // по материалу, разные имена многоформатного job не должны обойти YouTube.
+  const youtube=job.targets.find(t=>t.channel==='youtube');
+  if(youtube&&job.targets.some(t=>t.channel!=='youtube'&&['video','short','reel'].includes(targetSpec(t)?.kind)&&targetEntryName(job,t)!==targetEntryName(job,youtube)))return false;
   for(const v of value.variants){
-   const target=job.targets.find(t=>t.channel===v.channel);if(!target||seen.has(v.channel)||target.format!==v.format)return false;seen.add(v.channel);
+   const key=targetKey(v),target=job.targets.find(t=>targetKey(t)===key);if(!target||seen.has(key))return false;seen.add(key);
    const e=entryFromIntakeVariant(v,job);if(validate(e).length||check(e).block.length)return false;
-   if(!Array.isArray(v.mediaIds)||!e.media?.length||e.media.some(m=>m.url||m.cover||m.coverMediaId)||e.media.length!==v.mediaIds.length)return false;
+   if(!Array.isArray(v.mediaIds)||e.media.some(m=>m.url||m.cover)||e.media.length!==v.mediaIds.length)return false;
    for(let i=0;i<e.media.length;i++){
     const m=e.media[i],r=all.find(r=>r.mediaId===m.mediaId);
     if(m.mediaId!==v.mediaIds[i]||!r||r.role!=='publication'||!originals.has(r.parent)||r.material!==e.material||!existsSync(blobPath(r)))return false;
     if((m.type==='image'&&!r.mime.startsWith('image/'))||(m.type==='video'&&!r.mime.startsWith('video/')))return false;
     const bytes=readFileSync(blobPath(r));if(bytes.length!==r.bytes||createHash('sha256').update(bytes).digest('hex')!==r.sha256)return false;
+    const source=job.input.files.find(f=>f.mediaId===r.parent),original=all.find(f=>f.mediaId===r.parent);
+    if(!source||!original||original.role!=='original'||original.material!==e.material||source.sha256&&source.sha256!==original.sha256||source.bytes!==undefined&&source.bytes!==original.bytes||original.mime?.split('/')[0]!==m.type||source.mime&&source.mime.split('/')[0]!==m.type)return false;
+    if(m.coverMediaId){const cover=all.find(f=>f.mediaId===m.coverMediaId);if(!cover||cover.role!=='publication'||cover.parent!==r.parent||cover.material!==e.material||!cover.mime.startsWith('image/')||!existsSync(blobPath(cover)))return false;const b=readFileSync(blobPath(cover));if(b.length!==cover.bytes||createHash('sha256').update(b).digest('hex')!==cover.sha256)return false;}
    }
-   if(['album','carousel','photo-post'].includes(v.format)&&(e.kind!=='post'||e.media.some(m=>m.type!=='image')))return false;
   }return true;
  }catch{return false;}
 }
@@ -50,24 +60,26 @@ export async function deliverIntakeResults(app,{executeQueue=execute,getEntry=ge
    if(job.status!=='completed'||!job.artifactsVerified||material?.revision!==job.revision||material.mode!=='submitted')continue;
    if(job.input?.timing?.mode==='choose_later'){out.blocked++;continue;}
    if(!verify(job.result,job)){out.blocked++;continue;}
-   for(const variant of job.result.variants){
+   for(const variant of [...job.result.variants].sort((a,b)=>Number(b.channel==='youtube')-Number(a.channel==='youtube'))){
     // На каждом внешнем эффекте заново проверяем актуальность исходного задания.
     const current=app.store.read(),m=current.materials[job.materialId],j=current.jobs[job.id];
     if(m.revision!==job.revision||m.mode!=='submitted')break;
-    const e=entryFromIntakeVariant(variant,job),hash=contentHash(e),prior=j.queueResults?.[e.channel];let queued=getEntry(e.id);
-    if(queued&&queued.contentHash!==hash){out.blocked++;mark(job.id,e.channel,{status:'conflict',id:e.id});continue;}
-    if(queued&&['review','approved','running','handed','published'].includes(queued.status)&&queued.approval?.card?.messageId){mark(job.id,e.channel,{status:'submitted',id:e.id,contentHash:hash});continue;}
+    const e=entryFromIntakeVariant(variant,job),key=job.protocolVersion===2||job.targets.filter(t=>t.channel===e.channel).length>1?targetKey(variant):e.channel,hash=contentHash(e),prior=j.queueResults?.[key];let queued=getEntry(e.id);
+    if(queued&&queued.contentHash!==hash){out.blocked++;mark(job.id,key,{status:'conflict',id:e.id});continue;}
+    if(queued&&['review','approved','running','handed','published'].includes(queued.status)&&queued.approval?.card?.messageId&&(queued.approval.cardHash===hash||!job.protocolVersion&&!queued.approval.cardHash)){mark(job.id,key,{status:'submitted',id:e.id,contentHash:hash});continue;}
     if(['sending','unknown','submitted'].includes(prior?.status)){out.unknown++;continue;}
     if(queued&&!['draft'].includes(queued.status)){out.blocked++;continue;}
     if(!queued){const added=await executeQueue('add',{entries:e},'intake');if(added.code!==0){out.blocked++;continue;}queued=getEntry(e.id);}
     if(!queued||queued.contentHash!==hash){out.blocked++;continue;}
-    mark(job.id,e.channel,{status:'sending',id:e.id,contentHash:hash});
+    const fresh=app.store.read(),fm=fresh.materials[job.materialId],fj=fresh.jobs[job.id];
+    if(fm?.revision!==job.revision||fm.mode!=='submitted'||fj?.inputHash!==job.inputHash||fj.status!=='completed'||JSON.stringify(fj.result)!==JSON.stringify(job.result)){out.blocked++;break;}
+    mark(job.id,key,{status:'sending',id:e.id,contentHash:hash});
     try{
      const sent=await executeQueue('submit',{ref:e.id,channel:e.channel},'intake');queued=getEntry(e.id);
-     if(sent.code===0&&queued?.contentHash===hash&&queued.approval?.card?.messageId&&['review','approved','running','published','handed'].includes(queued.status)){
-      mark(job.id,e.channel,{status:'submitted',id:e.id,contentHash:hash});out.submitted++;
-     }else{mark(job.id,e.channel,{status:'unknown',id:e.id,contentHash:hash});out.unknown++;}
-    }catch{mark(job.id,e.channel,{status:'unknown',id:e.id,contentHash:hash});out.unknown++;}
+     if(sent.code===0&&queued?.contentHash===hash&&queued.approval?.card?.messageId&&(queued.approval.cardHash===hash||!job.protocolVersion&&!queued.approval.cardHash)&&['review','approved','running','published','handed'].includes(queued.status)){
+      mark(job.id,key,{status:'submitted',id:e.id,contentHash:hash});out.submitted++;
+     }else{mark(job.id,key,{status:'unknown',id:e.id,contentHash:hash});out.unknown++;}
+    }catch{mark(job.id,key,{status:'unknown',id:e.id,contentHash:hash});out.unknown++;}
    }
   }return out;
  }finally{unlock();}

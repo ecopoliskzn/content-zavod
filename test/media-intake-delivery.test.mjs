@@ -2,6 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {mkd
 const dir=mkdtempSync(path.join(tmpdir(),'intake-delivery-'));process.env.DATA_DIR=dir;process.env.ZAVOD_ENV_FILE=path.join(dir,'absent.env');
 const {deliverIntakeResults}=await import('../src/bot/media-intake-delivery.mjs');
 const {normalize,contentHash}=await import('../src/queue/format.mjs');
+const {targetEntryName}=await import('../src/bot/media-intake-targets.mjs');
 function fixture(){const job={id:'job1',materialId:'a'.repeat(16),revision:1,status:'completed',artifactsVerified:true,result:{variants:[{channel:'telegram',format:'album',entry:{channel:'telegram',kind:'post',name:'mi-'+ 'a'.repeat(16)+'-1',material:'intake:'+ 'a'.repeat(16),text:'Объект',media:[{type:'image',mediaId:'med_photo'}]}}]}};const state={jobs:{job1:job},materials:{[job.materialId]:{revision:1,mode:'submitted'}}};const entries=new Map(),calls=[];
  job.targets=[{channel:'telegram',format:'album'}];job.input={timing:{mode:'after_approval'},facts:[]};job.result.variants[0].text='Объект';
  const app={store:{dir,read:()=>structuredClone(state),tx:fn=>fn(state)},jobs:()=>Object.values(state.jobs)};
@@ -24,4 +25,23 @@ test('падение после отправки карточки сначала
 test('неопределённый внешний результат не повторяется вслепую',async()=>{
  const f=fixture();f.dependencies.executeQueue=async(cmd,args)=>{f.calls.push(cmd);if(cmd==='add'){const e=normalize(args.entries);f.entries.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});return{code:0};}throw Error('timeout');};
  await deliverIntakeResults(f.app,f.dependencies);await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(f.calls,['add','submit']);assert.equal(f.state.jobs.job1.queueResults.telegram.status,'unknown');
+});
+test('смена ревизии во время add не отправляет устаревшую карточку',async()=>{
+ const f=fixture(),execute=f.dependencies.executeQueue;
+ f.dependencies.executeQueue=async(cmd,args)=>{const r=await execute(cmd,args);if(cmd==='add')f.state.materials['a'.repeat(16)].revision=2;return r;};
+ await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(f.calls,['add']);
+});
+test('карточка иного хеша не восстанавливает квитанцию submitted',async()=>{
+ const f=fixture(),e=normalize(f.state.jobs.job1.result.variants[0].entry);
+ f.entries.set(e.id,{...e,status:'review',contentHash:contentHash(e),approval:{card:{messageId:123},cardHash:'other'}});
+ f.state.jobs.job1.queueResults={telegram:{status:'unknown',id:e.id}};
+ await deliverIntakeResults(f.app,f.dependencies);assert.equal(f.state.jobs.job1.queueResults.telegram.status,'unknown');assert.deepEqual(f.calls,[]);
+});
+test('protocol 2 сохраняет две квитанции Instagram и не повторяет отправку',async()=>{
+ const f=fixture(),job=f.state.jobs.job1;job.protocolVersion=2;
+ job.targets=[{channel:'instagram',format:'carousel'},{channel:'instagram',format:'story'}];
+ job.result.variants=job.targets.map(t=>({ ...t,text:'Объект',entry:{channel:t.channel,kind:t.format,name:targetEntryName(job,t),material:`intake:${job.materialId}`,text:'Объект',media:Array.from({length:t.format==='carousel'?2:1},()=>({type:'image',mediaId:'med_photo'}))}}));
+ const execute=f.dependencies.executeQueue;f.dependencies.executeQueue=async(cmd,args)=>{const r=await execute(cmd,args);if(cmd==='submit'){const e=f.entries.get(args.ref);e.approval.cardHash=e.contentHash;}return r;};
+ await deliverIntakeResults(f.app,f.dependencies);await deliverIntakeResults(f.app,f.dependencies);
+ assert.deepEqual(Object.keys(job.queueResults).sort(),['instagram:carousel','instagram:story']);assert.equal(f.entries.size,2);assert.equal(f.calls.filter(c=>c==='submit').length,2);
 });
