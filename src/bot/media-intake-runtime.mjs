@@ -6,6 +6,7 @@ import {tg} from '../lib/telegram.mjs';
 import {createIntake} from './media-intake.mjs';
 import {verifyIntakeResult,entryFromIntakeVariant} from './media-intake-delivery.mjs';
 import {contentHash} from '../queue/format.mjs';
+import {get as getQueueEntry} from '../queue/store.mjs';
 import {targetEntryName,targetKey,validateTarget} from './media-intake-targets.mjs';
 export {verifyIntakeResult};
 
@@ -15,7 +16,7 @@ const configFile=()=>dataPath('media-intake','config.json');
 function currentConfig(){if(!existsSync(configFile()))return{enabled:false};try{return validateConfig(JSON.parse(readFileSync(configFile(),'utf8')));}catch{return{enabled:false};}}
 export const isEnabled=()=>currentConfig().enabled===true;
 export function instance(){
- if(!singleton)singleton=createIntake({dir:dir(),config:currentConfig,
+ if(!singleton)singleton=createIntake({dir:dir(),config:currentConfig,getQueueEntry,
   importFile:async a=>{const {importTelegramFile}=await import('../media/telegram-import.mjs');return importTelegramFile(a);},
   telegram:async(method,body)=>{const res=await tg(method,body,{retries:0});return{ok:res.kind==='ok'&&res.data?.ok===true,messageId:res.result?.message_id,uncertain:res.kind==='network'||res.status>=500};},verifyResult:verifyIntakeResult});
  return singleton;
@@ -33,8 +34,8 @@ export function publicationBlockers(entry){
  const managed=/^mi-([a-f0-9]{16})-([1-9]\d*)(?:-([a-f0-9]{6}))?$/.exec(String(entry.name||''));
  if(!managed||entry.material!==`intake:${managed[1]}`)return[];
  try{const id=entry.material.slice(7),state=instance().store.read(),r=state.materials[id];
-  if(!r||r.mode!=='submitted'||Number(managed[2])!==r.revision)return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
-  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===r.revision&&j.status==='completed'&&j.artifactsVerified),v=j?.result?.variants?.find(v=>v.channel===entry.channel&&targetEntryName(j,v)===entry.name);
+  if(!r||r.mode!=='submitted')return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
+  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===Number(managed[2])&&j.status==='completed'&&j.artifactsVerified&&j.targets.some(t=>t.channel===entry.channel&&targetEntryName(j,t)===entry.name&&(r.targetJobs?r.targetJobs[targetKey(t)]===j.id:j.revision===r.revision))),v=j?.result?.variants?.find(v=>v.channel===entry.channel&&targetEntryName(j,v)===entry.name);
   if(!v||contentHash(entryFromIntakeVariant(v,j))!==contentHash(entry))return['готовность: публикационная версия не соответствует проверенному результату задания'];
   return[];
  }catch{return['готовность: состояние входящего задания недоступно; выпуск удержан до сверки'];}
@@ -60,8 +61,8 @@ export async function admin(command,args={},actor='operator'){
   case 'intake-status':data={enabled:currentConfig().enabled||false,materials:app.list().length,jobs:app.jobs().length,observations:app.store.read().observations};break;
   case 'intake-list':data=app.list();break;
   case 'intake-show':{const r=app.show(args.id);if(!r)throw Error('комплект не найден');data={id:r.id,revision:r.revision,mode:r.mode,files:r.files.map(({fileUniqueId,status,mediaId,errorCode,excluded})=>({fileUniqueId,status,mediaId,errorCode,excluded:!!excluded})),readiness:app.readiness(r.id)};break;}
-  case 'intake-jobs':data=app.jobs().map(({id,materialId,revision,status,createdAt,recipient,protocolVersion,manifestRevision})=>({id,materialId,revision,status,createdAt,recipient,protocolVersion,manifestRevision}));break;
-  case 'intake-claim':data=app.claim(args.id,args.owner,args.requestId);break;
+  case 'intake-jobs':data=app.jobs().map(({id,materialId,revision,inputHash,status,createdAt,recipient,protocolVersion,manifestRevision,acceptedClaims,acceptedClaimsComplete,claim,answerRevision,answerHash})=>({id,materialId,revision,inputHash,status,createdAt,recipient,protocolVersion,manifestRevision,claimFencingVersion:1,acceptedClaimsComplete:acceptedClaimsComplete===true,acceptedClaims:acceptedClaims||[],claim:claim?{owner:claim.owner,requestId:claim.requestId||null,initialInputHash:claim.initialInputHash||null,at:claim.at}:null,answerRevision:answerRevision||0,answerHash:answerHash||null,continuation:app.continuations().find(e=>e.jobId===id)||null}));break;
+  case 'intake-claim':data=args.expected&&['materialId','revision','inputHash','protocolVersion','manifestRevision'].every(k=>args.expected[k]!==undefined)?app.claim(args.id,args.owner,args.requestId,args.expected):{ok:false,reason:'expected_job_required'};break;
   case 'intake-result':data=app.result(args.id,args.owner,args.token,args.result);break;
   case 'intake-release':data=app.release(args.id,args.owner,args.token);break;
   case 'intake-question':data=app.question(args.id,args.owner,args.token,args.question);break;
