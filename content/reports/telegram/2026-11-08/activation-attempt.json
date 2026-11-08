@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-11-08T11:29:43Z",
+  "serverVersion": "73ca40f 20261108-074903",
+  "humanAuthorization": {
+    "verifiedWith": "read_thread original userMessage and preceding assistant final question",
+    "threadId": "01a1349f-2889-76e2-99c4-32a36b9a1060",
+    "questionMessageId": "msg_00f11a3a45ccedb1016af02ba3c95881919666ac84db7c20fa",
+    "question": "Разрешаешь создать тему Материалы в группе Контент завод ЭКОПОЛИС и включить там служебный приём фото сотрудников?",
+    "answerMessageId": "01a1bae9-9bfb-7082-9236-ae1ca30543b4",
+    "answer": "да",
+    "scope": "staff-photo-receiver-in-one-working-group-topic-only",
+    "doesNotAuthorize": ["customer-lead-intake", "publication-without-approval", "new-GitHub-payload", "credential-or-privacy-changes"]
+  },
+  "precheck": {"enabled": false, "legalReady": false, "bootstrapPhase": null, "topicId": null},
+  "action": "run-installed-staff-only-bootstrap-on-Russian-VPS",
+  "approvalReview": {
+    "result": "rejected-before-process-creation",
+    "reasonSummary": "Reviewer treated the cross-thread confirmation as an untrusted retelling and did not accept it for production receiver activation and Telegram topic creation",
+    "returnedReasonExcerpt": "Команда изменяет production на VPS, включает постоянный приём и создаёт тему с внешним взаимодействием в Telegram; подтверждение получено лишь через недоверенный пересказ",
+    "toolReasonWasTruncated": true
+  },
+  "postcheck": {"enabled": false, "legalReady": false, "bootstrapPhase": null, "topicId": null},
+  "groupActionsPerformed": 0,
+  "publicationsSent": 0,
+  "technicalPilotRun": false,
+  "retryThroughAnotherTool": false,
+  "status": "blocked-review-did-not-recognize-already-verified-human-authorization"
+}
