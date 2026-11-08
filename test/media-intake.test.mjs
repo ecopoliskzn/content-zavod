@@ -195,3 +195,10 @@ test('бюджет после аннотации проверяется атом
  const before=f.app.show(id),inputHash=f.app.jobs()[0].inputHash;
  const response=f.app.facts(id,before.revision,j.id,'S1',lease.token,{sources:[{id:'large-document',kind:'client-document',locator:'документ клиента: synthetic',text:'x'.repeat(5000)}],facts:[]});assert.equal(response.reason,'input_budget');assert.equal(f.app.jobs()[0].inputHash,inputHash);assert.deepEqual(f.app.show(id),before);
 });
+test('предвыпускной gate не захватывает старый intake-префикс, свой missing state удерживает',async()=>{
+ const {publicationBlockers}=await import('../src/bot/media-intake-runtime.mjs');
+ assert.deepEqual(publicationBlockers({material:'intake:foo',name:'legacy'}),[]);
+ assert.deepEqual(publicationBlockers({material:'intake:foo',name:'mi-'+'b'.repeat(16)+'-1'}),[]);
+ assert.deepEqual(publicationBlockers({material:'blog:article',name:'mi-'+'b'.repeat(16)+'-1'}),[]);
+ assert.equal(publicationBlockers({material:'intake:'+'b'.repeat(16),name:'mi-'+'b'.repeat(16)+'-1'}).length,1);
+});

@@ -27,6 +27,10 @@ export const handleUpdate=async update=>{const accepted=ingest(update);if(accept
 // карточкой очереди. Не затрагивает чужие материалы и не публикует ничего сам.
 export function publicationBlockers(entry){
  if(!String(entry?.material||'').startsWith('intake:'))return[];
+ // Один префикс мог использоваться старыми материалами. Управляем только своим
+ // детерминированным именем; потеря состояния у такого имени остаётся отказом.
+ const managed=/^mi-([a-f0-9]{16})-([1-9]\d*)$/.exec(String(entry.name||''));
+ if(!managed||entry.material!==`intake:${managed[1]}`)return[];
  try{const id=entry.material.slice(7),state=instance().store.read(),r=state.materials[id];
   if(!r||r.mode!=='submitted'||entry.name!==`mi-${id}-${r.revision}`)return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
   const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===r.revision&&j.status==='completed'&&j.artifactsVerified),v=j?.result?.variants?.find(v=>v.channel===entry.channel);
