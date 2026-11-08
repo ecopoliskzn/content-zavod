@@ -31,3 +31,9 @@ test('видеоформаты и ручная статья сохраняют �
  assert.throws(()=>build('threads','video',{media:[{type:'video',mediaId:'med_a'}]}));
  assert.throws(()=>build('dzen','post'));
 });
+test('точный at сохраняет секунды и окно только до конца минуты, явный deadline не продлевается',()=>{
+ const job={materialId:'a'.repeat(16),revision:1,targets:[{channel:'telegram',format:'text'}],input:{facts:[],timing:{mode:'at',at:'2030-01-01T14:30:12+03:00'}}};
+ const v={channel:'telegram',format:'text',text:'Объект',entry:{channel:'telegram',kind:'post',name:targetEntryName(job,job.targets[0]),material:`intake:${job.materialId}`,text:'Объект',facts:[],media:[]}};
+ let e=entryFromIntakeVariant(v,job);assert.equal(e.timing.atISO,job.input.timing.at);assert.equal(Date.parse(e.timing.expireAt),Date.parse('2030-01-01T14:30:59.999+03:00'));
+ job.input.timing.deadline='2030-01-01T14:30:20+03:00';e=entryFromIntakeVariant(v,job);assert.equal(Date.parse(e.timing.expireAt),Date.parse(job.input.timing.deadline));
+});

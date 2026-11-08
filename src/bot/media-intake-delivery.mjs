@@ -22,7 +22,11 @@ export function entryFromIntakeVariant(v,job){
  let timing;
  if(t.mode==='after_approval'||t.mode==='choose_later')timing={mode:'after-approval'};
  else if(t.mode==='not_before')timing={mode:'not-before',date:mskDate(at),time:mskTime(at),notBefore:t.at};
- else if(t.mode==='at')timing={mode:'at',date:mskDate(at),time:mskTime(at),expireAt:t.at};
+ else if(t.mode==='at'){
+  const limits=[Math.floor(at/60000)*60000+59999,...[t.expireAt,t.deadline].filter(x=>x!==undefined).map(x=>Date.parse(x))];
+  if(limits.some(x=>!Number.isFinite(x)))throw Error('timing');
+  timing={mode:'at',date:mskDate(at),time:mskTime(at),atISO:t.at,expireAt:new Date(Math.min(...limits)).toISOString()};
+ }
  else throw Error('timing');
  return normalize({...raw,channel:v.channel,kind:spec.kind,name,material:`intake:${job.materialId}`,text:v.text,media:media.map(m=>({...m})),facts,date:mskDate(at),time:mskTime(at),timing});
 }
