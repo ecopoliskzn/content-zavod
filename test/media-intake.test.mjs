@@ -84,8 +84,8 @@ test('после kill умершего владельца state/worker lock во
 test('release устаревшего claim открывает путь новой версии без таймерного двойного исполнителя',async()=>{
  const f=fixture();const id=await ready(f),j=f.app.jobs()[0],old=f.app.claim(j.id,'S1');await f.app.handleUpdate(photo(2));
  await f.app.handleUpdate(cb(f.app,id,'rights',f.app.show(id).revision));await f.app.handleUpdate(cb(f.app,id,'prepare',f.app.show(id).revision));
- const next=f.app.jobs().find(x=>x.revision===f.app.show(id).revision);assert.equal(f.app.claim(next.id,'S2').ok,false);
- assert.equal(f.app.release(j.id,'S1',old.token).status,'superseded');assert.equal(f.app.claim(next.id,'S2').ok,true);
+ assert.equal(f.app.jobs().filter(x=>x.status==='queued').length,0,'живой предыдущий claim удерживает новую передачу');
+ assert.equal(f.app.release(j.id,'S1',old.token).status,'superseded');assert.equal(f.app.prepare(id,f.app.show(id).revision,'11').ok,true);const next=f.app.jobs().find(x=>x.revision===f.app.show(id).revision);assert.equal(f.app.claim(next.id,'S2').ok,false);assert.equal(f.app.claim(next.id,'S1').ok,true);
 });
 test('подпись HTML экранирована; свой ответ в карточку добавляет описание без чужой переписки',async()=>{
  const f=fixture();const p=photo();p.message.caption='<b>caption</b> & literal';await f.app.handleUpdate(p);const id=f.app.list()[0].id;
@@ -171,7 +171,7 @@ test('редакторская аннотация источника не тре
  const value={inputHash:latest.inputHash,editorialReview:{result:'passed',policyVersion:'pilot-1'},variants:latest.targets.map(t=>({channel:t.channel,format:t.format,text,mediaIds:[publication.mediaId],entry:{channel:t.channel,kind:'post',name:`mi-${id}-${rev}`,material:'intake:'+id,text,media:[{type:'image',mediaId:publication.mediaId}],facts:latest.input.facts,date:'2026-11-07',time:'12:00'}}))};
  assert.equal(f.app.result(j.id,'S1',lease.token,value).ok,true);
  const queue=new Map(),{normalize,contentHash}=await import('../src/queue/format.mjs');
- const sent=await deliverIntakeResults(f.app,{getEntry:id=>queue.get(id),executeQueue:async(cmd,args)=>{if(cmd==='add'){const e=normalize(args.entries);queue.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});}else{const e=queue.get(args.ref);e.status='review';e.approval={card:{messageId:500}};}return{code:0};}});
+ const sent=await deliverIntakeResults(f.app,{getEntry:id=>queue.get(id),executeQueue:async(cmd,args)=>{if(cmd==='add'){const e=normalize(args.entries);queue.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});}else{const e=queue.get(args.ref);e.status='review';e.approval={card:{messageId:500},cardHash:e.contentHash};}return{code:0};}});
  assert.equal(sent.submitted,2);assert.ok([...queue.values()].every(e=>e.status==='review'));assert.equal(f.app.readiness(id).P9.result,'blocked');
  const {syncIntakeQueue}=await import('../src/bot/media-intake-sync.mjs'),sync=()=>syncIntakeQueue(f.app,{getEntry:id=>queue.get(id),blocked:false,backup:null});sync();assert.match(f.app.card(id).text,/На согласовании/);
  for(const e of queue.values()){e.status='approved';e.approval={at:'2026-11-07T10:00:00Z',card:{messageId:500},cardHash:e.contentHash,preview:{complete:true}};}
@@ -183,7 +183,7 @@ test('редакторская аннотация источника не тре
  assert.equal(f.app.prepare(id,f.app.show(id).revision,'11').ok,false);assert.equal(f.app.ingest(photo(99,'another-material')).accepted,true);
 });
 test('release повторяется после потери квитанции и не снимает нового владельца',async()=>{
- const f=fixture(),id=await ready(f),j=f.app.jobs()[0],old=f.app.claim(j.id,'S1');assert.equal(f.app.release(j.id,'S1',old.token).ok,true);const next=f.app.claim(j.id,'S2');assert.equal(next.ok,true);const retry=f.app.release(j.id,'S1',old.token);assert.equal(retry.duplicate,true);assert.equal(f.app.jobs()[0].claim.owner,'S2');
+ const f=fixture(),id=await ready(f),j=f.app.jobs()[0],old=f.app.claim(j.id,'S1');assert.equal(f.app.release(j.id,'S1',old.token).ok,true);const next=f.app.claim(j.id,'S1','a'.repeat(32));assert.equal(next.ok,true);const retry=f.app.release(j.id,'S1',old.token);assert.equal(retry.duplicate,true);assert.equal(f.app.jobs()[0].claim.token,next.token);
 });
 test('контекст только владельцу: актуальный ответ доступен без новой передачи и без token/author',async()=>{
  const f=fixture(),id=await ready(f),j=f.app.jobs()[0],lease=f.app.claim(j.id,'S1');f.app.question(j.id,'S1',lease.token,{text:'Источник цифры?',allowOmit:true});
@@ -201,4 +201,5 @@ test('предвыпускной gate не захватывает старый i
  assert.deepEqual(publicationBlockers({material:'intake:foo',name:'mi-'+'b'.repeat(16)+'-1'}),[]);
  assert.deepEqual(publicationBlockers({material:'blog:article',name:'mi-'+'b'.repeat(16)+'-1'}),[]);
  assert.equal(publicationBlockers({material:'intake:'+'b'.repeat(16),name:'mi-'+'b'.repeat(16)+'-1'}).length,1);
+ assert.equal(publicationBlockers({material:'intake:'+'b'.repeat(16),name:'mi-'+'b'.repeat(16)+'-1-abcdef'}).length,1);
 });

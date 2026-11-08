@@ -6,6 +6,7 @@ import {tg} from '../lib/telegram.mjs';
 import {createIntake} from './media-intake.mjs';
 import {verifyIntakeResult,entryFromIntakeVariant} from './media-intake-delivery.mjs';
 import {contentHash} from '../queue/format.mjs';
+import {targetEntryName,targetKey,validateTarget} from './media-intake-targets.mjs';
 export {verifyIntakeResult};
 
 const dir=()=>dataPath('media-intake');
@@ -29,11 +30,11 @@ export function publicationBlockers(entry){
  if(!String(entry?.material||'').startsWith('intake:'))return[];
  // Один префикс мог использоваться старыми материалами. Управляем только своим
  // детерминированным именем; потеря состояния у такого имени остаётся отказом.
- const managed=/^mi-([a-f0-9]{16})-([1-9]\d*)$/.exec(String(entry.name||''));
+ const managed=/^mi-([a-f0-9]{16})-([1-9]\d*)(?:-([a-f0-9]{6}))?$/.exec(String(entry.name||''));
  if(!managed||entry.material!==`intake:${managed[1]}`)return[];
  try{const id=entry.material.slice(7),state=instance().store.read(),r=state.materials[id];
-  if(!r||r.mode!=='submitted'||entry.name!==`mi-${id}-${r.revision}`)return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
-  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===r.revision&&j.status==='completed'&&j.artifactsVerified),v=j?.result?.variants?.find(v=>v.channel===entry.channel);
+  if(!r||r.mode!=='submitted'||Number(managed[2])!==r.revision)return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
+  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===r.revision&&j.status==='completed'&&j.artifactsVerified),v=j?.result?.variants?.find(v=>v.channel===entry.channel&&targetEntryName(j,v)===entry.name);
   if(!v||contentHash(entryFromIntakeVariant(v,j))!==contentHash(entry))return['готовность: публикационная версия не соответствует проверенному результату задания'];
   return[];
  }catch{return['готовность: состояние входящего задания недоступно; выпуск удержан до сверки'];}
@@ -44,7 +45,7 @@ function validateConfig(c){
  for(const key of ['authors','coordinators','approvers'])if(!Array.isArray(c[key])||(!c[key].length&&!(key==='coordinators'&&c.coordinatorMode==='operator-admin'))||c[key].some(x=>!/^\d+$/.test(String(x))))throw Error('нужны числовые роли');
  if(!['A','B'].includes(c.handoffMode)||!c.policyVersion)throw Error('нужны режим передачи и версия правил');
  if(!c.limits||['maxFiles','maxBytes','maxPending','maxText','maxJobInput','maxJobOutput','maxCalls'].some(k=>!Number.isSafeInteger(c.limits[k])||c.limits[k]<=0))throw Error('нужны пределы пилота');
- if(!Array.isArray(c.targets)||!c.targets.length||c.targets.some(t=>!['telegram','vk','instagram','threads','dzen','youtube','rutube'].includes(t.channel)||!t.account_ref||!t.format||!['auto','manual'].includes(t.delivery_mode)||t.readiness!=='passed'||!Number.isFinite(Date.parse(t.verified_at))))throw Error('нужны проверенные пути площадок');
+ if(!Array.isArray(c.targets)||!c.targets.length||c.targets.some(t=>!validateTarget(t))||new Set(c.targets.map(targetKey)).size!==c.targets.length||c.targetCatalog&&(!Array.isArray(c.targetCatalog)||c.targetCatalog.some(t=>!validateTarget(t))||new Set(c.targetCatalog.map(targetKey)).size!==c.targetCatalog.length))throw Error('нужны явно описанные пути площадок и причины not_ready');
  if(c.groupId!==env('TG_GROUP_ID')&&String(c.groupId)!==String(env('TG_GROUP_ID')))throw Error('приём разрешён только в настроенной группе');
  if(c.approvers.some(id=>!list('APPROVER_IDS').includes(String(id))))throw Error('роль утверждающего не выдаётся приёмником');
  return c;
@@ -59,7 +60,7 @@ export async function admin(command,args={},actor='operator'){
   case 'intake-status':data={enabled:currentConfig().enabled||false,materials:app.list().length,jobs:app.jobs().length,observations:app.store.read().observations};break;
   case 'intake-list':data=app.list();break;
   case 'intake-show':{const r=app.show(args.id);if(!r)throw Error('комплект не найден');data={id:r.id,revision:r.revision,mode:r.mode,files:r.files.map(({fileUniqueId,status,mediaId,errorCode,excluded})=>({fileUniqueId,status,mediaId,errorCode,excluded:!!excluded})),readiness:app.readiness(r.id)};break;}
-  case 'intake-jobs':data=app.jobs().map(({id,materialId,revision,status,createdAt})=>({id,materialId,revision,status,createdAt}));break;
+  case 'intake-jobs':data=app.jobs().map(({id,materialId,revision,status,createdAt,recipient,protocolVersion,manifestRevision})=>({id,materialId,revision,status,createdAt,recipient,protocolVersion,manifestRevision}));break;
   case 'intake-claim':data=app.claim(args.id,args.owner,args.requestId);break;
   case 'intake-result':data=app.result(args.id,args.owner,args.token,args.result);break;
   case 'intake-release':data=app.release(args.id,args.owner,args.token);break;

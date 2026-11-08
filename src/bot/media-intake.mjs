@@ -3,6 +3,7 @@
 // Вход фиксируется до HTTP ACK. Транспорт и импорт внедряются явно для реальной проверки.
 import {createHash,randomUUID} from 'node:crypto';
 import {intakeStore,intakeLock} from './media-intake-store.mjs';
+import {targetSpec,targetKey,targetToken,targetEntryName,targetFiles,targetProblems,chooseTargets,recipientFor,channelTitle} from './media-intake-targets.mjs';
 
 const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const safe=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -12,11 +13,19 @@ const numeric=x=>/^\d+$/.test(String(x??''));
 const ERRORS=new Set(['TOO_LARGE','QUOTA','UNSUPPORTED','DOWNLOAD_UNAVAILABLE','INVALID_MEDIA','NETWORK','IMPORT_UNAVAILABLE']);
 const fileOf=m=>{const f=m.document||m.video||m.photo?.at(-1);if(!f)return null;return {fileId:f.file_id,fileUniqueId:f.file_unique_id,size:f.file_size,name:f.file_name||(m.video?'video.mp4':'photo.jpg'),mime:f.mime_type||(m.photo?'image/jpeg':''),kind:m.video?'video':m.photo?'photo':'document'};};
 const block=(reason,scope,transition,role,action,condition)=>({reason_code:reason,scope,blocked_transition:transition,owner_role:role,next_action:action,resume_condition:condition});
+export function parseMaterialMoment(text){const value=String(text||'').trim();let date;
+ if(/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{3})?)?Z$/.test(value)){date=new Date(value);if(!Number.isFinite(date.getTime()))return null;const m=/^(.*T\d\d:\d\d)(?::(\d\d)(\.\d{3})?)?Z$/.exec(value),expected=m[1]+':'+(m[2]||'00')+(m[3]||'.000')+'Z';if(date.toISOString()!==expected)return null;}
+ else{const m=/^(\d\d)\.(\d\d)\.(\d{4})\s+(\d\d):(\d\d)$/.exec(value);if(!m)return null;const local=`${m[3]}-${m[2]}-${m[1]}T${m[4]}:${m[5]}:00`,ms=Date.parse(local+'+03:00');if(!Number.isFinite(ms)||new Date(ms+3*3600000).toISOString().slice(0,19)!==local)return null;date=new Date(ms);}
+ return Number.isFinite(date.getTime())?date.toISOString():null;
+}
 
 export function createIntake({dir,config={},clock=Date.now,importFile,telegram,verifyResult}={}){
  if(!dir)throw Error('нужен закрытый каталог приёма');
  const store=intakeStore(dir);const now=()=>new Date(clock()).toISOString();
  const cfg=()=>store.read().config||(typeof config==='function'?config():config);
+ const catalog=()=>cfg().targetCatalog||cfg().targets||[];
+ const selectedFiles=(r,t)=>{const explicit=r.targetAssets?.[targetKey(t)];return explicit?r.files.filter(f=>explicit.includes(f.fileUniqueId)):r.files;};
+ const refreshTargets=r=>{if(r.targetsExplicit)return;const next=chooseTargets(cfg().targets||[],r.files),extras=(cfg().targets||[]).filter(t=>r.targetAssets?.[targetKey(t)]&&!targetProblems(t,selectedFiles(r,t)).length);for(const t of extras)if(!next.some(x=>targetKey(x)===targetKey(t)))next.push(clone(t));if(hash(next)!==hash(r.targets)){r.targets=next;change(r,'brief');}};
  const allowed=(c,id)=>numeric(id)&&[...(c.authors||[]),...(c.coordinators||[])].map(String).includes(String(id));
  const actorCan=(c,r,id)=>allowed(c,id)&&(String(id)===r.author||(c.coordinators||[]).map(String).includes(String(id)));
  const scope=(c,m)=>String(m.chat?.id)===String(c.groupId)&&Number(m.message_thread_id||0)===Number(c.topicId||0);
@@ -26,6 +35,12 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   r.revision++;r[kind+'_revision']=(r[kind+'_revision']||0)+1;r.updatedAt=now();r.card.dirty=true;r.confirmedRevision=null;if(r.mode==='submitted'){r.changedAfterTransfer=true;r.mode='draft';}
  }
  function recordSource(m){return {messageId:m.message_id,caption:String(m.caption||'').slice(0,cfg().limits?.maxText||4000),link:m.chat?.username?`https://t.me/${m.chat.username}/${m.message_id}`:`https://t.me/c/${String(m.chat?.id).replace(/^-100/,'')}/${m.message_id}`};}
+ function setTiming(s,r,value){
+  if(!['after_approval','choose_later','at','not_before'].includes(value?.mode)||(['at','not_before'].includes(value.mode)&&(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value.at||'')||parseMaterialMoment(value.at)!==new Date(value.at).toISOString())))throw Error('нужно однозначное время UTC');
+  const jobs=Object.values(s.jobs).filter(j=>j.materialId===r.id&&j.revision===r.revision);
+  if(jobs.some(j=>Object.keys(j.queueResults||{}).length))throw Error('срок после передачи в очередь меняет штатная команда queue move, согласие на текст сохраняется');
+  r.timing=clone(value);r.timing_revision++;r.card.dirty=true;for(const job of jobs){job.input.timing=clone(value);job.inputHash=hash(job.input);if(job.result){job.result.inputHash=job.inputHash;job.resultHash=hash(job.result);}}
+ }
  function ingest(update){
   const c=cfg();if(!c.enabled)return{accepted:false};
   const cb=update.callback_query,m=update.message||update.edited_message;
@@ -33,11 +48,11 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
    return store.tx(s=>{const key='cb:'+cb.id;if(s.events[key])return{accepted:true,duplicate:true};s.events[key]={kind:'callback',id:cb.id,actor:String(cb.from.id),data:String(cb.data).slice(0,64),messageId:cb.message.message_id,at:now(),status:'pending'};return{accepted:true};});}
   if(!m||!scope(c,m)||m.sender_chat||!allowed(c,m.from?.id)||!Number.isSafeInteger(update.update_id))return{accepted:false};
   const file=fileOf(m),reply=m.reply_to_message?.message_id,text=String(m.text||m.caption||'').slice(0,c.limits?.maxText||4000);
-  if(!file&&!reply)return{accepted:false};
+  if(!file&&(!text.trim()||text.trim().startsWith('/')))return{accepted:false};
   if(file&&(!file.fileId||!file.fileUniqueId))return{accepted:false};
   return store.tx(s=>{const key='up:'+update.update_id;if(s.events[key])return{accepted:true,duplicate:true};
    const limit=c.limits?.maxPending||20;
-   if(Object.values(s.events).filter(e=>e.status==='pending').length>=limit||(file&&!Object.values(s.materials).some(r=>r.album===String(m.media_group_id||'')||r.sources.some(x=>x.messageId===reply))&&Object.values(s.materials).filter(r=>!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode)).length>=limit)){s.rejected={reason:'pending_limit',at:now(),count:(s.rejected?.count||0)+1};return{accepted:false,blocked:true,reason:'pending_limit'};}
+   if(Object.values(s.events).filter(e=>e.status==='pending').length>=limit||((file||text)&&!Object.values(s.materials).some(r=>r.album===String(m.media_group_id||'')||r.sources.some(x=>x.messageId===reply)||r.card.messageId===reply)&&Object.values(s.materials).filter(r=>!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode)).length>=limit)){s.rejected={reason:'pending_limit',at:now(),count:(s.rejected?.count||0)+1};return{accepted:false,blocked:true,reason:'pending_limit'};}
    const observation={at:now(),kind:file?'media':'reply',count:file?1:0};s.observations.push(observation);if(s.observations.length>100)s.observations.shift();
    s.events[key]={kind:update.edited_message?'edited':'message',updateId:update.update_id,messageId:m.message_id,author:String(m.from.id),album:m.media_group_id?String(m.media_group_id):null,file,text,reply,source:recordSource(m),at:now(),status:'pending'};return{accepted:true,event:key};});
  }
@@ -49,13 +64,16 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
  function readiness(id){const s=store.read(),r=s.materials[id];if(!r)throw Error('комплект не найден');const c=cfg(),scopeId='material:'+id;
   const failedFiles=r.files.filter(f=>!f.excluded&&f.status!=='verified');
   const b3=failedFiles.map(f=>block('file_'+f.status,scopeId,'P3','S0','Сохранить исходник или явно исключить файл','verified or explicitly excluded'));
-  if(!r.files.some(f=>!f.excluded))b3.push(block('no_files',scopeId,'P3','author','Добавить исходник','verified file exists'));
+  const textOnly=!r.files.some(f=>!f.excluded)&&Boolean(r.brief.trim());
+  if(!r.files.some(f=>!f.excluded)&&!textOnly)b3.push(block('no_files',scopeId,'P3','author','Добавить исходник','verified file exists'));
   const b4=[...b3];if(!r.goal)b4.push(block('goal_missing',scopeId,'P4','author','Указать цель или предложить подачу','goal set'));
-  if(r.files.some(f=>!f.excluded&&f.status==='verified'&&f.mime?.startsWith('video/'))&&r.targets.some(t=>['album','photopost','photo-post','carousel'].includes(t.format)))b4.push(block('media_target_mismatch',scopeId,'P4','S2','Видеоверсию подготовит S2; публикационный маршрут видео пока не активирован','explicit compatible video target verified'));
+  for(const t of r.targets)for(const problem of targetProblems(t,selectedFiles(r,t)))b4.push(block(problem.code,'target:'+targetKey(t),'P4',problem.code==='target_not_ready'?'S0':'author',problem.reason,'compatible verified target and explicit assets'));
+  if(r.files.some(f=>!f.excluded&&f.mime?.startsWith('video/'))&&!r.targets.some(t=>['video','image-or-video'].includes(targetSpec(t)?.media)))b4.push(block('media_target_mismatch',scopeId,'P4','author','Выбрать совместимую видеоверсию и проверенный путь','compatible video target selected'));
   if(r.textBlocked)b4.push(block('text_limit',scopeId,'P4','author','Сократить описание','replacement description accepted'));
   if(!r.brief.trim())b4.push(block('brief_missing',scopeId,'P4','author','Ответить на карточку: что важно показать','brief supplied'));
   if(!r.targets.length||r.targets.some(t=>!t.account_ref||!t.format||!t.delivery_mode||t.readiness!=='passed'||!t.verified_at))b4.push(block('target_not_ready',scopeId,'P4','S0','Подтвердить путь выбранных площадок','target evidence passed'));
-  if(r.rights.status!=='confirmed'||r.rights.manifestRevision!==r.manifest_revision)b4.push(block('rights_unknown',scopeId,'P4','author','Подтвердить права на текущий состав','rights confirmed for manifest'));
+  if(r.rights.status!=='confirmed'||r.rights.manifestRevision!==r.manifest_revision||textOnly&&(r.rights.textHash?r.rights.textHash!==hash(r.brief):r.rights.textRevision!==r.brief_revision))b4.push(block('rights_unknown',scopeId,'P4','author',textOnly?'Подтвердить право использования текста':'Подтвердить права на текущий состав','rights confirmed for manifest or text'));
+  if(r.timingQuestion)b4.push(block('timing_unanswered',scopeId,'P4','author','Ответить на карточку датой и временем','valid explicit moment'));
   if((!c.coordinators?.length&&c.coordinatorMode!=='operator-admin')||!c.approvers?.length)b4.push(block('roles_unset',scopeId,'P4','operator','Настроить роли','coordinator and approver configured'));
   if(!['A','B'].includes(c.handoffMode))b4.push(block('handoff_unset',scopeId,'P4','S0','Зафиксировать путь передачи','A or B verified'));
   if(!c.limits||['maxJobInput','maxJobOutput','maxCalls'].some(k=>!Number.isSafeInteger(c.limits[k])||c.limits[k]<=0))b4.push(block('budget_unset',scopeId,'P4','operator','Настроить лимиты','positive limits configured'));
@@ -63,16 +81,17 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   const j=Object.values(s.jobs).find(j=>j.materialId===id&&j.revision===r.revision&&j.status!=='superseded');
   const b5=j?.claim?[]:[block('not_claimed',scopeId,'P5','editor','Забрать задание','current job claimed')];
   const gates={P0:stage('blocked',r,'P0',[block('pilot_evidence_pending',scopeId,'P0','S0','Подтвердить реальный контур пилота','deployment and pilot evidence')]),P1:stage('passed',r,'P1'),P2:stage('passed',r,'P2',r.confirmedRevision===r.revision?[]:[block('manifest_unconfirmed',scopeId,'P2','author','Проверить состав','Подготовить так for current revision')]),
-   P3:stage('passed',r,'P3',b3),P4:stage('passed',r,'P4',[...b4,...(r.confirmedRevision===r.revision?[]:[block('brief_unconfirmed',scopeId,'P4','author','Подготовить так','current revision confirmed')])]),
+   P3:textOnly?{result:'not_applicable',reason:'text-only-material-no-binary-assets',blockers:[],evidence:r.evidence.filter(e=>e.type==='event')}:stage('passed',r,'P3',b3),P4:stage('passed',r,'P4',[...b4,...(r.confirmedRevision===r.revision?[]:[block('brief_unconfirmed',scopeId,'P4','author','Подготовить так','current revision confirmed')])]),
    P5:stage('passed',r,'P5',b5),P6:stage('passed',r,'P6',j?.status==='completed'&&j.artifactsVerified?[]:[block('result_missing',scopeId,'P6','editor','Подготовить проверяемые варианты','validated result exists')]),
    P7:stage('blocked',r,'P7',[block('queue_checks_pending',scopeId,'P7','editor','Проверить конечные варианты штатными проверками','versioned check evidence')]),
    P8:stage('blocked',r,'P8',[block('preview_pending',scopeId,'P8','editor','Передать конечные варианты на согласование','complete preview receipt')]),
    P9:stage('blocked',r,'P9',[block('not_publication_approval',scopeId,'P9','approver','Штатно согласовать конечный вариант','queue approval for actual payload')]),
    ...Object.fromEntries(['P10','P11','P12','P13'].map(p=>[p,stage('blocked',r,p,[block('queue_evidence_pending',scopeId,p,'queue','Продолжить штатную очередь после подготовки','actual queue receipt')])])),
    P14:stage('blocked',r,'P14',[block('backup_unverified',scopeId,'P14','S0','Подтвердить независимую копию и восстановление','backup and restore receipts')])};
-  const targets=r.queueSummary?.targets||[];gates.targets=Object.fromEntries(targets.map(t=>[t.channel,t.stages||{}]));
+  const targets=r.queueSummary?.targets||[];gates.targets=Object.fromEntries(targets.map(t=>[t.targetKey||targetKey(t.format?t:r.targets.find(x=>x.channel===t.channel)||t),t.stages||{}]));
+  for(const t of targets)if(r.targets.filter(x=>x.channel===t.channel).length===1)gates.targets[t.channel]=t.stages||{};
   for(const p of ['P7','P8','P9','P10','P11','P12','P13']){
-   const checks=r.targets.map(t=>targets.find(x=>x.channel===t.channel)?.stages?.[p]);
+   const checks=r.targets.map(t=>targets.find(x=>(x.targetKey||targetKey(x))===targetKey(t)||!x.format&&r.targets.filter(a=>a.channel===t.channel).length===1&&x.channel===t.channel)?.stages?.[p]);
    if(checks.length&&checks.every(x=>x?.result==='passed'))gates[p]={result:'passed',blockers:[],evidence:checks.flatMap(x=>x.evidence||[])};
   }
   if(r.queueSummary?.stages?.P14?.result==='passed'&&r.queueSummary.stages.P14.artifact_ref)gates.P14={result:'passed',blockers:[],evidence:[r.queueSummary.stages.P14]};
@@ -81,12 +100,14 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
  function events(){store.tx(s=>{for(const e of Object.values(s.events)){if(e.status!=='pending'||e.kind==='callback')continue;
    let r=Object.values(s.materials).find(r=>e.reply&&(r.card.messageId===e.reply||r.sources.some(x=>x.messageId===e.reply)));
    if(!r&&e.file)r=Object.values(s.materials).find(r=>r.album&&r.album===e.album);
-   if(!r&&e.file&&e.kind!=='edited'){
+   if(!r&&(e.file||e.text)&&e.kind!=='edited'&&!e.reply){
     if(Object.values(s.materials).filter(r=>!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode)).length>=(cfg().limits?.maxPending||20)){e.status='blocked';e.reason='pending_limit';continue;}
-    r={id:uid(),author:e.author,groupId:String(cfg().groupId),topicId:cfg().topicId||0,album:e.album,revision:1,manifest_revision:1,brief_revision:1,timing_revision:1,confirmedRevision:null,files:[],sources:[],brief:'',goal:'show-object',editing_mode:'adapt',targets:clone(cfg().targets||[]),timing:{mode:'after_approval',source:'project'},rights:{status:'needs_clarification'},questions:[],mode:'draft',createdAt:now(),updatedAt:now(),card:{status:'new',messageId:null,dirty:true},evidence:[]};s.materials[r.id]=r;
+    r={id:uid(),author:e.author,groupId:String(cfg().groupId),topicId:cfg().topicId||0,album:e.album,revision:1,manifest_revision:1,brief_revision:1,timing_revision:1,confirmedRevision:null,files:[],sources:[],brief:'',goal:'show-object',editing_mode:'adapt',targets:chooseTargets(cfg().targets||[],[]),targetsExplicit:false,targetAssets:{},timing:{mode:'after_approval',source:'project'},rights:{status:'needs_clarification'},questions:[],mode:'draft',createdAt:now(),updatedAt:now(),card:{status:'new',messageId:null,dirty:true},evidence:[]};s.materials[r.id]=r;
    }
    if(!r||!actorCan(cfg(),r,e.author)){e.status='ignored';continue;}
    if(r.workflowClosed||['archive','cancelled','closed'].includes(r.mode)){e.status='ignored';continue;}
+   if(!e.file&&e.reply===r.card.messageId&&r.timingQuestion){const at=parseMaterialMoment(e.text);if(at){try{setTiming(s,r,{mode:r.timingQuestion,at,source:'author-explicit'});r.evidence.push(receipt('timing',r,'passed','message:'+e.messageId));r.timingQuestion=null;r.timingError=null;}catch{r.timingError='Срок уже передан в очередь: его меняет оператор штатной командой.';}}
+    else r.timingError='Нужны дата и время: ДД.ММ.ГГГГ ЧЧ:ММ по Москве либо UTC с Z.';r.card.dirty=true;e.status='done';e.materialId=r.id;continue;}
    const old=r.sources.find(x=>x.messageId===e.messageId);
    if(r.sources.filter(x=>x!==old).reduce((n,x)=>n+x.caption.length,0)+e.text.length>(cfg().limits?.maxText||4000)){e.status='blocked';e.reason='text_limit';r.textBlocked=true;r.card.dirty=true;continue;}
    if(e.kind==='edited'&&!old){e.status='ignored';continue;}
@@ -108,21 +129,16 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
    r.lastIncomingAt=clock();r.evidence.push(receipt('event',r,'passed','update:'+e.updateId));e.status='done';e.materialId=r.id;
   }});}
  function edit(id,revision,actor,patch){return store.tx(s=>{const r=s.materials[id];if(!r||!actorCan(cfg(),r,actor))throw Error('нет права менять комплект');if(r.revision!==revision)throw Error('устаревшая версия');if(r.workflowClosed||r.mode==='cancelled')throw Error('задание закрыто; нужен новый явный комплект');
-   const keys=Object.keys(patch);if(keys.some(k=>!['goal','brief','targets','excludeFile','editing_mode','timing','rights','mode','resolveQuestion'].includes(k)))throw Error('неизвестная правка');
+   const keys=Object.keys(patch);if(keys.some(k=>!['goal','brief','targets','targetAssets','excludeFile','editing_mode','timing','rights','mode','resolveQuestion'].includes(k)))throw Error('неизвестная правка');
    for(const key of keys){const value=patch[key];
     if(key==='excludeFile'){const f=r.files.find(f=>f.fileUniqueId===value);if(!f)throw Error('файл не найден');f.excluded={by:String(actor),at:now()};change(r,'manifest');r.rights={status:'needs_clarification'};}
-    else if(key==='rights'){if(value!==true)throw Error('нужно явное подтверждение');r.rights={status:'confirmed',manifestRevision:r.manifest_revision,by:String(actor),at:now()};change(r,'brief');}
-    else if(key==='targets'){if(!Array.isArray(value)||!value.length||value.some(v=>!cfg().targets?.some(t=>hash(t)===hash(v))))throw Error('площадка не настроена');r.targets=clone(value);change(r,'brief');}
+    else if(key==='rights'){if(value!==true)throw Error('нужно явное подтверждение');r.rights={status:'confirmed',manifestRevision:r.manifest_revision,by:String(actor),at:now()};change(r,'brief');r.rights.textRevision=r.brief_revision;r.rights.textHash=hash(r.brief);}
+    else if(key==='targets'){if(!Array.isArray(value)||!value.length||new Set(value.map(targetKey)).size!==value.length||value.some(v=>!catalog().some(t=>hash(t)===hash(v))))throw Error('площадка не настроена');r.targets=clone(value);r.targetsExplicit=true;change(r,'brief');}
+    else if(key==='targetAssets'){if(!value||typeof value!=='object'||Array.isArray(value))throw Error('нужен состав по вариантам');for(const [target,ids]of Object.entries(value)){if(!catalog().some(t=>targetKey(t)===target)||!Array.isArray(ids)||new Set(ids).size!==ids.length||ids.some(id=>!r.files.some(f=>f.fileUniqueId===id&&!f.excluded)))throw Error('неверный выбор вложений');}r.targetAssets=clone(value);change(r,'brief');refreshTargets(r);}
     else if(key==='mode'){if(!['draft','discussion','archive','cancelled'].includes(value))throw Error('неизвестный режим');r.mode=value;change(r,'brief');}
     else if(key==='goal'||key==='brief'){if(typeof value!=='string'||value.length>(cfg().limits?.maxText||4000))throw Error('неверный текст');r[key]=value;if(key==='brief')r.textBlocked=false;change(r,'brief');}
     else if(key==='editing_mode'){if(!['adapt','preserve_wording'].includes(value))throw Error('режим редактирования');r[key]=value;change(r,'brief');}
-    else if(key==='timing'){
-     if(!['after_approval','choose_later','at','not_before'].includes(value?.mode)||(['at','not_before'].includes(value.mode)&&(!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(value.at||'')||!Number.isFinite(Date.parse(value.at))||new Date(value.at).toISOString().replace('.000Z','Z')!==value.at.replace('.000Z','Z'))))throw Error('нужно однозначное время UTC');
-     const jobs=Object.values(s.jobs).filter(j=>j.materialId===id&&j.revision===r.revision);
-     if(jobs.some(j=>Object.keys(j.queueResults||{}).length))throw Error('срок после передачи в очередь меняет штатная команда queue move, согласие на текст сохраняется');
-     r.timing=clone(value);r.timing_revision++;r.card.dirty=true;
-     for(const job of jobs){job.input.timing=clone(value);job.inputHash=hash(job.input);if(job.result){job.result.inputHash=job.inputHash;job.resultHash=hash(job.result);}}
-    }
+    else if(key==='timing'){setTiming(s,r,value);r.timingQuestion=null;r.timingError=null;}
     else if(key==='resolveQuestion'){const q=r.questions.find(q=>q.id===value?.id);if(!q||q.status==='resolved')throw Error('вопрос не найден');q.status='resolved';q.answer=String(value.answer||'').slice(0,1000);change(r,'brief');}
    }return r;
   });}
@@ -135,11 +151,14 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   if(blocks.length)return{ok:false,blockers:blocks};
   return store.tx(s=>{const m=s.materials[id];if(m.revision!==rev)return{ok:false};
    const existing=Object.values(s.jobs).find(j=>j.materialId===id&&j.revision===rev);if(existing)return{ok:true,duplicate:true,jobId:existing.id};
-   const input={materialId:id,revision:rev,manifestRevision:m.manifest_revision,briefRevision:m.brief_revision,brief:m.brief,goal:m.goal,targets:m.targets,files:m.files.filter(f=>!f.excluded).map(f=>({mediaId:f.mediaId,sha256:f.sha256,mime:f.mime,bytes:f.bytes})),rights:{status:m.rights.status,manifestRevision:m.rights.manifestRevision},timing:m.timing,editing_mode:m.editing_mode,policyVersion:cfg().policyVersion,
-    sources:m.sources.map(x=>({id:'message-'+x.messageId,kind:'author_statement',locator:x.link,text:x.caption,receivedAt:m.createdAt})).concat(m.factSources||[]),facts:(m.facts||[]).map(({claim,source})=>({claim,source})),questions:m.questions.map(({id,text,status,answer,resolution})=>({id,text,status,answer,resolution}))};
+   if(Object.values(s.jobs).some(j=>j.materialId===id&&j.status==='claimed'))return{ok:false,reason:'previous_claim_active'};
+   const input={materialId:id,revision:rev,manifestRevision:m.manifest_revision,briefRevision:m.brief_revision,brief:m.brief,goal:m.goal,targets:m.targets.map(t=>({...t,targetKey:targetKey(t)})),files:m.files.filter(f=>!f.excluded).map(f=>({mediaId:f.mediaId,sha256:f.sha256,mime:f.mime,bytes:f.bytes})),rights:{status:m.rights.status,manifestRevision:m.rights.manifestRevision},timing:m.timing,editing_mode:m.editing_mode,policyVersion:cfg().policyVersion,
+    sources:m.sources.map(x=>({id:'message-'+x.messageId,kind:'author_statement',locator:x.link,text:x.caption,receivedAt:m.createdAt})).concat(m.factSources||[]),facts:(m.facts||[]).map(({claim,source})=>({claim,source})),targetFacts:clone(m.targetFacts||{}),targetMedia:Object.fromEntries(m.targets.map(t=>[targetKey(t),targetFiles(t,selectedFiles(m,t)).map(f=>f.mediaId)])),questions:m.questions.map(({id,text,status,answer,resolution})=>({id,text,status,answer,resolution}))};
    if(JSON.stringify(input).length>cfg().limits.maxJobInput)return{ok:false,reason:'input_budget'};
    m.confirmedRevision=rev;m.mode='submitted';m.card.dirty=true;
-   const j={id:uid(),materialId:id,revision:rev,inputHash:hash(input),input,targets:clone(m.targets),status:'queued',createdAt:now(),claim:null,result:null};s.jobs[j.id]=j;m.evidence.push(receipt('brief-confirmation',m,'passed',j.id));return{ok:true,jobId:j.id};
+   for(const old of Object.values(s.jobs))if(old.materialId===id&&old.status==='queued')old.status='superseded';
+   const hasVideo=m.files.some(f=>!f.excluded&&f.mime?.startsWith('video/'));
+   const j={id:uid(),protocolVersion:2,recipient:hasVideo?'S2':recipientFor(m.targets),manifestRevision:m.manifest_revision,materialId:id,revision:rev,inputHash:hash(input),input,targets:clone(input.targets),status:'queued',createdAt:now(),claim:null,result:null};s.jobs[j.id]=j;m.evidence.push(receipt('brief-confirmation',m,'passed',j.id));return{ok:true,jobId:j.id};
   });
  }
  async function callbacks(){for(const event of Object.values(store.read().events).filter(e=>e.kind==='callback'&&e.status==='pending')){
@@ -150,7 +169,11 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
     else if(action==='rights'){edit(id,Number(ver),event.actor,{rights:true});answer='Подтверждение сохранено';}
     else if(['archive','cancel','discuss'].includes(action)){edit(id,Number(ver),event.actor,{mode:{archive:'archive',cancel:'cancelled',discuss:'discussion'}[action]});answer='Решение сохранено';}
     else if(action==='object'||action==='product'||action==='other'){edit(id,Number(ver),event.actor,{goal:action});answer='Цель изменена';}
-    else if(action.startsWith('target-')){const channel=action.slice(7),t=cfg().targets.find(x=>x.channel===channel);if(t){const selected=r.targets.some(x=>x.channel===channel);edit(id,Number(ver),event.actor,{targets:selected?r.targets.filter(x=>x.channel!==channel):[...r.targets,t]});answer='Площадки изменены';}}
+    else if(action==='time-now'||action==='time-later'){edit(id,Number(ver),event.actor,{timing:{mode:action==='time-now'?'after_approval':'choose_later',source:'author-explicit'}});answer='Срок обновлён; готовый текст не меняется';}
+    else if(action==='time-at'||action==='time-not-before'){store.tx(s=>{const m=s.materials[id];m.timingQuestion=action==='time-at'?'at':'not_before';m.card.dirty=true;});answer='Ответьте на карточку: ДД.ММ.ГГГГ ЧЧ:ММ по Москве';}
+    else if(action.startsWith('fmt-')){const t=catalog().find(t=>targetToken(t)===action.slice(4));if(t){const selected=r.targets.some(x=>targetKey(x)===targetKey(t)),next=selected?r.targets.filter(x=>targetKey(x)!==targetKey(t)):[...r.targets,t];if(!next.length)answer='Нужно оставить хотя бы один вариант';else{edit(id,Number(ver),event.actor,{targets:next});answer='Список вариантов изменён';}}}
+    else if(action.startsWith('asset-')){const parts=action.split('-'),t=catalog().find(t=>targetToken(t)===parts[1]),file=r.files[Number(parts[2])];if(t&&file&&!file.excluded){const key=targetKey(t),old=r.targetAssets?.[key]||targetFiles(t,r.files).map(f=>f.fileUniqueId),ids=old.includes(file.fileUniqueId)?old.filter(x=>x!==file.fileUniqueId):[...old,file.fileUniqueId];edit(id,Number(ver),event.actor,{targetAssets:{...(r.targetAssets||{}),[key]:ids}});answer='Состав варианта изменён';}}
+    else if(action.startsWith('target-')){const channel=action.slice(7),t=cfg().targets.find(x=>x.channel===channel);if(t){const selected=r.targets.some(x=>targetKey(x)===targetKey(t));edit(id,Number(ver),event.actor,{targets:selected?r.targets.filter(x=>targetKey(x)!==targetKey(t)):[...r.targets,t]});answer='Площадки изменены';}}
     else if(action.startsWith('omit-')){const qid=action.slice(5);store.tx(s=>{const m=s.materials[id],q=m.questions.find(q=>q.id===qid&&q.allowOmit);if(!q||q.status==='resolved')throw Error();q.status='resolved';q.resolution='omit';q.by=event.actor;change(m,'brief');});answer='Спорное утверждение исключается из подготовки';}
     else if(action==='reopen'&&['archive','discussion'].includes(r.mode)){edit(id,Number(ver),event.actor,{mode:'draft'});answer='Возвращено в подготовку задания; публикация не одобрена';}
     else if(action==='edit'){store.tx(s=>{s.materials[id].editRequested=true;s.materials[id].card.dirty=true;});answer='Ответьте на карточку: цель или описание. Площадки меняются кнопками.';}
@@ -159,14 +182,16 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   store.tx(s=>{s.events['cb:'+event.id].status='done';});if(telegram)await telegram('answerCallbackQuery',{callback_query_id:event.id,text:answer});
  }}
  function card(id){const r=store.read().materials[id];if(!r)throw Error('комплект не найден');const active=r.files.filter(f=>!f.excluded),verified=active.filter(f=>f.status==='verified');
-  const videoMismatch=verified.some(f=>f.mime?.startsWith('video/'))&&r.targets.some(t=>['album','photopost','photo-post','carousel'].includes(t.format));
   const currentJob=Object.values(store.read().jobs).find(j=>j.materialId===id&&j.revision===r.revision),snapshots=r.queueSummary?.targets||Object.values(currentJob?.publicationState||{});
   const counts=r.queueSummary?{published_count:snapshots.filter(x=>x.stages?.P12?.result==='passed').length,cancelled_count:snapshots.filter(x=>x.status==='cancelled').length,deferred_count:0,unresolved_count:snapshots.filter(x=>!x.closed).length}:r.workflowSummary;
   const state=r.workflowClosed?'Итог':{draft:'Собираем материал',submitted:snapshots.some(x=>['approved','running','handed','published','failed','expired'].includes(x.status))?'Выпуск':snapshots.some(x=>['review','rework'].includes(x.status))?'На согласовании':currentJob?.claim?'В подготовке':'Ожидает подготовки',discussion:'Только обсуждение',archive:'В архиве; резервирование не подтверждено',cancelled:'Отменено',closed:'Итог'}[r.mode];
   const titles={telegram:'Telegram',vk:'ВКонтакте',instagram:'Instagram',threads:'Threads',dzen:'Дзен',youtube:'YouTube',rutube:'Rutube'},formats={album:'альбом',photopost:'пост с фото','photo-post':'пост с фото',carousel:'карусель',post:'пост',video:'видео'},goals={'show-object':'показать объект',object:'показать объект',product:'объяснить продукт',other:'другая цель'};
   const lines=[`<b>${safe(state)}</b>`,`Сохранено ${verified.length} из ${active.length} файлов.`,r.changedAfterTransfer?'Состав изменён после передачи. Нужна новая версия задания.':'',`Предложение: ${safe(goals[r.goal]||r.goal||'предложить подачу')}.`,
-   videoMismatch?'Видео сохранено. Видеоверсию подготовит S2; публикационный маршрут видео пока не активирован.':`Подготовим: ${r.targets.map(t=>safe(`${titles[t.channel]||t.channel} — ${formats[t.format]||t.format} (${t.delivery_mode==='manual'?'ручная выкладка':'автоматическая публикация'})`)).join('; ')||'не выбрано'}.`,r.brief?`Описание: ${safe(r.brief.slice(0,1400))}`:'Нужен ответ: опишите, что важно показать. Ответьте на эту карточку.',
-   r.rights.status==='confirmed'?'Права на текущий состав подтверждены.':'Нужен ответ: подтвердите право публично использовать текущие файлы. Людей/музыку при необходимости проверит редактор; дети в кадре запрещены.',
+   `Подготовим: ${r.targets.map(t=>{const problems=targetProblems(t,selectedFiles(r,t));return safe(`${titles[t.channel]||t.channel} — ${targetSpec(t)?.label||formats[t.format]||t.format} (${t.delivery_mode==='manual'?'ручная выкладка':'автоматическая публикация'})${problems.length?'; пока нельзя: '+problems.map(p=>p.reason).join(', '):''}`);}).join('; ')||'нет подходящих выбранных форматов'}.`,
+   ...catalog().filter(t=>t.readiness!=='passed'&&!r.targets.some(x=>targetKey(x)===targetKey(t))).map(t=>`${safe(channelTitle(t.channel))}: ${safe(t.reason||'путь ещё не проверен')}.`),r.brief?`Описание: ${safe(r.brief.slice(0,1400))}`:'Нужен ответ: опишите, что важно показать. Ответьте на эту карточку.',
+   r.rights.status==='confirmed'?'Права на текущий состав подтверждены.':active.length?'Нужен ответ: подтвердите право публично использовать текущие файлы. Людей/музыку при необходимости проверит редактор; дети в кадре запрещены.':'Нужен ответ: подтвердите право публично использовать этот текст.',
+   active.some(f=>f.mime?.startsWith('video/'))&&!r.targets.some(t=>['video','image-or-video'].includes(targetSpec(t)?.media))?'Выберите совместимую видеоверсию и проверенный путь доставки.':'',
+   r.timingQuestion?'Ответьте на эту карточку: ДД.ММ.ГГГГ ЧЧ:ММ по Москве либо UTC с Z.':'',r.timingError||'',
    snapshots.some(t=>t.date&&t.time)?`Сроки по штатной очереди: ${snapshots.filter(t=>t.date&&t.time).map(t=>safe(`${titles[t.channel]||t.channel} — ${t.date} ${t.time} МСК${t.timing_mode==='not-before'?' (не раньше)':''}`)).join('; ')}.`:r.timing.mode==='choose_later'?'Выпуск отложен до выбора времени; «Одобрить» не отменяет это условие.':r.timing.at?`Выпуск ${r.timing.mode==='not_before'?'не раньше':'точно'} ${safe(new Date(r.timing.at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}))} (Москва), после отдельного «Одобрить».`:'Выпуск: после отдельного «Одобрить» готового варианта каждой площадки.',
    r.limitBlocked?'Есть непринятые файлы: лимит комплекта. Нужен координатор, чтобы явно разделить комплект; передача остановлена.':'',
    r.textBlocked?'Описание превышает предел пилота. Нужен сокращённый ответ или разделение задания.':'',
@@ -178,7 +203,11 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   const buttons=r.workflowClosed||['cancelled','closed'].includes(r.mode)?[]:['archive','discussion'].includes(r.mode)?[[{text:'Вернуть к заданию',callback_data:data('reopen')}]]:[[{text:'Подготовить так',callback_data:data('prepare')},{text:'Изменить задание',callback_data:data('edit')}],
    [{text:'Только обсудить',callback_data:data('discuss')},{text:'В архив',callback_data:data('archive')}],...(r.rights.status!=='confirmed'?[[{text:'Право использования подтверждаю',callback_data:data('rights')}]]:[]),
    ...r.questions.filter(q=>q.status!=='resolved'&&q.allowOmit).map(q=>[{text:'Не использовать спорное утверждение',callback_data:data('omit-'+q.id)}]),
-   ...(r.editRequested?[[{text:'Показать объект',callback_data:data('object')},{text:'Объяснить продукт',callback_data:data('product')},{text:'Другое',callback_data:data('other')}],cfg().targets.map(t=>({text:(r.targets.some(x=>x.channel===t.channel)?'✓ ':'')+(titles[t.channel]||t.channel),callback_data:data('target-'+t.channel)}))]:[]),[{text:'Отменить',callback_data:data('cancel')}]];
+   ...(r.editRequested?[[{text:'Показать объект',callback_data:data('object')},{text:'Объяснить продукт',callback_data:data('product')},{text:'Другое',callback_data:data('other')}],
+    ...catalog().map(t=>[{text:(r.targets.some(x=>targetKey(x)===targetKey(t))?'✓ ':'')+channelTitle(t.channel)+' — '+(targetSpec(t)?.label||t.format),callback_data:data('fmt-'+targetToken(t))}]),
+    ...r.targets.filter(t=>(targetSpec(t)?.max||Infinity)<targetFiles(t,r.files).length||r.targetAssets?.[targetKey(t)]).flatMap(t=>r.files.map((f,i)=>[{text:(selectedFiles(r,t).includes(f)?'✓ ':'')+(targetSpec(t)?.label||t.format)+': файл '+(i+1),callback_data:data('asset-'+targetToken(t)+'-'+i)}])),
+    [{text:'После Одобрить сразу',callback_data:data('time-now')},{text:'Время позже',callback_data:data('time-later')}],
+    [{text:'В точное время',callback_data:data('time-at')},{text:'Не раньше',callback_data:data('time-not-before')}]]:[]),[{text:'Отменить',callback_data:data('cancel')}]];
   return{text:lines.filter(Boolean).join('\n\n').slice(0,3900),reply_markup:{inline_keyboard:buttons}};
  }
  async function flush(){
@@ -192,7 +221,7 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
      result=await importFile({...f,material:'intake:'+r.id,source:r.sources.find(x=>x.messageId===f.messageId)?.link||'Telegram staff',variant:f.fileUniqueId});
      if(!result?.verified||!result.readable||!result.mediaId||!/^[a-f0-9]{64}$/.test(result.sha256)||!(result.bytes>0)||result.bytes>cfg().limits.maxBytes||!['image/jpeg','image/png','image/webp','video/mp4','video/quicktime'].includes(result.mime))throw Object.assign(Error(),{code:'INVALID_MEDIA'});
     }catch(e){errorCode=ERRORS.has(e.code)?e.code:'INVALID_MEDIA';}
-    store.tx(s=>{const m=s.materials[r.id],item=m.files.find(x=>x.fileUniqueId===f.fileUniqueId);Object.assign(item,errorCode?{status:'failed',errorCode}:{status:'verified',mediaId:result.mediaId,sha256:result.sha256,bytes:result.bytes,mime:result.mime});m.card.dirty=true;m.evidence.push(receipt('file',m,errorCode?'failed':'passed',errorCode||result.mediaId));});
+    store.tx(s=>{const m=s.materials[r.id],item=m.files.find(x=>x.fileUniqueId===f.fileUniqueId);Object.assign(item,errorCode?{status:'failed',errorCode}:{status:'verified',mediaId:result.mediaId,sha256:result.sha256,bytes:result.bytes,mime:result.mime});if(!errorCode)refreshTargets(m);m.card.dirty=true;m.evidence.push(receipt('file',m,errorCode?'failed':'passed',errorCode||result.mediaId));});
    }
    for(const r of Object.values(store.read().materials)){if(!telegram||!r.card.dirty||['sending','unknown'].includes(r.card.status)||clock()-(r.lastIncomingAt||0)<(cfg().quietMs||0))continue;
     const content=card(r.id),first=!r.card.messageId;
@@ -204,6 +233,7 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
  }
  function claim(id,owner,requestId){if(!['S1','S2'].includes(owner))return{ok:false,reason:'owner'};if(requestId!==undefined&&!/^[a-f0-9]{32}$/.test(requestId))return{ok:false,reason:'request_id'};
   return store.tx(s=>{const j=s.jobs[id],m=j&&s.materials[j.materialId];
+   if(j?.protocolVersion===2&&j.recipient!==owner)return{ok:false,reason:'recipient'};
    if(j?.status==='claimed'&&requestId&&j.claim.owner===owner&&j.claim.requestId===requestId)return{ok:true,duplicate:true,token:j.claim.token,job:clone(j)};
    if(!j||j.status!=='queued'||m.revision!==j.revision||Object.values(s.jobs).some(other=>other.materialId===j.materialId&&other.status==='claimed'))return{ok:false,reason:'busy_or_stale'};
    j.status='claimed';j.claim={owner,token:uid(),at:now(),...(requestId?{requestId}:{})};j.delivery={mode:cfg().handoffMode,at:now(),result:'accepted'};m.card.dirty=true;m.evidence.push(receipt('claim',m,'passed',j.id));return{ok:true,token:j.claim.token,job:clone(j)};
@@ -211,8 +241,8 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
  function result(id,owner,token,value){return store.tx(s=>{const j=s.jobs[id],m=j&&s.materials[j.materialId];if(!j||j.claim?.owner!==owner||j.claim.token!==token)return{ok:false,reason:'claim'};
   if(m.revision!==j.revision||m.mode!=='submitted')return{ok:false,reason:'stale'};const digest=hash(value);if(j.status==='completed')return{ok:j.resultHash===digest,duplicate:j.resultHash===digest};
   if(value?.inputHash!==j.inputHash||!Array.isArray(value.variants)||JSON.stringify(value).length>cfg().limits.maxJobOutput)return{ok:false,reason:'schema'};
-  const wanted=new Set(j.targets.map(t=>t.channel));if(value.variants.length!==wanted.size||new Set(value.variants.map(v=>v.channel)).size!==wanted.size)return{ok:false,reason:'targets'};
-  for(const v of value.variants){if(!wanted.has(v.channel)||v.format!==j.targets.find(t=>t.channel===v.channel)?.format||typeof v.text!=='string'||!v.text.trim()||!Array.isArray(v.mediaIds)||!v.mediaIds.length||v.mediaIds.some(id=>typeof id!=='string'))return{ok:false,reason:'variant'};}
+  const wanted=new Set(j.targets.map(targetKey));if(value.variants.length!==wanted.size||new Set(value.variants.map(targetKey)).size!==wanted.size)return{ok:false,reason:'targets'};
+  for(const v of value.variants){const spec=targetSpec(v),content=typeof v.text==='string'&&v.text.trim()||Array.isArray(v.entry?.posts)&&v.entry.posts.some(p=>typeof p==='string'&&p.trim());if(!wanted.has(targetKey(v))||!spec||!content||!Array.isArray(v.mediaIds)||spec.min&&!v.mediaIds.length||v.mediaIds.some(id=>typeof id!=='string'))return{ok:false,reason:'variant'};}
   if(!verifyResult||!verifyResult(value,j))return{ok:false,reason:'artifact_verification'};
   j.result=clone(value);j.resultHash=digest;j.artifactsVerified=true;j.status='completed';j.completedAt=now();m.card.dirty=true;m.evidence.push(receipt('editor-result',m,'passed',j.id));return{ok:true,publicationApproved:false};
  });}
@@ -240,11 +270,13 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
    else if(resolution.type==='source'){if(!Array.isArray(resolution.claims)||!resolution.claims.length||resolution.claims.some(claim=>!checked.some(f=>f.claim===claim&&f.sourceId===resolution.sourceId)))return{ok:false,reason:'question_source'};}
    else return{ok:false,reason:'resolution_type'};
   }
-  r.facts=checked;r.factSources=sources.filter(s=>s.kind!=='author_statement');r.facts_revision=(r.facts_revision||0)+1;
+  const targetFacts={};if(value.targetFacts!==undefined){if(!value.targetFacts||typeof value.targetFacts!=='object'||Array.isArray(value.targetFacts))return{ok:false,reason:'target_facts'};
+   for(const [key,claims]of Object.entries(value.targetFacts)){const t=r.targets.find(t=>targetKey(t)===key);if(!t||!Array.isArray(claims)||claims.some(claim=>!checked.some(f=>f.claim===claim)))return{ok:false,reason:'target_facts'};targetFacts[key]=checked.filter(f=>claims.includes(f.claim)).map(({claim,source})=>({claim,source}));}}
+  r.facts=checked;r.targetFacts=targetFacts;r.factSources=sources.filter(s=>s.kind!=='author_statement');r.facts_revision=(r.facts_revision||0)+1;
   for(const resolution of resolutions){const q=r.questions.find(q=>q.id===resolution.questionId);q.status='resolved';q.resolution=resolution.type;q.sourceId=resolution.sourceId||null;q.claims=resolution.claims||[];q.checkedBy=owner;}
   // Аннотация уже принятого содержания не меняет клиентское задание/manifest.
   // Меняем только зависимости редакторского пакета; прежний результат с иным hash отвергается.
-  const updatedInput={...j.input,facts:r.facts.map(({claim,source})=>({claim,source})),sources,questions:r.questions.map(({id,text,status,answer,resolution})=>({id,text,status,answer,resolution})),factsRevision:r.facts_revision};
+  const updatedInput={...j.input,facts:r.facts.map(({claim,source})=>({claim,source})),targetFacts:clone(r.targetFacts),sources,questions:r.questions.map(({id,text,status,answer,resolution})=>({id,text,status,answer,resolution})),factsRevision:r.facts_revision};
   if(JSON.stringify(updatedInput).length>cfg().limits.maxJobInput)return{ok:false,reason:'input_budget'};
   if(j.revision===r.revision){j.input=updatedInput;j.inputHash=hash(j.input);}
   r.card.dirty=true;s.materials[id]=r;s.jobs[jobId]=j;return{ok:true,revision:r.revision,factsRevision:r.facts_revision,inputHash:j.revision===r.revision?j.inputHash:null,job:j.revision===r.revision?clone(j):null};
