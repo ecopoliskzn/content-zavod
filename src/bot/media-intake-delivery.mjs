@@ -30,22 +30,23 @@ export function verifyIntakeResult(value,job){
  try{
   if(value?.inputHash!==job.inputHash||value.editorialReview?.result!=='passed'||value.editorialReview.policyVersion!==job.input?.policyVersion||!Array.isArray(value.variants)||value.variants.length!==job.targets.length)return false;
   const all=rows(),originals=new Set(job.input.files.map(f=>f.mediaId)),seen=new Set();
-  // Штатный runner связывает видеопремьеру по имени. Пока он не умеет связь
-  // по материалу, разные имена многоформатного job не должны обойти YouTube.
-  const youtube=job.targets.find(t=>t.channel==='youtube');
-  if(youtube&&job.targets.some(t=>t.channel!=='youtube'&&['video','short','reel'].includes(targetSpec(t)?.kind)&&targetEntryName(job,t)!==targetEntryName(job,youtube)))return false;
   for(const v of value.variants){
    const key=targetKey(v),target=job.targets.find(t=>targetKey(t)===key);if(!target||seen.has(key))return false;seen.add(key);
+   // Новый manifest закрепляет выбор отдельно для каждого формата. Только
+   // legacy без targetMedia использует общий состав исходников задания.
+   const selection=job.input.targetMedia===undefined?[...originals]:job.input.targetMedia?.[key];
+   if(!Array.isArray(selection)||selection.some(id=>!originals.has(id)))return false;
+   const selected=new Set(selection);
    const e=entryFromIntakeVariant(v,job);if(validate(e).length||check(e).block.length)return false;
    if(!Array.isArray(v.mediaIds)||e.media.some(m=>m.url||m.cover)||e.media.length!==v.mediaIds.length)return false;
    for(let i=0;i<e.media.length;i++){
     const m=e.media[i],r=all.find(r=>r.mediaId===m.mediaId);
-    if(m.mediaId!==v.mediaIds[i]||!r||r.role!=='publication'||!originals.has(r.parent)||r.material!==e.material||!existsSync(blobPath(r)))return false;
+    if(m.mediaId!==v.mediaIds[i]||!r||r.role!=='publication'||!selected.has(r.parent)||r.material!==e.material||!existsSync(blobPath(r)))return false;
     if((m.type==='image'&&!r.mime.startsWith('image/'))||(m.type==='video'&&!r.mime.startsWith('video/')))return false;
     const bytes=readFileSync(blobPath(r));if(bytes.length!==r.bytes||createHash('sha256').update(bytes).digest('hex')!==r.sha256)return false;
     const source=job.input.files.find(f=>f.mediaId===r.parent),original=all.find(f=>f.mediaId===r.parent);
     if(!source||!original||original.role!=='original'||original.material!==e.material||source.sha256&&source.sha256!==original.sha256||source.bytes!==undefined&&source.bytes!==original.bytes||original.mime?.split('/')[0]!==m.type||source.mime&&source.mime.split('/')[0]!==m.type)return false;
-    if(m.coverMediaId){const cover=all.find(f=>f.mediaId===m.coverMediaId);if(!cover||cover.role!=='publication'||cover.parent!==r.parent||cover.material!==e.material||!cover.mime.startsWith('image/')||!existsSync(blobPath(cover)))return false;const b=readFileSync(blobPath(cover));if(b.length!==cover.bytes||createHash('sha256').update(b).digest('hex')!==cover.sha256)return false;}
+    if(m.coverMediaId){const cover=all.find(f=>f.mediaId===m.coverMediaId);if(!cover||!['publication','cover'].includes(cover.role)||!selected.has(cover.parent)||cover.parent!==r.parent||cover.material!==e.material||!cover.mime.startsWith('image/')||!existsSync(blobPath(cover)))return false;const b=readFileSync(blobPath(cover));if(b.length!==cover.bytes||createHash('sha256').update(b).digest('hex')!==cover.sha256)return false;}
    }
   }return true;
  }catch{return false;}
