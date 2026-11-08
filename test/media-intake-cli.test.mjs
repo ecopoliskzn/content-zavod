@@ -1,5 +1,27 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,readFileSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';import {claimIntakeJob} from '../src/bot/media-intake-cli.mjs';
-import {refreshClaimContext,annotateClaimFacts} from '../src/bot/media-intake-cli.mjs';import {createIntake} from '../src/bot/media-intake.mjs';
+import {refreshClaimContext,annotateClaimFacts,submitClaimResult,acceptDispatchEnvelope} from '../src/bot/media-intake-cli.mjs';import {createIntake} from '../src/bot/media-intake.mjs';
+import {writeFileSync} from 'node:fs';
+test('accept передаёт fencing identity серверу до claim; устаревший конверт не принимает задание',async()=>{
+ const folder=mkdtempSync(path.join(tmpdir(),'envelope-fence-')),envelope={schema:1,dispatchId:'a'.repeat(64),requestId:'a'.repeat(32),jobId:'b'.repeat(16),materialId:'c'.repeat(16),revision:1,inputHash:'d'.repeat(64),protocolVersion:2,manifestRevision:1,owner:'S1'};let invoked=0;
+ await assert.rejects(()=>acceptDispatchEnvelope(envelope,{folder,invoke:async(cmd,args)=>{invoked++;assert.deepEqual(args.expected,{materialId:envelope.materialId,revision:1,inputHash:envelope.inputHash,protocolVersion:2,manifestRevision:1});return{ok:false,reason:'stale'};}}));
+ assert.equal(invoked,1);
+});
+
+test('result привязывает прочитанные claims к закрытым sources и отвергает старый hash',async()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'result-bind-')),file=path.join(dir,'claim.json'),fact={claim:'Поверхность пористая.',source:'интервью: закрытая атрибуция'},job={id:'a'.repeat(16),inputHash:'b'.repeat(64),input:{facts:[fact]}};
+ writeFileSync(file,JSON.stringify({schema:1,owner:'S1',token:'closed',job}));let submitted;
+ const invoke=async(cmd,a)=>cmd==='intake-context'?{ok:true,revision:1,job}:(submitted=a.result,{ok:true});
+ const value={inputHash:job.inputHash,variants:[{channel:'telegram',format:'post',factRefs:[fact.claim],entry:{text:'Поверхность пористая.'}}]};
+ await submitClaimResult(file,value,{invoke});assert.deepEqual(submitted.variants[0].entry.facts,[fact]);assert.equal(submitted.variants[0].factRefs,undefined);
+ await assert.rejects(()=>submitClaimResult(file,{...value,inputHash:'c'.repeat(64)},{invoke}));
+ await assert.rejects(()=>submitClaimResult(file,{...value,variants:[{...value.variants[0],factRefs:[]}]},{invoke}));
+});
+test('dispatcher requestId сохраняется до сети и иной dispatch не получает старую квитанцию',async()=>{
+ const folder=mkdtempSync(path.join(tmpdir(),'dispatch-claim-')),id='b'.repeat(16),requestId='c'.repeat(32),seen=[];
+ const invoke=async(cmd,a)=>{seen.push(a.requestId);return{ok:true,token:'test',job:{id}};};
+ const file=await claimIntakeJob(id,'S1',{folder,invoke,requestId});assert.equal(seen[0],requestId);assert.equal(JSON.parse(readFileSync(file)).requestId,requestId);
+ await assert.rejects(()=>claimIntakeJob(id,'S1',{folder,invoke,requestId:'d'.repeat(32)}));
+});
 test('успешный серверный claim и отказ локальной записи возобновляются одним requestId',async()=>{
  const folder=mkdtempSync(path.join(tmpdir(),'claim-recovery-')),id='a'.repeat(16),requests=[];let allocated;
  const invoke=async(cmd,args)=>{requests.push(args.requestId);if(!allocated)allocated={ok:true,token:'test-claim',job:{id},requestId:args.requestId};assert.equal(args.requestId,allocated.requestId);return allocated;};

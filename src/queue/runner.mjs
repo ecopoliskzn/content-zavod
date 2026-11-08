@@ -52,12 +52,18 @@ import { isHeld, isRestored, isTakeover, stopState } from "./switch.mjs";
 import * as mediaIntake from '../bot/media-intake-runtime.mjs';
 import {deliverIntakeResults} from '../bot/media-intake-delivery.mjs';
 import {syncIntakeQueue} from '../bot/media-intake-sync.mjs';
+import {intakeYoutubeWaiting} from './intake-youtube-first.mjs';
 import { adoptServerState, sayAdopted, takeoverDoubt } from "./takeover.mjs";
 
 const STUCK_MIN = 15;
 
 const state = () => readJson(dataPath("state.json"), {}) || {};
 const remember = (s) => writeJson(dataPath("state.json"), s);
+const intakeWait=entry=>{
+ if(!String(entry?.material||'').startsWith('intake:'))return null;
+ const snapshot=mediaIntake.instance().store.read();
+ return intakeYoutubeWaiting(entry,{jobs:Object.values(snapshot.jobs),material:snapshot.materials[entry.material.slice(7)],getEntry:get});
+};
 
 /**
  * Один проход выпуска.
@@ -220,9 +226,11 @@ export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedi
          неё, но премьера может не состояться в срок: ролик не загрузили, площадка отказала.
          Тогда остальные площадки стоят, пока запись YouTube с тем же именем не выйдет.
          Ждут они не вечно: через шесть часов запись просрочится, и человеку уйдёт кнопка. */
-      if (!isReply && entry.channel !== "youtube" && ["video", "short", "reel"].includes(entry.kind)) {
+      if (!isReply && entry.channel !== "youtube" && (["video", "short", "reel"].includes(entry.kind)||entry.media?.some(m=>m.type==='video'))) {
+        const managedWaiting=intakeWait(entry);
+        if(managedWaiting===true){out.waiting.push(entry.name);continue;}
         const first = entries.find((e) => e.channel === "youtube" && e.name === entry.name && e.status !== "cancelled");
-        if (first && get(first.id)?.status !== "published") { out.waiting.push(entry.name); continue; }
+        if (managedWaiting===null&&first && get(first.id)?.status !== "published") { out.waiting.push(entry.name); continue; }
       }
 
       const load = channelLoad(entry.channel, now,entry);
@@ -271,7 +279,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedi
       const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : await adapter(entry.channel);
       const transportBlocked=()=>{
         const latest=get(current.id);
-        return !latest||latest.status!=='running'||latest.contentHash!==current.contentHash||!latest.approval?.at||latest.approval.at!==current.approval?.at||stopState().stopped||isHeld()||isRestored()||mediaIntake.publicationBlockers(latest).length>0;
+        return !latest||latest.status!=='running'||latest.contentHash!==current.contentHash||!latest.approval?.at||latest.approval.at!==current.approval?.at||stopState().stopped||isHeld()||isRestored()||mediaIntake.publicationBlockers(latest).length>0||intakeWait(latest)===true;
       };
       const postpone=async()=>{
         const latest=get(current.id);
