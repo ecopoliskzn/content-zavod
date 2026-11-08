@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-11-08T07:50:29.389Z",
+  "codeCommit": "73ca40f",
+  "serverVersion": "73ca40f 20261108-074903",
+  "serverHealth": "passed",
+  "relayVersion": "63196558-46c9-4504-b3cf-ca5896cb6800",
+  "githubMainVerified": "6611e1e6ca99588b2089d8e56f2d6ecb09a82eda",
+  "newCommitsPushed": false,
+  "checks": {
+    "localMain": {"passed": 424, "failed": 0},
+    "cleanDeployMain": {"passed": 414, "failed": 0},
+    "bot": {"passed": 143, "failed": 0},
+    "doctor": {"exitCode": 1, "missingConfiguration": 6, "legalWarnings": 5},
+    "vaultBrokenLinks": 0,
+    "realTelegramTransport": "passed-isolated-owned-avatar-only"
+  },
+  "activation": {
+    "staffReceiverEnabled": false,
+    "customerLeadIntakeEnabled": false,
+    "topicCreated": false,
+    "groupMessagesSent": 0,
+    "publicationsSent": 0,
+    "review": "rejected",
+    "reason": "Explicit authorization for production staff receiver activation required by automatic review, despite scope tests and direct implementation request",
+    "workaroundAttempted": false
+  },
+  "autonomy": {
+    "implementedMode": "B-explicit-consumer-claim",
+    "localAppServerThreadRead": "passed-without-generation",
+    "eventDispatchProbe": "blocked-by-authorization-review",
+    "emptyPollingInvokesModel": false,
+    "existingWatcherChanged": false
+  },
+  "gatesForNewRealMaterial": {
+    "P0": "blocked-activation-authorization",
+    "P1": "pending-real-human-ingress",
+    "P2": "pending-real-material",
+    "P3": "pending-real-material; isolated-live-transport-proved-separately",
+    "P4": "pending-real-material",
+    "P5": "pending-real-material; consumer-contract-tested",
+    "P6": "pending-real-material",
+    "P7": "pending-real-material",
+    "P8": "pending-real-material",
+    "P9": "pending-human-publication-approval",
+    "P10": "pending-approved-material-and-release-preflight",
+    "P11": "pending-external-action",
+    "P12": "pending-verified-publication-or-manual-followup",
+    "P13": "pending-per-target-outcomes",
+    "P14": "unverified-independent-russian-backup-and-restore"
+  },
+  "supportedScope": {
+    "photoTelegram": "prepared-auto-album-path",
+    "photoVk": "manual-handoff-path; VK_USER_TOKEN absent",
+    "video": "guarded-private-import-only; blocked-for-photo-targets",
+    "liveWholeWorkflowProved": false
+  },
+  "evidence": [
+    "content/reports/telegram/2026-11-08/live-transport.json",
+    "ops/handoff/media-intake-s0-live-status-2026-11-08.md",
+    "ops/TELEGRAM-MEDIA-INTAKE.md"
+  ]
+}
