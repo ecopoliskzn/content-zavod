@@ -49,8 +49,8 @@ async function importTelegramAsset({fileId,bytes,material,source,variant},{fetch
   if(!Number.isFinite(capacity.freeBytes)||capacity.freeBytes<reserve+2*expected||!Number.isSafeInteger(capacity.quotaBytes)||expected>capacity.quotaBytes||!Number.isFinite(capacity.bytes??0)||(capacity.bytes??0)+expected>capacity.quotaBytes)throw failure('telegram_photo_space');
   let res;try{res=await fetcher(base.href.replace(/\/+$/,'')+'/download/getFile',{method:'POST',headers:{'content-type':'application/json','x-relay-secret':env('TG_RELAY_SECRET')},body:JSON.stringify({file_id:fileId}),redirect:'error',signal:AbortSignal.timeout(60000)});}catch{throw failure('telegram_photo_network');}
   if(res.status!==200||!res.body){await res.body?.cancel();throw failure('telegram_photo_download');}
-  const declared=Number(res.headers.get('content-length'));
-  if(!Number.isSafeInteger(declared)||declared<=0||declared>MAX||(bytes!==undefined&&declared!==bytes)){await res.body.cancel();throw failure('telegram_photo_size');}
+  const metadataSize=res.headers.get('x-telegram-file-size'),httpSize=res.headers.get('content-length'),declared=Number(metadataSize??httpSize);
+  if(!Number.isSafeInteger(declared)||declared<=0||declared>MAX||(bytes!==undefined&&declared!==bytes)||(httpSize!==null&&Number(httpSize)!==declared)){await res.body.cancel();throw failure('telegram_photo_size');}
   bytes=declared;
   let received=0;
   try{await pipeline(Readable.fromWeb(res.body),new Transform({transform(chunk,encoding,cb){received+=chunk.length;if(received>bytes||received>MAX)return cb(failure('telegram_photo_size'));cb(null,chunk);}}),createWriteStream(file,{flags:'wx',mode:0o600}));}catch{throw failure('telegram_photo_incomplete');}

@@ -4,7 +4,11 @@ import {existsSync,mkdirSync,writeFileSync,renameSync} from 'node:fs';
 import {dataPath,env,list,wrongUser} from '../src/lib/env.mjs';
 import {readJson,lock} from '../src/lib/files.mjs';import {tg} from '../src/lib/telegram.mjs';
 import {admin} from '../src/bot/media-intake-runtime.mjs';
+import {legalReady} from '../src/leads/legal.mjs';
 if(wrongUser())throw Error('запускается пользователем завода');
+// Этот первоначальный запуск допускается только при закрытом приёме заявок.
+// Защита не меняет юридическое состояние: любое иное значение требует другой операции.
+if(!process.argv.includes('--staff-only')||legalReady())throw Error('нужен служебный режим при закрытом приёме заявок');
 const author=process.argv.find(a=>a.startsWith('--author-id='))?.slice(12);
 if(!author||!/^\d+$/.test(author)||!process.argv.includes('--enable'))throw Error('нужны проверенный author-id и --enable');
 const dir=dataPath('media-intake');mkdirSync(dir,{recursive:true,mode:0o700});
@@ -32,6 +36,6 @@ try{
    {channel:'telegram',account_ref:'configured-tg-channel',format:'album',delivery_mode:'auto',readiness:'passed',verified_at:at},
    {channel:'vk',account_ref:'configured-vk-community',format:'photopost',delivery_mode:'manual',readiness:'passed',verified_at:at}],
   limits:{maxFiles:10,maxBytes:20*1024**2,maxPending:20,maxText:4000,maxJobInput:24000,maxJobOutput:24000,maxCalls:4},quietMs:2000,rightsPolicy:null};
- const result=await admin('intake-configure',{config},'operator-bootstrap');if(result.code!==0)throw Error('конфигурация отклонена');
+ const result=await admin('intake-configure',{config},'operator-bootstrap');if(result.code!==0||legalReady())throw Error('конфигурация или граница служебного приёма нарушена');
  console.log(JSON.stringify({ok:true,enabled:true,topicId:state.topicId,authorCount:config.authors.length,approverCount:config.approvers.length,coordinatorMode:config.coordinatorMode,handoffMode:'B',targets:[{channel:'telegram',delivery:'auto'},{channel:'vk',delivery:'manual'}],publicationsSent:0}));
 }finally{unlock();}

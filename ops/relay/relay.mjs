@@ -120,7 +120,9 @@ export async function handle(request, env, doFetch = fetch) {
         async pull(controller){try{const {done,value}=await reader.read();if(done){if(received!==file.file_size)throw Error('size');controller.close();return;}received+=value.byteLength;if(received>file.file_size||received>max)throw Error('size');controller.enqueue(value);}catch{await reader.cancel().catch(()=>{});controller.error(new Error('Telegram file transfer incomplete'));}},
         cancel(){return reader.cancel();}
       });
-      return new Response(body,{headers:{'content-type':'application/octet-stream','content-length':String(file.file_size),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+      // Workers снимает Content-Length у обычного потока; проверенный размер getFile
+      // переносим отдельным заголовком. Сам поток всё равно сверяется до последнего байта.
+      return new Response(body,{headers:{'content-type':'application/octet-stream','content-length':String(file.file_size),'x-telegram-file-size':String(file.file_size),'cache-control':'no-store','x-content-type-options':'nosniff'}});
     }catch(error){return json(502,{ok:false,error:'file-transport',error_type:['AbortError','TimeoutError','TypeError'].includes(error?.name)?error.name:'Other'});}
   }
   const tg = p.match(/^\/(api|upload)\/([A-Za-z]{3,40})$/);

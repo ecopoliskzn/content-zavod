@@ -1,0 +1,21 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';
+const dir=mkdtempSync(path.join(tmpdir(),'intake-retime-'));process.env.DATA_DIR=dir;process.env.ZAVOD_ENV_FILE=path.join(dir,'absent.env');delete process.env.QUEUE_API_BASE;
+const {createIntake}=await import('../src/bot/media-intake.mjs'),{deliverIntakeResults}=await import('../src/bot/media-intake-delivery.mjs'),{normalize,contentHash}=await import('../src/queue/format.mjs'),store=await import('../src/queue/store.mjs'),{execute}=await import('../src/queue/commands.mjs'),{config}=await import('../src/lib/config.mjs');config().release.mode='commissioning';
+const cfg={enabled:true,groupId:'-1001',topicId:9,authors:['11'],coordinators:['22'],approvers:['33'],handoffMode:'B',policyVersion:'test',quietMs:0,targets:[{channel:'telegram',account_ref:'test',format:'album',delivery_mode:'auto',readiness:'passed',verified_at:'2026-11-07T10:00:00Z'}],limits:{maxFiles:10,maxBytes:100,maxPending:20,maxText:4000,maxJobInput:24000,maxJobOutput:24000,maxCalls:4}};
+async function material(mime='image/jpeg'){
+ const app=createIntake({dir:mkdtempSync(path.join(tmpdir(),'retime-app-')),config:cfg,telegram:async()=>({ok:true,messageId:1}),importFile:async()=>({mediaId:'med_'+'a'.repeat(32),sha256:'a'.repeat(64),bytes:12,mime,verified:true,readable:true}),verifyResult:()=>true});
+ await app.handleUpdate({update_id:1,message:{message_id:1,chat:{id:-1001},message_thread_id:9,from:{id:11},caption:'Показать образец покрытия.',photo:[{file_id:'file',file_unique_id:'unique',file_size:12}]}});const id=app.list()[0].id;app.edit(id,app.show(id).revision,'11',{rights:true});return{app,id};
+}
+test('готовый choose_later → at доходит до штатного review без новой подготовки',async()=>{
+ const {app,id}=await material();app.edit(id,app.show(id).revision,'11',{timing:{mode:'choose_later'}});app.prepare(id,app.show(id).revision,'11');const job=app.jobs()[0],claim=app.claim(job.id,'S1');const text='Образец покрытия показан общим планом.';
+ app.result(job.id,'S1',claim.token,{inputHash:job.inputHash,editorialReview:{result:'passed',policyVersion:'test'},variants:[{channel:'telegram',format:'album',text,mediaIds:['med_'+'a'.repeat(32)],entry:{channel:'telegram',kind:'post',name:`mi-${id}-${job.revision}`,material:'intake:'+id,text,media:[{type:'image',mediaId:'med_'+'a'.repeat(32)}]}}]});
+ const queue=new Map(),calls=[],deps={verify:()=>true,getEntry:id=>queue.get(id),executeQueue:async(cmd,args)=>{calls.push(cmd);if(cmd==='add'){const e=normalize(args.entries);queue.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});}else{const e=queue.get(args.ref);e.status='review';e.approval={card:{messageId:1}};}return{code:0};}};
+ await deliverIntakeResults(app,deps);assert.equal(queue.size,0);const revision=app.show(id).revision;app.edit(id,revision,'11',{timing:{mode:'at',at:'2030-06-04T09:00:00Z'}});assert.equal(app.jobs()[0].status,'completed');assert.equal(app.show(id).revision,revision);await deliverIntakeResults(app,deps);assert.deepEqual(calls,['add','submit']);assert.equal([...queue.values()][0].status,'review');
+});
+test('approved queue → move сохраняет contentHash и ранее данное согласие',async()=>{
+ const e=(await store.put({channel:'threads',kind:'thread',name:'timing-move',material:'case:synthetic',date:'2030-06-04',time:'12:00',posts:['Образец покрытия показан общим планом.']})).entry;
+ await store.transition(e.id,'review');await store.transition(e.id,'approved',{approval:{at:'2026-11-08T07:00:00Z'}});const before=store.get(e.id);assert.equal((await execute('move',{ref:e.id,date:'2030-06-05',time:'13:00'},'operator')).code,0);const after=store.get(e.id);assert.equal(after.status,'approved');assert.equal(after.contentHash,before.contentHash);assert.equal(after.approval.at,before.approval.at);
+});
+test('закрытое видео не превращается в заведомо неверный фото-job',async()=>{
+ const {app,id}=await material('video/mp4');assert.equal(app.prepare(id,app.show(id).revision,'11').ok,false);assert.ok(app.readiness(id).P4.blockers.some(b=>b.reason_code==='media_target_mismatch'));assert.match(app.card(id).text,/видеоверсию|Видеоверсию/);assert.equal(app.jobs().length,0);
+});

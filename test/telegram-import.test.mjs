@@ -28,6 +28,10 @@ test('неизвестный размер уточняется у релея, и
  const row=await importTelegramPhoto({...input,bytes:undefined},opts);assert.equal(row.bytes,png.length);
  let calls=0;await assert.rejects(()=>importTelegramPhoto(input,{...opts,space:()=>({freeBytes:2*1024**3,quotaBytes:100,bytes:99}),fetcher:async()=>{calls++;throw Error('unexpected');}}));assert.equal(calls,0);
 });
+test('Workers может снять Content-Length: размер из доверенных метаданных всё равно сверяется с байтами',async()=>{
+ const row=await importTelegramPhoto({...input,bytes:undefined},{...opts,fetcher:async()=>new Response(png,{headers:{'x-telegram-file-size':String(png.length)}})});assert.equal(row.bytes,png.length);
+ await assert.rejects(()=>importTelegramPhoto(input,{...opts,fetcher:async()=>new Response(png,{headers:{'x-telegram-file-size':String(png.length),'content-length':'1'}})}));
+});
 test('размер, тип, обрыв, декодирование и нехватка места не дают mediaId',async()=>{
  for(const [change,options] of [[{bytes:1},opts],[{}, {...opts,fetcher:async()=>new Response('not image')}],[{}, {...opts,decode:async()=>{throw Error('decode');}}],[{}, {...opts,space:()=>({freeBytes:1,quotaBytes:512*1024**2})}]])await assert.rejects(()=>importTelegramPhoto({...input,...change},options));
  assert.equal(readdirSync(path.join(dir,'telegram-staging')).length,0);
