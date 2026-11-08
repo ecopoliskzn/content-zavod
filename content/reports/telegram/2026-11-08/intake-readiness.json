@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "checkedAt": "2026-11-08T07:50:29.389Z",
+  "checkedAt": "2026-11-08T11:36:04Z",
   "codeCommit": "73ca40f",
   "serverVersion": "73ca40f 20261108-074903",
   "serverHealth": "passed",
@@ -13,16 +13,19 @@
     "bot": {"passed": 143, "failed": 0},
     "doctor": {"exitCode": 1, "missingConfiguration": 6, "legalWarnings": 5},
     "vaultBrokenLinks": 0,
-    "realTelegramTransport": "passed-isolated-owned-avatar-only"
+    "realTelegramTransport": "passed-isolated-avatar-and-two-synthetic-files-in-working-topic",
+    "technicalPilot": "passed-synthetic-ingress-live-files-and-one-card; no-human-ingress-or-publication"
   },
   "activation": {
-    "staffReceiverEnabled": false,
+    "staffReceiverEnabled": true,
     "customerLeadIntakeEnabled": false,
-    "topicCreated": false,
-    "groupMessagesSent": 0,
+    "topicCreated": true,
+    "topicId": 309,
+    "technicalPilotCardId": 312,
+    "technicalPilotFilesVerified": 2,
     "publicationsSent": 0,
-    "review": "rejected",
-    "reason": "Explicit authorization for production staff receiver activation required by automatic review, despite scope tests and direct implementation request",
+    "review": "approved-in-originating-session-after-direct-human-confirmation",
+    "reason": "Original activation performed once by originating session; S0 independently verified state and safe technical receipt read-only",
     "workaroundAttempted": false
   },
   "autonomy": {
@@ -33,10 +36,10 @@
     "existingWatcherChanged": false
   },
   "gatesForNewRealMaterial": {
-    "P0": "blocked-activation-authorization",
+    "P0": "staff-activation-and-limited-synthetic-technical-pilot-verified; real-human-ingress-pending",
     "P1": "pending-real-human-ingress",
-    "P2": "pending-real-material",
-    "P3": "pending-real-material; isolated-live-transport-proved-separately",
+    "P2": "pending-real-material; synthetic-duplicate-event-tested-without-duplicate-card",
+    "P3": "pending-real-human-material; two-synthetic-files-verified-closed-in-live-transport",
     "P4": "pending-real-material",
     "P5": "pending-real-material; consumer-contract-tested",
     "P6": "pending-real-material",
@@ -50,7 +53,7 @@
     "P14": "unverified-independent-russian-backup-and-restore"
   },
   "supportedScope": {
-    "photoTelegram": "prepared-auto-album-path",
+    "photoTelegram": "staff-receiver-enabled; auto-album-publication-still-requires-human-approval",
     "photoVk": "manual-handoff-path; VK_USER_TOKEN absent",
     "video": "guarded-private-import-only; blocked-for-photo-targets",
     "liveWholeWorkflowProved": false
@@ -58,6 +61,7 @@
   "evidence": [
     "content/reports/telegram/2026-11-08/live-transport.json",
     "ops/handoff/media-intake-s0-live-status-2026-11-08.md",
-    "ops/TELEGRAM-MEDIA-INTAKE.md"
+    "ops/TELEGRAM-MEDIA-INTAKE.md",
+    "content/reports/telegram/2026-11-08/activation-verified.json"
   ]
 }

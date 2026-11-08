@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-11-08T11:36:04Z",
+  "serverVersion": "73ca40f 20261108-074903",
+  "githubMainVerified": "6611e1e6ca99588b2089d8e56f2d6ecb09a82eda",
+  "activationPerformedBy": "originating-session-after-direct-human-approval-and-successful-ordinary-review",
+  "verificationPerformedBy": "S0-read-only; no repeated bootstrap or smoke",
+  "state": {
+    "enabled": true,
+    "customerLeadIntake": false,
+    "bootstrapPhase": "created",
+    "topicId": 309,
+    "topicUrl": "https://t.me/c/3979810770/309",
+    "authorCount": 1,
+    "approverCount": 1,
+    "coordinatorMode": "operator-admin",
+    "handoffMode": "B",
+    "healthHttpStatus": 200,
+    "healthOk": true
+  },
+  "technicalPilot": {
+    "type": "synthetic-signed-ingress-with-live-telegram-files",
+    "checkedAt": "2026-11-08T11:33:46.723Z",
+    "probePhase": "verified",
+    "filesVerified": 2,
+    "cardId": 312,
+    "cardUrl": "https://t.me/c/3979810770/309/312",
+    "materialId": "1974f655a0d045b4",
+    "materialMode": "archive",
+    "cardStatus": "sent",
+    "duplicateCreated": false,
+    "outsiderRejected": true,
+    "originalsPublic": false,
+    "liveHumanIngressVerified": false,
+    "publicationApproved": false,
+    "publicationsSent": 0,
+    "serverArtifactRef": "media-intake/technical-probe/receipt.json"
+  },
+  "targets": [
+    {"channel": "telegram", "format": "album", "deliveryMode": "auto"},
+    {"channel": "vk", "format": "photopost", "deliveryMode": "manual"}
+  ],
+  "limitsOfEvidence": {
+    "newHumanMaterialReceived": false,
+    "wholeEditorialAndPublicationWorkflowProvedLive": false,
+    "videoPublicationRouteActivated": false,
+    "automaticCodexEventDispatchProved": false,
+    "independentRussianBackupAndRestoreVerified": false
+  }
+}

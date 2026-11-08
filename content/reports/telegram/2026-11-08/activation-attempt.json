@@ -25,5 +25,14 @@
   "publicationsSent": 0,
   "technicalPilotRun": false,
   "retryThroughAnotherTool": false,
-  "status": "blocked-review-did-not-recognize-already-verified-human-authorization"
+  "status": "historical-rejected-attempt; resolved-later-in-originating-session",
+  "resolution": {
+    "verifiedAt": "2026-11-08T11:36:04Z",
+    "method": "ordinary-review-in-originating-session-with-direct-human-approval",
+    "staffReceiverEnabled": true,
+    "customerLeadIntakeEnabled": false,
+    "topicId": 309,
+    "evidence": "content/reports/telegram/2026-11-08/activation-verified.json",
+    "thisRejectedAttemptWasExecuted": false
+  }
 }
