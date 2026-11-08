@@ -16,7 +16,7 @@ const configFile=()=>dataPath('media-intake','config.json');
 function currentConfig(){if(!existsSync(configFile()))return{enabled:false};try{return validateConfig(JSON.parse(readFileSync(configFile(),'utf8')));}catch{return{enabled:false};}}
 export const isEnabled=()=>currentConfig().enabled===true;
 export function instance(){
- if(!singleton)singleton=createIntake({dir:dir(),config:currentConfig,getQueueEntry,
+ if(!singleton)singleton=createIntake({dir:dir(),config:currentConfig,getQueueEntry,pilotEvidence:()=>({version:readFileSync(new URL('../../VERSION',import.meta.url),'utf8').trim(),evidence:JSON.parse(readFileSync(dataPath('media-intake','deployment-pilot-evidence.json'),'utf8'))}),
   importFile:async a=>{const {importTelegramFile}=await import('../media/telegram-import.mjs');return importTelegramFile(a);},
   telegram:async(method,body)=>{const res=await tg(method,body,{retries:0});return{ok:res.kind==='ok'&&res.data?.ok===true,messageId:res.result?.message_id,uncertain:res.kind==='network'||res.status>=500};},verifyResult:verifyIntakeResult});
  return singleton;
@@ -35,7 +35,7 @@ export function publicationBlockers(entry){
  if(!managed||entry.material!==`intake:${managed[1]}`)return[];
  try{const id=entry.material.slice(7),state=instance().store.read(),r=state.materials[id];
   if(!r||r.mode!=='submitted')return['готовность: исходное задание изменено или отменено; нужен актуальный вариант'];
-  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===Number(managed[2])&&j.status==='completed'&&j.artifactsVerified&&j.targets.some(t=>t.channel===entry.channel&&targetEntryName(j,t)===entry.name&&(r.targetJobs?r.targetJobs[targetKey(t)]===j.id:j.revision===r.revision))),v=j?.result?.variants?.find(v=>v.channel===entry.channel&&targetEntryName(j,v)===entry.name);
+  const j=Object.values(state.jobs).find(j=>j.materialId===id&&j.revision===Number(managed[2])&&j.status==='completed'&&j.artifactsVerified&&j.targets.some(t=>t.channel===entry.channel&&targetEntryName(j,t)===entry.name&&instance().isCurrentTarget(j.id,targetKey(t)))),v=j?.result?.variants?.find(v=>v.channel===entry.channel&&targetEntryName(j,v)===entry.name);
   if(!v||contentHash(entryFromIntakeVariant(v,j))!==contentHash(entry))return['готовность: публикационная версия не соответствует проверенному результату задания'];
   return[];
  }catch{return['готовность: состояние входящего задания недоступно; выпуск удержан до сверки'];}
