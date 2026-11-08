@@ -54,26 +54,31 @@ export function verifyIntakeResult(value,job){
 export async function deliverIntakeResults(app,{executeQueue=execute,getEntry=get,verify=verifyIntakeResult}={}){
  const unlock=lock(path.join(app.store.dir,'delivery.lock'),240000);if(!unlock)return{busy:true};
  const out={submitted:0,blocked:0,unknown:0};
+ // При точечной доработке старая общая ревизия ещё владеет неизменёнными
+ // целями. Решение принимает intake; legacy без метода требует точной ревизии.
+ const currentTarget=(job,key)=>{
+  const state=app.store.read(),m=state.materials[job.materialId],j=state.jobs[job.id];
+  if(!m||m.mode!=='submitted'||j?.status!=='completed'||!j.artifactsVerified||j.inputHash!==job.inputHash||JSON.stringify(j.result)!==JSON.stringify(job.result))return false;
+  return typeof app.isCurrentTarget==='function'?app.isCurrentTarget(job.id,key)===true:m.revision===job.revision;
+ };
  const mark=(id,channel,value)=>app.store.tx(s=>{const j=s.jobs[id];j.queueResults||={};j.queueResults[channel]={...value,at:new Date().toISOString()};return null;});
  try{
-  for(const job of app.jobs()){
-   const material=app.store.read().materials[job.materialId];
-   if(job.status!=='completed'||!job.artifactsVerified||material?.revision!==job.revision||material.mode!=='submitted')continue;
+  for(const job of structuredClone(app.jobs())){
+   if(job.status!=='completed'||!job.artifactsVerified||!job.targets.some(t=>currentTarget(job,targetKey(t))))continue;
    if(job.input?.timing?.mode==='choose_later'){out.blocked++;continue;}
    if(!verify(job.result,job)){out.blocked++;continue;}
    for(const variant of [...job.result.variants].sort((a,b)=>Number(b.channel==='youtube')-Number(a.channel==='youtube'))){
     // На каждом внешнем эффекте заново проверяем актуальность исходного задания.
-    const current=app.store.read(),m=current.materials[job.materialId],j=current.jobs[job.id];
-    if(m.revision!==job.revision||m.mode!=='submitted')break;
+    if(!currentTarget(job,targetKey(variant)))continue;
+    const j=app.store.read().jobs[job.id];
     const e=entryFromIntakeVariant(variant,job),key=job.protocolVersion===2||job.targets.filter(t=>t.channel===e.channel).length>1?targetKey(variant):e.channel,hash=contentHash(e),prior=j.queueResults?.[key];let queued=getEntry(e.id);
     if(queued&&queued.contentHash!==hash){out.blocked++;mark(job.id,key,{status:'conflict',id:e.id});continue;}
     if(queued&&['review','approved','running','handed','published'].includes(queued.status)&&queued.approval?.card?.messageId&&(queued.approval.cardHash===hash||!job.protocolVersion&&!queued.approval.cardHash)){mark(job.id,key,{status:'submitted',id:e.id,contentHash:hash});continue;}
     if(['sending','unknown','submitted'].includes(prior?.status)){out.unknown++;continue;}
     if(queued&&!['draft'].includes(queued.status)){out.blocked++;continue;}
-    if(!queued){const added=await executeQueue('add',{entries:e},'intake');if(added.code!==0){out.blocked++;continue;}queued=getEntry(e.id);}
+    if(!queued){if(!currentTarget(job,targetKey(variant))){out.blocked++;continue;}const added=await executeQueue('add',{entries:e},'intake');if(added.code!==0){out.blocked++;continue;}queued=getEntry(e.id);}
     if(!queued||queued.contentHash!==hash){out.blocked++;continue;}
-    const fresh=app.store.read(),fm=fresh.materials[job.materialId],fj=fresh.jobs[job.id];
-    if(fm?.revision!==job.revision||fm.mode!=='submitted'||fj?.inputHash!==job.inputHash||fj.status!=='completed'||JSON.stringify(fj.result)!==JSON.stringify(job.result)){out.blocked++;break;}
+    if(!currentTarget(job,targetKey(variant))){out.blocked++;continue;}
     mark(job.id,key,{status:'sending',id:e.id,contentHash:hash});
     try{
      const sent=await executeQueue('submit',{ref:e.id,channel:e.channel},'intake');queued=getEntry(e.id);

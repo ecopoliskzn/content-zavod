@@ -45,3 +45,43 @@ test('protocol 2 сохраняет две квитанции Instagram и не 
  await deliverIntakeResults(f.app,f.dependencies);await deliverIntakeResults(f.app,f.dependencies);
  assert.deepEqual(Object.keys(job.queueResults).sort(),['instagram:carousel','instagram:story']);assert.equal(f.entries.size,2);assert.equal(f.calls.filter(c=>c==='submit').length,2);
 });
+test('после частичной доставки scoped rework оставляет неизменённый pending target старому job',async()=>{
+ const f=fixture(),job=f.state.jobs.job1;job.protocolVersion=2;
+ job.targets=[{channel:'telegram',format:'album'},{channel:'vk',format:'photopost'}];
+ const original=structuredClone(job.result.variants[0]);job.result.variants=job.targets.map(t=>({...original,...t,entry:{...original.entry,channel:t.channel}}));
+ const m=f.state.materials[job.materialId];m.targetJobs={'telegram:album':job.id,'vk:photopost':job.id};
+ f.app.isCurrentTarget=(id,key)=>m.mode==='submitted'&&m.targetJobs?.[key]===id;
+ const execute=f.dependencies.executeQueue,channels=[];let first=true;
+ f.dependencies.executeQueue=async(cmd,args)=>{
+  if(cmd==='add'&&args.entries.channel==='vk'&&first)return{code:2};
+  const r=await execute(cmd,args);if(cmd==='submit'){const e=f.entries.get(args.ref);e.approval.cardHash=e.contentHash;channels.push(e.channel);}return r;
+ };
+ await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(channels,['telegram']);
+ first=false;m.revision=2;m.targetJobs['telegram:album']='replacement';
+ await deliverIntakeResults(f.app,f.dependencies);await deliverIntakeResults(f.app,f.dependencies);
+ assert.deepEqual(channels,['telegram','vk']);assert.equal(job.queueResults['vk:photopost'].status,'submitted');
+ m.mode='collecting';delete m.targetJobs;f.entries.clear();f.calls.length=0;
+ await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(f.calls,[]);
+});
+test('замена exact target во время add запрещает submit, соседний target продолжается',async()=>{
+ const f=fixture(),job=f.state.jobs.job1;job.protocolVersion=2;
+ const original=structuredClone(job.result.variants[0]);job.targets=[{channel:'telegram',format:'album'},{channel:'vk',format:'photopost'}];
+ job.result.variants=job.targets.map(t=>({...original,...t,entry:{...original.entry,channel:t.channel}}));
+ const m=f.state.materials[job.materialId];m.targetJobs={'telegram:album':job.id,'vk:photopost':job.id};
+ f.app.isCurrentTarget=(id,key)=>m.mode==='submitted'&&m.targetJobs?.[key]===id;
+ const execute=f.dependencies.executeQueue,submitted=[];
+ f.dependencies.executeQueue=async(cmd,args)=>{const r=await execute(cmd,args);if(cmd==='add'&&args.entries.channel==='telegram'){m.revision++;m.targetJobs['telegram:album']='replacement';}if(cmd==='submit'){const e=f.entries.get(args.ref);e.approval.cardHash=e.contentHash;submitted.push(e.channel);}return r;};
+ await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(submitted,['vk']);
+});
+test('глобальная смена состава снимает target map и не оживляет старую ревизию',async()=>{
+ const f=fixture(),job=f.state.jobs.job1,m=f.state.materials[job.materialId];
+ m.targetJobs={'telegram:album':job.id};
+ f.app.isCurrentTarget=(id,key)=>m.mode==='submitted'&&(m.targetJobs?m.targetJobs[key]===id:m.revision===f.state.jobs[id].revision);
+ m.revision++;delete m.targetJobs;
+ await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(f.calls,[]);
+});
+test('изменение результата во время add не отправляет прежнюю snapshot карточку',async()=>{
+ const f=fixture(),execute=f.dependencies.executeQueue;
+ f.dependencies.executeQueue=async(cmd,args)=>{const r=await execute(cmd,args);if(cmd==='add')f.state.jobs.job1.result.variants[0].text='Новый текст';return r;};
+ await deliverIntakeResults(f.app,f.dependencies);assert.deepEqual(f.calls,['add']);
+});
