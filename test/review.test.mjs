@@ -330,7 +330,9 @@ const video = (channel, kind, name, over = {}) => ({
   media: [{ type: "video", url: "https://s3.example.ru/rolik.mp4" }], hashtags: ["покрытие"], ...over,
 });
 
-test("постановка ролика: Instagram встаёт после премьеры на YouTube, раньше поставить нельзя молча", async () => {
+test("постановка ролика: Instagram встаёт после премьеры на YouTube, раньше поставить нельзя молча", async (t) => {
+  // Здесь проверяется scheduled: реальная ночь не должна сдвигать ожидаемое «сейчас».
+  t.mock.method(Date,'now',()=>Date.parse('2030-06-04T09:00:00Z'));
   const yt = await execute("add", { entries: [video("youtube", "short", "premiera")] }, "S2");
   assert.equal(yt.code, 0);
   const premiere = store.all().find((e) => e.channel === "youtube" && e.name === "premiera");

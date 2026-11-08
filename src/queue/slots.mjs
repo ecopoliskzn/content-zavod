@@ -95,6 +95,7 @@ export function slotFor(entry, entries, channelCfg, now = Date.now()) {
   let earliest=delay?Math.max(now,(priorApproval||now)+delay):Math.floor(now/minute)*minute,latest=now+60*86400000;
   if(timing.mode==='urgent')earliest=Math.floor(now/minute)*minute;
   if(timing.mode==='at'){const wanted=dueAt(timing);earliest=wanted>=now?wanted:Math.floor(now/minute)*minute;latest=earliest;}
+  if(timing.mode==='not-before')earliest=Math.max(earliest,Math.ceil(Date.parse(timing.notBefore)/minute)*minute);
   if(timing.mode==='period'){earliest=Math.max(now,operatorMoment(timing.from));latest=operatorMoment(timing.to);}
   const premiere=premiereOf(entries,entry,now);if(premiere)earliest=Math.max(earliest,premiere+(commissioning()?0:minute));
   if(!['at','period'].includes(timing.mode))latest=Math.max(now,earliest)+60*86400000;
@@ -134,7 +135,8 @@ export function requestTiming(entry,args={}){
   else if(args.delay!==undefined)timing={mode:'after-approval',delayMin:Number(args.delay)};
   else if(args.next)timing={mode:'after-approval'};
   else timing=entry.timing||{mode:'after-approval'};
-  if(!['urgent','at','period','after-approval'].includes(timing.mode))throw Object.assign(new Error('неизвестный способ выбора срока'),{code:'RULE'});
+  if(!['urgent','at','period','after-approval','not-before'].includes(timing.mode))throw Object.assign(new Error('неизвестный способ выбора срока'),{code:'RULE'});
+  if(timing.mode==='not-before'&&!Number.isFinite(Date.parse(timing.notBefore)))throw Object.assign(new Error('нужна нижняя граница времени'),{code:'RULE'});
   if(timing.delayMin!==undefined&&(!Number.isSafeInteger(timing.delayMin)||timing.delayMin<0||timing.delayMin>10080))throw Object.assign(new Error('задержка: целое число минут от 0 до 10080'),{code:'RULE'});
   if(timing.mode==='at')operatorMoment(timing.date+'T'+timing.time);
   if(timing.mode==='period'&&operatorMoment(timing.from)>operatorMoment(timing.to))throw Object.assign(new Error('начало периода позже конца'),{code:'RULE'});

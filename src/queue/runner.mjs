@@ -49,6 +49,9 @@ import {refreshCard} from '../bot/approval.mjs';
 import {commissioning,effectiveDue,requestedPeriodEnded} from './timing.mjs';
 import { all, compact, forcePublished, get, patch, transition } from "./store.mjs";
 import { isHeld, isRestored, isTakeover, stopState } from "./switch.mjs";
+import * as mediaIntake from '../bot/media-intake-runtime.mjs';
+import {deliverIntakeResults} from '../bot/media-intake-delivery.mjs';
+import {syncIntakeQueue} from '../bot/media-intake-sync.mjs';
 import { adoptServerState, sayAdopted, takeoverDoubt } from "./takeover.mjs";
 
 const STUCK_MIN = 15;
@@ -61,7 +64,7 @@ const remember = (s) => writeJson(dataPath("state.json"), s);
  * @returns {Promise<{ published: string[], handed: string[], retry: string[], failed: string[], expired: string[], waiting: string[], digest: boolean, busy?: boolean, stopped?: boolean, held?: boolean, restored?: boolean, idle?: string }>}
  *   handed — пакеты, ушедшие человеку на ручную выкладку: публикацией они ещё не стали
  */
-export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
+export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedia=publicationMedia } = {}) {
   const out = { published: [], handed: [], retry: [], failed: [], expired: [], waiting: [], digest: false };
   const rules = config().release;
 
@@ -107,6 +110,13 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     }
   }
 
+  // Тот же штатный проход продолжает закрытое сохранение и передачу на согласование.
+  // Выпуск ниже по-прежнему под STOP/HOLD/RESTORED. Восстановленный приём не отправляет
+  // новые карточки до сверки, компьютер с зеркалом также ничего не принимает.
+  if(!dry&&!isTakeover()&&!isRestored()&&mediaIntake.isEnabled()){
+    try{await mediaIntake.flush();await deliverIntakeResults(mediaIntake.instance());syncIntakeQueue(mediaIntake.instance());}
+    catch{console.error('[intake] техническое ожидание; публикационные рубильники сохранены');}
+  }
   const stop = stopState();
   if (stop.stopped) {
     // Компьютер оператора при перехвате об остановке не пишет: о ней уже сказал сервер,
@@ -159,6 +169,12 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
          Продолжаем со сверкой: вышедшее найдётся на площадке. */
       const stuck = entry.status === "running" && now - Date.parse(entry.startedAt || entry.at) > STUCK_MIN * 60_000;
       if (entry.status !== "approved" && !stuck) continue;
+      const sourceBlocks=mediaIntake.publicationBlockers(entry);
+      if(sourceBlocks.length){
+        out.waiting.push(entry.name);
+        if(!dry&&entry.note!==sourceBlocks[0])await patch(entry.id,{note:sourceBlocks[0]},'выпуск',{contentHash:entry.contentHash});
+        continue;
+      }
       if(requestedPeriodEnded(entry,now)){
         out.waiting.push(entry.name);
         const note='Указанный оператором период закончился: нужен новый срок, согласие на содержимое сохранено.';
@@ -240,6 +256,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
          в эту минуту уже ответил человеку «ничего не выйдет», поэтому следующую запись
          проход не берёт. */
       if (stopState().stopped) { out.stopped = true; break; }
+      if(mediaIntake.publicationBlockers(get(entry.id)||entry).length){out.waiting.push(entry.name);continue;}
 
       let current;
       try {
@@ -252,9 +269,20 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
       }
 
       const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : await adapter(entry.channel);
+      const transportBlocked=()=>{
+        const latest=get(current.id);
+        return !latest||latest.status!=='running'||latest.contentHash!==current.contentHash||!latest.approval?.at||latest.approval.at!==current.approval?.at||stopState().stopped||isHeld()||isRestored()||mediaIntake.publicationBlockers(latest).length>0;
+      };
+      const postpone=async()=>{
+        const latest=get(current.id);
+        if(latest?.status==='running'&&latest.contentHash===current.contentHash)await transition(latest.id,latest.approval?.at?'approved':'failed',{note:'Транспорт удержан: изменилось задание, согласие или технический рубильник',attempts},'выпуск',{contentHash:latest.contentHash});
+        out.waiting.push(entry.name);
+      };
       let result;
       try {
-        const withMedia=await publicationMedia(current);
+        if(transportBlocked()){await postpone();continue;}
+        const withMedia=await resolveMedia(current);
+        if(transportBlocked()){await postpone();continue;}
         result = await mod.publish(withMedia, {
           sleep,
           verify: attempts > 0 || stuck || Boolean(entry.done?.length),
@@ -325,6 +353,7 @@ export async function runOnce({ now = Date.now(), dry = false, sleep } = {}) {
     return out;
   } finally {
     release();
+    if(!dry&&!isTakeover()&&!isRestored()&&mediaIntake.isEnabled())try{syncIntakeQueue(mediaIntake.instance());}catch{console.error('[intake] сводка очереди ждёт следующего прохода');}
   }
 }
 

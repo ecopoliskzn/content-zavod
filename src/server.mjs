@@ -35,6 +35,13 @@ import { legalReady } from "./leads/legal.mjs";
 import { execute } from "./queue/commands.mjs";
 import { appPage } from "./app-pages.mjs";
 import { publicMedia } from './media/public.mjs';
+import * as mediaIntake from './bot/media-intake-runtime.mjs';
+import {deliverIntakeResults} from './bot/media-intake-delivery.mjs';
+import {createIntakePump} from './bot/media-intake-pump.mjs';
+import {isRestored} from './queue/switch.mjs';
+import {attachTelegramOriginal} from './media/telegram-import.mjs';
+import {syncIntakeQueue} from './bot/media-intake-sync.mjs';
+async function deliverAndSync(){const app=mediaIntake.instance();const out=await deliverIntakeResults(app);syncIntakeQueue(app);return out;}
 
 const send = (res, status, body, headers = {}) => {
   const isObject = typeof body === "object" && body !== null;
@@ -115,7 +122,7 @@ async function onTelegram(update) {
   if (message.chat?.type === "private") await customer.handleMessage(message);
 }
 
-export function createHandler() {
+export function createHandler({intake=mediaIntake,deliver=deliverAndSync}={}) {
   return async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
     const p = url.pathname;
@@ -138,6 +145,15 @@ export function createHandler() {
       if (!same(req.headers["x-telegram-bot-api-secret-token"], env("TG_WEBHOOK_SECRET"))) return send(res, 401, { ok: false });
       let update = {};
       try { update = JSON.parse(await readBody(req)); } catch { return send(res, 200, { ok: true }); }
+      // Только разрешённые события служебной темы сохраняются до ACK; лички и заявки
+      // не копируются в новый inbox. Ошибка записи заставляет Telegram повторить событие.
+      let captured;
+      try{captured=intake.ingest(update);}catch{return send(res,503,{ok:false});}
+      if(captured?.accepted){
+        send(res,200,{ok:true});
+        intake.flush().then(deliver).catch(()=>console.error('[intake] обработка отложена до штатного прохода'));
+        return;
+      }
       // Telegram важен только код 200: иначе обновление уйдёт в бесконечный повтор.
       send(res, 200, { ok: true });
       onTelegram(update).catch((e) => console.error("[tg] сбой обработки обновления:", e?.stack || e));
@@ -176,7 +192,17 @@ export function createHandler() {
       if (!same(auth, env("ADMIN_API_TOKEN"))) return send(res, 401, { code: 2, lines: ["ключ оператора не подошёл"] });
       let payload;
       try { payload = JSON.parse(await readBody(req, 8 * 1024 * 1024)); } catch { return send(res, 400, { code: 2, lines: ["тело запроса не разобрано"] }); }
-      return send(res, 200, await execute(String(payload.cmd || ""), payload.args || {}, String(payload.actor || "оператор").slice(0, 40)));
+      const cmd=String(payload.cmd||''),actor=String(payload.actor||'оператор').slice(0,40);
+      if(cmd.startsWith('intake-')){
+        if(cmd==='intake-attach-original'){
+          try{return send(res,200,{code:0,lines:['Закрытый оригинал привязан; состав требует подтверждения'],data:await attachTelegramOriginal(mediaIntake.instance(),payload.args||{})});}
+          catch{return send(res,200,{code:1,lines:['Привязка отклонена: проверьте материал, версию и файл']});}
+        }
+        const result=await intake.admin(cmd,payload.args||{},actor);
+        if(cmd==='intake-result'&&result?.code===0)await deliver();
+        return send(res,200,result||{code:1,lines:['Неизвестная команда приёма']});
+      }
+      return send(res, 200, await execute(cmd,payload.args||{},actor));
     }
 
     if (req.method === "GET" && p.startsWith("/go/")) {
@@ -249,6 +275,11 @@ export function startServer() {
     drain().then(() => writeJson(dataPath("heartbeat.json"), { ...(readJson(dataPath("heartbeat.json"), {}) || {}), igQueue: new Date().toISOString() })).catch((e) => console.error("[ig] фоновый разбор очереди:", e?.message || e));
   }, num("IG_QUEUE_POLL_MS", 60_000));
   timer.unref();
+  const intakePump=createIntakePump({enabled:()=>!env('QUEUE_API_BASE')&&!isRestored()&&mediaIntake.isEnabled(),flush:()=>mediaIntake.flush(),deliver:deliverAndSync,onError:()=>console.error('[intake] техническое ожидание')});
+  // Тишина альбома и восстановление pending не зависят от прихода следующего сообщения.
+  void intakePump.run();
+  const intakeTimer=setInterval(()=>void intakePump.run(),2000);intakeTimer.unref();
+  server.on('close',()=>{clearInterval(timer);clearInterval(intakeTimer);});
   const port = num("PORT", 3100);
   server.listen(port, env("HOST", "127.0.0.1"), () => console.log(`ecopolis-zavod слушает ${env("HOST", "127.0.0.1")}:${port}`));
   return server;

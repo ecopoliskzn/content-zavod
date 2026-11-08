@@ -15,7 +15,7 @@ export function compactCardText(entry,verdict={block:[],warn:[]},footer=''){
  if(!['published','cancelled','handed','running'].includes(entry.status)){
   if(entry.timing?.mode==='period')rows.push(`Период: ${h(entry.timing.from.replace('T',' '))} — ${h(entry.timing.to.replace('T',' '))} МСК`);
   else if(entry.timing?.delayMin)rows.push(`Через ${entry.timing.delayMin} мин. после одобрения`);
-  else rows.push(commissioning()&&!hasRequestedTime(entry)||!entry.timing||['after-approval','urgent'].includes(entry.timing.mode)?'Сразу после одобрения':`Выход: ${human(entry)} МСК`);
+  else rows.push(entry.timing?.mode==='not-before'?`Не раньше: ${human(entry)} МСК, после одобрения`:commissioning()&&!hasRequestedTime(entry)||!entry.timing||['after-approval','urgent'].includes(entry.timing.mode)?'Сразу после одобрения':`Выход: ${human(entry)} МСК`);
  }
  if(entry.context&&entry.kind==='reply')rows.push('',`Комментарий: «${h(String(entry.context).slice(0,600))}»`);
  rows.push('');

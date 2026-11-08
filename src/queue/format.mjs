@@ -167,7 +167,9 @@ const isHttps = (u) => /^https:\/\/[^\s]+$/.test(String(u || ""));
  */
 export function validate(e) {
   const bad = [];
-  if(e.timing&&!['after-approval','at','urgent','period'].includes(e.timing.mode))bad.push('срок: неизвестный способ выбора времени');
+  if(e.timing&&!['after-approval','at','urgent','period','not-before'].includes(e.timing.mode))bad.push('срок: неизвестный способ выбора времени');
+  if(e.timing?.mode==='not-before'&&!Number.isFinite(Date.parse(e.timing.notBefore)))bad.push('срок: нужна нижняя граница времени');
+  if(e.timing?.expireAt&&!Number.isFinite(Date.parse(e.timing.expireAt)))bad.push('срок: неверный дедлайн');
   if(e.timing?.mode==='period'){
     const stamp=v=>/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(String(v||''))?Date.parse(v+':00+03:00'):NaN;
     const from=stamp(e.timing.from),to=stamp(e.timing.to);if(!Number.isFinite(from)||!Number.isFinite(to)||from>to)bad.push('срок: нужен корректный период от/до по Москве');
