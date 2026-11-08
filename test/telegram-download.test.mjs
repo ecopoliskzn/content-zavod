@@ -14,7 +14,7 @@ test('релей скачивает только с Telegram, без redirect, c
  const calls=[];const r=await handle(request(),config,async(url,init)=>{calls.push({url,init});return calls.length===1?metadata():new Response(new Uint8Array([255,216,255,0]),{headers:{'set-cookie':'secret'}});});
  assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');assert.equal(r.headers.get('content-length'),'4');assert.equal(r.headers.get('set-cookie'),null);
  assert.equal(calls[0].url,'https://api.telegram.org/bottoken-test/getFile');assert.equal(calls[1].url,'https://api.telegram.org/file/bottoken-test/photos/file_1.jpg');
- for(const call of calls){assert.equal(call.init.redirect,'error');assert.equal(call.init.headers?.cookie,undefined);}
+ for(const call of calls){assert.equal(call.init.redirect,'manual');assert.equal(call.init.headers?.cookie,undefined);}
  assert.deepEqual(new Uint8Array(await r.arrayBuffer()),new Uint8Array([255,216,255,0]));
 });
 test('поддельный путь, слишком большой файл и сетевой отказ дают безопасный отказ',async()=>{
@@ -27,4 +27,9 @@ test('обрыв и превышение заявленного размера �
  for(const bytes of [new Uint8Array(3),new Uint8Array(5)]){
   let calls=0;const r=await handle(request(),config,async()=>++calls===1?metadata():new Response(bytes));assert.equal(r.status,200);await assert.rejects(()=>r.arrayBuffer());
  }
+});
+test('Workers не поддерживает redirect:error; ручной режим отклоняет любой редирект',async()=>{
+ let calls=0;const workerFetch=async(url,init)=>{if(init.redirect==='error')throw new TypeError('unsupported redirect mode');calls++;return calls===1?metadata():new Response(new Uint8Array(4));};
+ assert.equal((await handle(request(),config,workerFetch)).status,200);
+ for(const redirectAt of [1,2]){let count=0;const r=await handle(request(),config,async(url,init)=>{assert.equal(init.redirect,'manual');count++;return count===redirectAt?new Response(null,{status:302,headers:{location:'https://evil.example'}}):metadata();});assert.equal(r.status,502);assert.equal(count,redirectAt);}
 });

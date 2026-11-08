@@ -61,7 +61,7 @@ export async function handle(request, env, doFetch = fetch) {
     try {
       const origin = new URL(env.ORIGIN_URL);
       if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) return new Response(null,{status:502});
-      const res = await doFetch(origin.origin+p,{method:request.method,headers:{accept:'image/jpeg'},redirect:'error',signal:AbortSignal.timeout(20000)});
+      const res = await doFetch(origin.origin+p,{method:request.method,headers:{accept:'image/jpeg'},redirect:'manual',signal:AbortSignal.timeout(20000)});
       if (res.status===404) return new Response(null,{status:404});
       const type=(res.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
       const length=Number(res.headers.get('content-length'));
@@ -106,12 +106,14 @@ export async function handle(request, env, doFetch = fetch) {
     }catch{return json(400,{ok:false});}
     const max=20*1024*1024,signal=AbortSignal.timeout(60000);
     try {
-      const meta=await doFetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/getFile`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input),redirect:'error',signal});
+      // Workers поддерживает manual/follow, но бросает TypeError на redirect:error.
+      // manual не переходит по Location: любой 3xx ниже отклоняется как не-200.
+      const meta=await doFetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/getFile`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input),redirect:'manual',signal});
       if(!meta.ok)return json(502,{ok:false,error:'metadata-http',upstream_status:meta.status});
       const text=await meta.text();if(text.length>8192)return json(502,{ok:false,error:'metadata-size'});
       const result=JSON.parse(text),file=result.result;
       if(!result.ok||!file||typeof file.file_path!=='string'||! /^[A-Za-z0-9_/-]+\.[A-Za-z0-9]{1,8}$/.test(file.file_path)||file.file_path.startsWith('/')||file.file_path.split('/').some(s=>!s||s==='.'||s==='..')||!Number.isSafeInteger(file.file_size)||file.file_size<=0||file.file_size>max)return json(502,{ok:false,error:'metadata-invalid'});
-      const upstream=await doFetch(`https://api.telegram.org/file/bot${env.TG_BOT_TOKEN}/${file.file_path}`,{method:'GET',redirect:'error',signal});
+      const upstream=await doFetch(`https://api.telegram.org/file/bot${env.TG_BOT_TOKEN}/${file.file_path}`,{method:'GET',redirect:'manual',signal});
       if(!upstream.ok||!upstream.body){await upstream.body?.cancel();return json(502,{ok:false,error:'file-http',upstream_status:upstream.status});}
       const reader=upstream.body.getReader();let received=0;
       const body=new ReadableStream({

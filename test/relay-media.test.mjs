@@ -9,7 +9,7 @@ test('релей передаёт только публичный JPEG по то
     calls.push({url,init});return new Response(new Uint8Array([255,216,255,1]),{headers:{'content-type':'image/jpeg','content-length':'4','set-cookie':'private'}});
   });
   assert.equal(res.status,200);assert.equal(calls.length,1);assert.equal(calls[0].url,'https://origin.example'+path);
-  assert.equal(calls[0].init.redirect,'error');assert.equal(calls[0].init.headers.cookie,undefined);assert.equal(calls[0].init.headers['x-ig-token'],undefined);
+  assert.equal(calls[0].init.redirect,'manual');assert.equal(calls[0].init.headers.cookie,undefined);assert.equal(calls[0].init.headers['x-ig-token'],undefined);
   assert.equal(res.headers.get('content-type'),'image/jpeg');assert.equal(res.headers.get('set-cookie'),null);assert.equal(res.headers.get('cache-control'),'no-store');
   assert.deepEqual(new Uint8Array(await res.arrayBuffer()),new Uint8Array([255,216,255,1]));
 });
