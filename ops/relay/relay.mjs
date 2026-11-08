@@ -107,19 +107,19 @@ export async function handle(request, env, doFetch = fetch) {
     const max=20*1024*1024,signal=AbortSignal.timeout(60000);
     try {
       const meta=await doFetch(`https://api.telegram.org/bot${env.TG_BOT_TOKEN}/getFile`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(input),redirect:'error',signal});
-      if(!meta.ok)return json(502,{ok:false});
-      const text=await meta.text();if(text.length>8192)return json(502,{ok:false});
+      if(!meta.ok)return json(502,{ok:false,error:'metadata-http',upstream_status:meta.status});
+      const text=await meta.text();if(text.length>8192)return json(502,{ok:false,error:'metadata-size'});
       const result=JSON.parse(text),file=result.result;
-      if(!result.ok||!file||typeof file.file_path!=='string'||! /^[A-Za-z0-9_/-]+\.[A-Za-z0-9]{1,8}$/.test(file.file_path)||file.file_path.startsWith('/')||file.file_path.split('/').some(s=>!s||s==='.'||s==='..')||!Number.isSafeInteger(file.file_size)||file.file_size<=0||file.file_size>max)return json(502,{ok:false});
+      if(!result.ok||!file||typeof file.file_path!=='string'||! /^[A-Za-z0-9_/-]+\.[A-Za-z0-9]{1,8}$/.test(file.file_path)||file.file_path.startsWith('/')||file.file_path.split('/').some(s=>!s||s==='.'||s==='..')||!Number.isSafeInteger(file.file_size)||file.file_size<=0||file.file_size>max)return json(502,{ok:false,error:'metadata-invalid'});
       const upstream=await doFetch(`https://api.telegram.org/file/bot${env.TG_BOT_TOKEN}/${file.file_path}`,{method:'GET',redirect:'error',signal});
-      if(!upstream.ok||!upstream.body){await upstream.body?.cancel();return json(502,{ok:false});}
+      if(!upstream.ok||!upstream.body){await upstream.body?.cancel();return json(502,{ok:false,error:'file-http',upstream_status:upstream.status});}
       const reader=upstream.body.getReader();let received=0;
       const body=new ReadableStream({
         async pull(controller){try{const {done,value}=await reader.read();if(done){if(received!==file.file_size)throw Error('size');controller.close();return;}received+=value.byteLength;if(received>file.file_size||received>max)throw Error('size');controller.enqueue(value);}catch{await reader.cancel().catch(()=>{});controller.error(new Error('Telegram file transfer incomplete'));}},
         cancel(){return reader.cancel();}
       });
       return new Response(body,{headers:{'content-type':'application/octet-stream','content-length':String(file.file_size),'cache-control':'no-store','x-content-type-options':'nosniff'}});
-    }catch{return json(502,{ok:false});}
+    }catch(error){return json(502,{ok:false,error:'file-transport',error_type:['AbortError','TimeoutError','TypeError'].includes(error?.name)?error.name:'Other'});}
   }
   const tg = p.match(/^\/(api|upload)\/([A-Za-z]{3,40})$/);
   if (request.method === "POST" && tg) {
