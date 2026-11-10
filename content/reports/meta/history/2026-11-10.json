@@ -1,0 +1,705 @@
+{
+  "version": 1,
+  "day": "2026-11-10",
+  "policy": {
+    "windowDays": 60,
+    "freshDailyDays": 14,
+    "olderMetrics": "Monday only",
+    "textsCollected": false
+  },
+  "partial": false,
+  "warnings": [],
+  "snapshot": {
+    "version": "meta-baseline-1",
+    "source": "Meta owner OAuth / own profiles only",
+    "collectedFrom": "2026-11-10T11:58:42.876Z",
+    "collectedTo": "2026-11-10T11:59:00.151Z",
+    "reportTimezone": "Europe/Moscow",
+    "requestedFrom": "2026-09-11T11:58:42.868Z",
+    "requestedTo": "2026-11-08T21:00:00.000Z",
+    "currentTo": "2026-11-10T11:58:42.868Z",
+    "requests": 13,
+    "channels": [
+      {
+        "platform": "instagram",
+        "source": "Instagram Graph via existing server adapter (unversioned)",
+        "profile": {
+          "id": "17841404069364522",
+          "username": "ecopolis_kzn",
+          "accountType": "BUSINESS"
+        },
+        "status": "ok",
+        "inventoryComplete": true,
+        "metricsComplete": true,
+        "pages": 6,
+        "sourceRows": 552,
+        "duplicates": 0,
+        "invalidRows": 0,
+        "excludedOutsidePeriod": 550,
+        "stopReason": "end_of_feed",
+        "errors": [],
+        "followers": {
+          "value": 7288,
+          "status": "measured",
+          "takenAt": "2026-11-10T11:58:43.245Z",
+          "definition": "Число подписчиков собственного профиля на момент запроса"
+        },
+        "list": [
+          {
+            "id": "17925255990222691",
+            "permalink": "https://www.instagram.com/reel/DfZkL4Hgk3v/",
+            "publishedAt": "2026-11-06T12:05:36.000Z",
+            "format": "REELS",
+            "isOwnReply": null,
+            "parentId": null,
+            "window": "baseline",
+            "ageDaysAtCutoff": 3.995,
+            "metrics": {
+              "likes": {
+                "value": 2,
+                "status": "measured",
+                "source": "media_field",
+                "field": "like_count",
+                "period": "snapshot",
+                "takenAt": "2026-11-10T11:58:45.084Z"
+              },
+              "comments": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_field",
+                "field": "comments_count",
+                "period": "snapshot",
+                "takenAt": "2026-11-10T11:58:45.084Z"
+              },
+              "views": {
+                "value": 530,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:55.340Z"
+              },
+              "reach": {
+                "value": 420,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:55.340Z"
+              },
+              "saved": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:55.340Z"
+              },
+              "shares": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:55.340Z"
+              }
+            }
+          },
+          {
+            "id": "18113498264462176",
+            "permalink": "https://www.instagram.com/p/Dfjq0k1DZBb/",
+            "publishedAt": "2026-11-10T10:15:35.000Z",
+            "format": "FEED",
+            "isOwnReply": null,
+            "parentId": null,
+            "window": "current",
+            "ageDaysAtCutoff": 0.072,
+            "metrics": {
+              "likes": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_field",
+                "field": "like_count",
+                "period": "snapshot",
+                "takenAt": "2026-11-10T11:58:45.084Z"
+              },
+              "comments": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_field",
+                "field": "comments_count",
+                "period": "snapshot",
+                "takenAt": "2026-11-10T11:58:45.084Z"
+              },
+              "views": {
+                "value": 97,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:56.568Z"
+              },
+              "reach": {
+                "value": 44,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:56.568Z"
+              },
+              "saved": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:56.568Z"
+              },
+              "shares": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:58:56.568Z"
+              }
+            }
+          }
+        ],
+        "uniqueIdsSeen": 552,
+        "actualFrom": "2026-11-06T12:05:36.000Z",
+        "actualTo": "2026-11-10T10:15:35.000Z"
+      },
+      {
+        "platform": "threads",
+        "source": "Threads Graph v1.0",
+        "profile": {
+          "id": "29190941230594420",
+          "username": "ecopolis_kzn"
+        },
+        "status": "ok",
+        "inventoryComplete": true,
+        "metricsComplete": true,
+        "pages": 1,
+        "sourceRows": 1,
+        "duplicates": 0,
+        "invalidRows": 0,
+        "excludedOutsidePeriod": 0,
+        "stopReason": "end_of_feed",
+        "errors": [],
+        "followers": {
+          "value": 810,
+          "status": "measured",
+          "takenAt": "2026-11-10T11:58:58.176Z",
+          "definition": "Число подписчиков собственного профиля на момент запроса"
+        },
+        "list": [
+          {
+            "id": "18131545933695212",
+            "permalink": "https://www.threads.com/@ecopolis_kzn/post/DfZAtOdiCnO",
+            "publishedAt": "2026-11-06T06:55:37.000Z",
+            "format": "IMAGE",
+            "isOwnReply": false,
+            "parentId": null,
+            "window": "baseline",
+            "ageDaysAtCutoff": 4.21,
+            "metrics": {
+              "views": {
+                "value": 102,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:59:00.150Z"
+              },
+              "likes": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:59:00.150Z"
+              },
+              "replies": {
+                "value": 4,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:59:00.150Z"
+              },
+              "reposts": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:59:00.150Z"
+              },
+              "quotes": {
+                "value": 0,
+                "status": "measured",
+                "source": "media_insights",
+                "period": "lifetime",
+                "takenAt": "2026-11-10T11:59:00.150Z"
+              }
+            }
+          }
+        ],
+        "uniqueIdsSeen": 1,
+        "actualFrom": "2026-11-06T06:55:37.000Z",
+        "actualTo": "2026-11-06T06:55:37.000Z"
+      }
+    ],
+    "limitations": [
+      "Метрики накопленные на момент замера, а не результат только за восемь недель.",
+      "Задержка готовности метрик неизвестна; отсутствие значения не равно нулю.",
+      "История Stories не собирается: отсутствие в списке не доказывает отсутствие историй.",
+      "Выдача собственных ответов Threads отдельно не запрашивается; полнота по ним не подтверждена.",
+      "Охваты материалов нельзя складывать в уникальный охват аккаунта."
+    ]
+  },
+  "aggregate": {
+    "version": "meta-baseline-1",
+    "sourceCollectedFrom": "2026-11-10T11:58:42.876Z",
+    "sourceCollectedTo": "2026-11-10T11:59:00.151Z",
+    "requestedFrom": "2026-09-11T11:58:42.868Z",
+    "requestedTo": "2026-11-08T21:00:00.000Z",
+    "timezone": "Europe/Moscow",
+    "rankingPerformed": false,
+    "rankingReason": "Накопленные значения материалов разного возраста нельзя ранжировать как результат одинакового периода.",
+    "channels": [
+      {
+        "platform": "instagram",
+        "profile": {
+          "id": "17841404069364522",
+          "username": "ecopolis_kzn",
+          "accountType": "BUSINESS"
+        },
+        "status": "ok",
+        "inventoryComplete": true,
+        "stopReason": "end_of_feed",
+        "pages": 6,
+        "sourceRows": 552,
+        "uniqueIdsSeen": 552,
+        "duplicates": 0,
+        "invalidRows": 0,
+        "followers": {
+          "value": 7288,
+          "status": "measured",
+          "takenAt": "2026-11-10T11:58:43.245Z",
+          "definition": "Число подписчиков собственного профиля на момент запроса"
+        },
+        "baselineCount": 1,
+        "currentCount": 1,
+        "latestPublication": "2026-11-10T10:15:35.000Z",
+        "byFormat": {
+          "REELS": 1
+        },
+        "weeks": [
+          {
+            "from": "2026-09-11T11:58:42.868Z",
+            "to": "2026-09-18T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-09-18T11:58:42.868Z",
+            "to": "2026-09-25T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-09-25T11:58:42.868Z",
+            "to": "2026-10-02T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-02T11:58:42.868Z",
+            "to": "2026-10-09T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-09T11:58:42.868Z",
+            "to": "2026-10-16T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-16T11:58:42.868Z",
+            "to": "2026-10-23T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-23T11:58:42.868Z",
+            "to": "2026-10-30T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-30T11:58:42.868Z",
+            "to": "2026-11-06T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-11-06T11:58:42.868Z",
+            "to": "2026-11-08T21:00:00.000Z",
+            "count": 1
+          }
+        ],
+        "coverage": {
+          "views": {
+            "measured": 2,
+            "total": 2
+          },
+          "reach": {
+            "measured": 2,
+            "total": 2
+          },
+          "likes": {
+            "measured": 2,
+            "total": 2
+          },
+          "comments": {
+            "measured": 2,
+            "total": 2
+          },
+          "saved": {
+            "measured": 2,
+            "total": 2
+          },
+          "shares": {
+            "measured": 2,
+            "total": 2
+          }
+        },
+        "cumulativeMediansByFormatAndAgeWeek": [
+          {
+            "format": "REELS",
+            "ageWeek": 0,
+            "count": 1,
+            "medians": {
+              "views": 530,
+              "reach": 420,
+              "likes": 2,
+              "comments": 0,
+              "saved": 0,
+              "shares": 0
+            }
+          }
+        ],
+        "errors": []
+      },
+      {
+        "platform": "threads",
+        "profile": {
+          "id": "29190941230594420",
+          "username": "ecopolis_kzn"
+        },
+        "status": "ok",
+        "inventoryComplete": true,
+        "stopReason": "end_of_feed",
+        "pages": 1,
+        "sourceRows": 1,
+        "uniqueIdsSeen": 1,
+        "duplicates": 0,
+        "invalidRows": 0,
+        "followers": {
+          "value": 810,
+          "status": "measured",
+          "takenAt": "2026-11-10T11:58:58.176Z",
+          "definition": "Число подписчиков собственного профиля на момент запроса"
+        },
+        "baselineCount": 1,
+        "currentCount": 0,
+        "latestPublication": "2026-11-06T06:55:37.000Z",
+        "byFormat": {
+          "IMAGE": 1
+        },
+        "weeks": [
+          {
+            "from": "2026-09-11T11:58:42.868Z",
+            "to": "2026-09-18T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-09-18T11:58:42.868Z",
+            "to": "2026-09-25T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-09-25T11:58:42.868Z",
+            "to": "2026-10-02T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-02T11:58:42.868Z",
+            "to": "2026-10-09T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-09T11:58:42.868Z",
+            "to": "2026-10-16T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-16T11:58:42.868Z",
+            "to": "2026-10-23T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-23T11:58:42.868Z",
+            "to": "2026-10-30T11:58:42.868Z",
+            "count": 0
+          },
+          {
+            "from": "2026-10-30T11:58:42.868Z",
+            "to": "2026-11-06T11:58:42.868Z",
+            "count": 1
+          },
+          {
+            "from": "2026-11-06T11:58:42.868Z",
+            "to": "2026-11-08T21:00:00.000Z",
+            "count": 0
+          }
+        ],
+        "coverage": {
+          "views": {
+            "measured": 1,
+            "total": 1
+          },
+          "likes": {
+            "measured": 1,
+            "total": 1
+          },
+          "replies": {
+            "measured": 1,
+            "total": 1
+          },
+          "reposts": {
+            "measured": 1,
+            "total": 1
+          },
+          "quotes": {
+            "measured": 1,
+            "total": 1
+          }
+        },
+        "cumulativeMediansByFormatAndAgeWeek": [
+          {
+            "format": "IMAGE",
+            "ageWeek": 0,
+            "count": 1,
+            "medians": {
+              "views": 102,
+              "likes": 0,
+              "replies": 4,
+              "reposts": 0,
+              "quotes": 0
+            }
+          }
+        ],
+        "errors": []
+      }
+    ]
+  },
+  "comparison": {
+    "from": "2026-11-10T10:53:27.672Z",
+    "to": "2026-11-10T11:58:42.876Z",
+    "channels": [
+      {
+        "platform": "instagram",
+        "followers": {
+          "before": 7288,
+          "after": 7288,
+          "from": "2026-11-10T10:53:28.130Z",
+          "to": "2026-11-10T11:58:43.245Z",
+          "delta": 0,
+          "correction": false,
+          "status": "comparable"
+        },
+        "addedIds": [],
+        "absentIds": [
+          "18429959116179136"
+        ],
+        "compositionComplete": true,
+        "absenceMeaning": "Не обнаружено в текущем окне/выдаче, не доказательство удаления",
+        "posts": [
+          {
+            "id": "17925255990222691",
+            "publishedAt": "2026-11-06T12:05:36.000Z",
+            "metrics": {
+              "likes": {
+                "before": 2,
+                "after": 2,
+                "from": "2026-11-10T10:53:29.170Z",
+                "to": "2026-11-10T11:58:45.084Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "comments": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:29.170Z",
+                "to": "2026-11-10T11:58:45.084Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "views": {
+                "before": 530,
+                "after": 530,
+                "from": "2026-11-10T10:53:41.841Z",
+                "to": "2026-11-10T11:58:55.340Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "reach": {
+                "before": 420,
+                "after": 420,
+                "from": "2026-11-10T10:53:41.841Z",
+                "to": "2026-11-10T11:58:55.340Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "saved": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:41.841Z",
+                "to": "2026-11-10T11:58:55.340Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "shares": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:41.841Z",
+                "to": "2026-11-10T11:58:55.340Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              }
+            }
+          },
+          {
+            "id": "18113498264462176",
+            "publishedAt": "2026-11-10T10:15:35.000Z",
+            "metrics": {
+              "likes": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:29.170Z",
+                "to": "2026-11-10T11:58:45.084Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "comments": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:29.170Z",
+                "to": "2026-11-10T11:58:45.084Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "views": {
+                "before": 50,
+                "after": 97,
+                "from": "2026-11-10T10:53:42.998Z",
+                "to": "2026-11-10T11:58:56.568Z",
+                "delta": 47,
+                "correction": false,
+                "status": "comparable"
+              },
+              "reach": {
+                "before": 17,
+                "after": 44,
+                "from": "2026-11-10T10:53:42.998Z",
+                "to": "2026-11-10T11:58:56.568Z",
+                "delta": 27,
+                "correction": false,
+                "status": "comparable"
+              },
+              "saved": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:42.998Z",
+                "to": "2026-11-10T11:58:56.568Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "shares": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:42.998Z",
+                "to": "2026-11-10T11:58:56.568Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "platform": "threads",
+        "followers": {
+          "before": 810,
+          "after": 810,
+          "from": "2026-11-10T10:53:44.615Z",
+          "to": "2026-11-10T11:58:58.176Z",
+          "delta": 0,
+          "correction": false,
+          "status": "comparable"
+        },
+        "addedIds": [],
+        "absentIds": [],
+        "compositionComplete": true,
+        "absenceMeaning": "Не обнаружено в текущем окне/выдаче, не доказательство удаления",
+        "posts": [
+          {
+            "id": "18131545933695212",
+            "publishedAt": "2026-11-06T06:55:37.000Z",
+            "metrics": {
+              "views": {
+                "before": 96,
+                "after": 102,
+                "from": "2026-11-10T10:53:47.113Z",
+                "to": "2026-11-10T11:59:00.150Z",
+                "delta": 6,
+                "correction": false,
+                "status": "comparable"
+              },
+              "likes": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:47.113Z",
+                "to": "2026-11-10T11:59:00.150Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "replies": {
+                "before": 4,
+                "after": 4,
+                "from": "2026-11-10T10:53:47.113Z",
+                "to": "2026-11-10T11:59:00.150Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "reposts": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:47.113Z",
+                "to": "2026-11-10T11:59:00.150Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              },
+              "quotes": {
+                "before": 0,
+                "after": 0,
+                "from": "2026-11-10T10:53:47.113Z",
+                "to": "2026-11-10T11:59:00.150Z",
+                "delta": 0,
+                "correction": false,
+                "status": "comparable"
+              }
+            }
+          }
+        ]
+      }
+    ]
+  }
+}
