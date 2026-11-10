@@ -11,7 +11,7 @@ const failure=r=>({kind:r?.kind||'invalid_response',httpStatus:Number(r?.status)
 const valueOf=m=>numeric(m?.values?.[0]?.value??m?.total_value?.value);
 
 /** Сборщик не знает ключей и не сохраняет исходные ответы площадок. */
-export async function collectBaseline({call,from,to,now=Date.now(),expectedUser='ecopolis_kzn',maxPages=50,maxRequests=300,delay=ms=>new Promise(r=>setTimeout(r,ms))}={}){
+export async function collectBaseline({call,from,to,now=Date.now(),expectedUser='ecopolis_kzn',maxPages=50,maxRequests=300,delay=ms=>new Promise(r=>setTimeout(r,ms)),includeOwnText=true,shouldMeasure=()=>true}={}){
   const start=Date.parse(from),end=Date.parse(to);
   if(typeof call!=='function'||!Number.isFinite(start)||!Number.isFinite(end)||start>=end||end>now)throw Error('Неверный период исходного снимка');
   const started=new Date().toISOString();
@@ -36,7 +36,7 @@ export async function collectBaseline({call,from,to,now=Date.now(),expectedUser=
       follower=fr.kind==='ok'?valueOf(fr.data?.data?.find(m=>m.name==='followers_count')):null;
     }
     c.followers={value:follower,status:follower!==null?'measured':fr.kind==='ok'?'missing':fr.kind,takenAt:new Date().toISOString(),definition:'Число подписчиков собственного профиля на момент запроса'};
-    const fields=platform==='instagram'?'id,caption,timestamp,media_type,media_product_type,permalink,like_count,comments_count':'id,text,timestamp,media_type,permalink,is_reply';
+    const fields=(platform==='instagram'?'id,caption,timestamp,media_type,media_product_type,permalink,like_count,comments_count':'id,text,timestamp,media_type,permalink,is_reply').split(',').filter(x=>includeOwnText||!['caption','text'].includes(x)).join(',');
     const edge=platform==='instagram'?'media':'threads';
     const seenIds=new Set(),seenCursors=new Set();
     let cursor='';
@@ -56,7 +56,7 @@ export async function collectBaseline({call,from,to,now=Date.now(),expectedUser=
         seenIds.add(itemId);
         const at=Date.parse(raw.timestamp);
         if(at<start||at>=now){c.excludedOutsidePeriod++;continue;}
-        const row={id:itemId,permalink:String(raw.permalink||''),publishedAt:new Date(at).toISOString(),format:String(raw.media_product_type||raw.media_type||'unknown'),ownText:String(raw.caption??raw.text??''),isOwnReply:typeof raw.is_reply==='boolean'?raw.is_reply:null,parentId:null,window:at<end?'baseline':'current',ageDaysAtCutoff:Number(((now-at)/DAY).toFixed(3)),metrics:{}};
+        const row={id:itemId,permalink:String(raw.permalink||''),publishedAt:new Date(at).toISOString(),format:String(raw.media_product_type||raw.media_type||'unknown'),...(includeOwnText?{ownText:String(raw.caption??raw.text??'')} : {}),isOwnReply:typeof raw.is_reply==='boolean'?raw.is_reply:null,parentId:null,window:at<end?'baseline':'current',ageDaysAtCutoff:Number(((now-at)/DAY).toFixed(3)),metrics:{}};
         // Карусель учитывается один раз родительским объектом; children не запрашиваются.
         if(platform==='instagram')for(const [name,field] of [['likes','like_count'],['comments','comments_count']]){
           const n=numeric(raw[field]);if(n!==null)row.metrics[name]={value:n,status:'measured',source:'media_field',field,period:'snapshot',takenAt:new Date().toISOString()};
@@ -72,6 +72,7 @@ export async function collectBaseline({call,from,to,now=Date.now(),expectedUser=
     c.list.sort((a,b)=>a.publishedAt.localeCompare(b.publishedAt)||a.id.localeCompare(b.id));
     for(const row of c.list){
       const wanted=METRICS[platform].filter(n=>!row.metrics[n]);
+      if(!shouldMeasure(row,platform)){for(const name of wanted)row.metrics[name]={value:null,status:'not_due',source:'not_requested',period:'unknown',takenAt:null};continue;}
       const r=await query(platform,`${row.id}/insights?metric=${wanted.join(',')}`);
       const data=r.kind==='ok'&&Array.isArray(r.data?.data)?r.data.data:[];
       const takenAt=new Date().toISOString();
