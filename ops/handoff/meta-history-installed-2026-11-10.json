@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "checkedBy": "S0",
+  "date": "2026-11-10",
+  "sourceCommit": "43cca1d0d6fa84de4d12c428618e4f1917509962",
+  "serverVersion": "4a93d76 20261110-115744",
+  "deployment": {"cleanCheckout": true, "testsPassed": 525, "testsFailed": 0, "plannedServiceRestarts": 1, "health": 200, "service": "active", "publicationInvoked": false},
+  "checks": {"profilePassed": 9, "botPassed": 143, "doctorExitCode": 1, "doctorMissingLocalSettings": 6, "legalWarnings": 5, "vaultNotes": 620, "vaultLinks": 2789, "brokenLinks": 0},
+  "cron": {
+    "timezone": "Etc/UTC",
+    "mskTime": "07:20",
+    "managedJobs": 1,
+    "line": "20 4 * * * /usr/bin/flock -n /tmp/zavod-meta-history.lock /usr/bin/node /opt/ecopolis-zavod/current/src/metrics/meta-history.mjs >> /var/log/zavod/meta-history.log 2>&1",
+    "foreignLinesPreserved": true,
+    "privateBackupCreated": true,
+    "secondApplyChanged": false,
+    "wholeCrontabTemplateInstalled": false,
+    "nextExpectedMsk": "2026-11-11T07:20:00+03:00",
+    "actualScheduledRunVerified": false
+  },
+  "firstManualSnapshot": {
+    "status": "COLLECTED",
+    "file": "/opt/ecopolis-data/meta/history/2026-11-10.json",
+    "mode": "600",
+    "bytes": 22407,
+    "sha256": "3e791bc86cf2c1bc4797004aea19d1392741a88fa53b93cf2cfd973e4db94b58",
+    "partial": false,
+    "warnings": [],
+    "requests": 13,
+    "unexpectedTextOrTokenFields": 0,
+    "channels": [{"platform": "instagram", "posts": 2, "measuredMetrics": 12, "inventoryComplete": true, "followersMeasured": true, "errors": 0}, {"platform": "threads", "posts": 1, "measuredMetrics": 5, "inventoryComplete": true, "followersMeasured": true, "errors": 0}],
+    "comparisonFrom": "2026-11-10T10:53:27.672Z"
+  },
+  "repeat": {"status": "ALREADY_COLLECTED", "instrumentedApiCalls": 0, "bytesUnchanged": true, "sha256Unchanged": true, "mtimeUnchanged": true},
+  "githubChecked": "c41b43de3dc0005a5b5aa94d52cefa02519af8f5",
+  "limits": ["Будущий запуск cron не подтверждён ручным проходом.", "Окно 60 дней не означает всю историю профиля; Stories и отдельная лента собственных ответов Threads не покрыты.", "Приём материалов B, публикационные согласования и остальные задания этим внедрением не менялись."]
+}
