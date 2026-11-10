@@ -6,6 +6,7 @@ export const commissioning=()=>config().release?.mode==='commissioning';
 export const hasRequestedTime=e=>['at','period','not-before'].includes(e?.timing?.mode)||Number(e?.timing?.delayMin)>0;
 export const requestedPeriodEnded=(entry,now=Date.now())=>(entry.timing?.mode==='period'&&now>Date.parse(entry.timing.to+':00+03:00'))||(entry.timing?.mode==='at'&&Boolean(entry.timing.expireAt)&&now>Date.parse(entry.timing.expireAt));
 export function effectiveDue(entry,now=Date.now()){
- const due=entry.timing?.mode==='not-before'?Math.max(dueAt(entry),Date.parse(entry.timing.notBefore)):dueAt(entry);
+ const precise=entry.timing?.mode==='at'?Date.parse(entry.timing.atISO):NaN;
+ const due=entry.timing?.mode==='not-before'?Math.max(dueAt(entry),Date.parse(entry.timing.notBefore)):Number.isFinite(precise)?Math.max(dueAt(entry),precise):dueAt(entry);
  return commissioning()&&!hasRequestedTime(entry)?Math.min(due||now,now):due;
 }

@@ -4,7 +4,9 @@
 import {readFileSync,realpathSync,statSync,createReadStream} from 'node:fs';
 import path from 'node:path';
 import {dataPath} from '../lib/env.mjs';
+import {approvedMedia} from './approved.mjs';
 export function publicMedia(url,method,requestHeaders={}) {
+  if(url.startsWith('/media/approved/'))return approvedMedia(url,method,requestHeaders);
   if(!url.startsWith('/media/')) return null;
   const no={status:404,headers:{'cache-control':'no-store'},body:Buffer.alloc(0)};
   if(!['GET','HEAD'].includes(method) || !/^\/media\/[a-f0-9]{64}\.(jpg|png|webp|mp4)$/.test(url)) return no;

@@ -70,7 +70,7 @@ export async function resolveEntryMedia(entry,{head=fetch}={}){
    let r;try{r=await head(row.delivery.url,{method:'HEAD',signal:AbortSignal.timeout(20000)});}catch{throw Error('файл недоступен; выпуск остановлен, проверьте хранилище');}
    if(!r.ok)throw Error('файл недоступен; выпуск остановлен, проверьте хранилище');return row.delivery.url;
   }
-  if(row.replica?.status!=='verified')throw Error('версия не проверена в S3; выполните синхронизацию медиатеки');
+  if(row.replica?.status!=='verified'){const {approvedMediaUrl}=await import('./approved.mjs');return approvedMediaUrl(entry,id,{all});}
   // Семь суток от реальной попытки, а не от постановки в очередь. Ссылка не пишется
   // в очередь или журнал: адаптер получает временную копию записи только в памяти.
   const url=presignGet({...config(),key:row.objectKey});

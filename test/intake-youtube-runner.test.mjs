@@ -1,0 +1,13 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,writeFileSync} from 'node:fs';import path from 'node:path';import {tmpdir} from 'node:os';
+const dir=mkdtempSync(path.join(tmpdir(),'intake-yt-runner-'));process.env.DATA_DIR=dir;process.env.ZAVOD_ENV_FILE=path.join(dir,'absent.env');delete process.env.QUEUE_API_BASE;
+const store=await import('../src/queue/store.mjs'),lib=await import('../src/media/library.mjs'),runtime=await import('../src/bot/media-intake-runtime.mjs'),{runOnce}=await import('../src/queue/runner.mjs'),{_setAdapter}=await import('../src/channels/index.mjs'),{config}=await import('../src/lib/config.mjs');config().release.mode='commissioning';
+test('новый intake ролик: доapproval0upload, послеpreflightpersist и одинpublish',async()=>{
+ const id='d'.repeat(16),material='intake:'+id,file=path.join(dir,'fixture.mp4');writeFileSync(file,'synthetic transport-only video');const original=await lib.importMedia(file,{material,source:'synthetic'}),pub=await lib.importMedia(file,{material,source:'synthetic',role:'publication',parent:original.mediaId});
+ const raw={channel:'youtube',kind:'video',name:`mi-${id}-1`,material,title:'Образец покрытия',text:'Образец покрытия показан общим планом.',facts:[],media:[{type:'video',mediaId:pub.mediaId}],date:'2030-06-04',time:'12:00'},entry=(await store.put(raw)).entry;
+ runtime.instance().store.tx(s=>{s.materials[id]={id,revision:1,manifest_revision:1,mode:'submitted',card:{},files:[original]};s.jobs.job={id:'job',materialId:id,revision:1,manifestRevision:1,status:'completed',artifactsVerified:true,targets:[{channel:'youtube',format:'video',delivery_mode:'auto'}],input:{facts:[],files:[original],timing:{mode:'after_approval'}},result:{variants:[{channel:'youtube',format:'video',text:raw.text,mediaIds:[pub.mediaId],entry:raw}]}};});
+ let uploads=0,publishes=0;const preflightYoutube=async e=>{uploads++;await store.patch(e.id,{extra:{youtubeId:'Abcdefghi12',youtubeHash:e.contentHash}},'fixture');return{ok:true,ready:true,status:'ready',entry:store.get(e.id)};};
+ _setAdapter('youtube',{publish:async e=>{publishes++;assert.equal(e.extra.youtubeId,'Abcdefghi12');return{ok:true,id:e.extra.youtubeId,link:'https://youtu.be/'+e.extra.youtubeId};}});
+ const now=Date.parse('2030-06-04T09:00:00Z');await runOnce({now,preflightYoutube});assert.equal(uploads,0);assert.equal(publishes,0);
+ await store.transition(entry.id,'review');await store.transition(entry.id,'approved',{approval:{at:new Date(now).toISOString()}});
+ await runOnce({now,preflightYoutube});assert.equal(uploads,1);assert.equal(publishes,1);assert.equal(store.get(entry.id).status,'published');await runOnce({now,preflightYoutube});assert.equal(publishes,1);
+});

@@ -57,16 +57,21 @@ export async function handle(request, env, doFetch = fetch) {
   // Только ранее открытые origin-файлы: не медиатека, не backup и не произвольный URL.
   // Поток не кэшируется и не сохраняется. Секреты и cookie посетителя не пересылаются.
   if (p.startsWith('/media/')) {
-    if (!['GET','HEAD'].includes(request.method) || url.search || !/^\/media\/[a-f0-9]{64}\.jpg$/.test(p)) return new Response(null,{status:404});
+    const approved=/^\/media\/approved\/[a-f0-9]{16}\/[a-f0-9]{16}\/med_[a-f0-9]{32}\.(jpg|jpeg|png|webp|mp4)$/.exec(p);
+    if (!['GET','HEAD'].includes(request.method) || url.search || !approved&&!/^\/media\/[a-f0-9]{64}\.jpg$/.test(p)) return new Response(null,{status:404});
     try {
       const origin = new URL(env.ORIGIN_URL);
       if (origin.protocol !== 'https:' || origin.username || origin.password || origin.pathname !== '/' || origin.search || origin.hash) return new Response(null,{status:502});
-      const res = await doFetch(origin.origin+p,{method:request.method,headers:{accept:'image/jpeg'},redirect:'manual',signal:AbortSignal.timeout(20000)});
+      const expected=approved?({jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',webp:'image/webp',mp4:'video/mp4'})[approved[1]]:'image/jpeg',forward={accept:expected};
+      if(approved?.[1]==='mp4'&&request.headers.has('range')){const range=request.headers.get('range');if(!/^bytes=\d*-\d*$/.test(range)||range==='bytes=-')return new Response(null,{status:416});forward.range=range;}
+      const res = await doFetch(origin.origin+p,{method:request.method,headers:forward,redirect:'manual',signal:AbortSignal.timeout(approved?120000:20000)});
       if (res.status===404) return new Response(null,{status:404});
       const type=(res.headers.get('content-type')||'').split(';')[0].trim().toLowerCase();
       const length=Number(res.headers.get('content-length'));
-      if (res.status!==200 || type!=='image/jpeg' || !Number.isFinite(length) || length<=0 || length>8*1024*1024) {await res.body?.cancel();return new Response(null,{status:502,headers:{'x-media-proxy-error':res.status!==200?'origin-http-'+res.status:type!=='image/jpeg'?'origin-type':'origin-size'}});}
-      return new Response(request.method==='HEAD'?null:res.body,{status:200,headers:{'content-type':'image/jpeg','content-length':String(length),'cache-control':'no-store','x-content-type-options':'nosniff'}});
+      const range=res.status===206&&approved?.[1]==='mp4'?/^bytes (\d+)-(\d+)\/(\d+)$/.exec(res.headers.get('content-range')||''):null,max=(approved?.[1]==='mp4'?300:approved?10:8)*1024*1024;
+      const validRange=range&&Number(range[2])>=Number(range[1])&&Number(range[2])<Number(range[3])&&Number(range[3])<=max&&Number(range[2])-Number(range[1])+1===length;
+      if (!(res.status===200||validRange)||type!==expected||!Number.isFinite(length)||length<=0||length>max) {await res.body?.cancel();return new Response(null,{status:502,headers:{'x-media-proxy-error':res.status!==200?'origin-http-'+res.status:type!==expected?'origin-type':'origin-size'}});}
+      return new Response(request.method==='HEAD'?null:res.body,{status:res.status,headers:{'content-type':expected,'content-length':String(length),'cache-control':'no-store','x-content-type-options':'nosniff',...(approved?.[1]==='mp4'?{'accept-ranges':'bytes'}:{}),...(validRange?{'content-range':res.headers.get('content-range')}:{})}});
     } catch {return new Response(null,{status:502,headers:{'x-media-proxy-error':'origin-network'}});}
   }
 

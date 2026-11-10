@@ -21,3 +21,9 @@ test('релей закрывает произвольные пути, query, PO
   assert.equal(calls,0);
   assert.equal((await handle(new Request('https://relay.example'+path),{ORIGIN_URL:'https://origin.example'},fetcher)).status,502);
 });
+test('согласованный MP4 идёт потоком с проверенным Range только от фиксированного origin',async()=>{
+ const p='/media/approved/'+'a'.repeat(16)+'/'+'b'.repeat(16)+'/med_'+'c'.repeat(32)+'.mp4';
+ const res=await handle(new Request('https://relay.example'+p,{headers:{range:'bytes=1-3',cookie:'private'}}),{ORIGIN_URL:'https://origin.example'},async(url,init)=>{assert.equal(url,'https://origin.example'+p);assert.equal(init.headers.range,'bytes=1-3');assert.equal(init.headers.cookie,undefined);return new Response(new Uint8Array([1,2,3]),{status:206,headers:{'content-type':'video/mp4','content-length':'3','content-range':'bytes 1-3/10'}});});
+ assert.equal(res.status,206);assert.equal(res.headers.get('content-range'),'bytes 1-3/10');assert.equal(res.headers.get('cache-control'),'no-store');
+ const denied=await handle(new Request('https://relay.example'+p),{ORIGIN_URL:'https://origin.example'},async()=>new Response(null,{status:404}));assert.equal(denied.status,404);
+});

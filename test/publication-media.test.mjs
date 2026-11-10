@@ -16,3 +16,6 @@ test('для Instagram сохраняется штатная доставка и
  let calls=0;const e={channel:'instagram'};
  await assert.rejects(()=>publicationMedia(e,{resolve:async()=>{calls++;throw Error('S3 unavailable');}}),/S3 unavailable/);assert.equal(calls,1);
 });
+test('YouTube с доверенным ручным маршрутом получает файлы пакета, а не пустые URL',async()=>{
+ let called=0;const e={channel:'youtube'};await publicationMedia(e,{manual:true,resolve:async entry=>{called++;return{...entry,media:[{url:'https://example.org/approved.mp4'}]};}});assert.equal(called,1);
+});

@@ -6,6 +6,12 @@ test('не раньше сохраняет нижнюю границу и не �
  const early=Date.parse('2026-11-08T08:00:00Z'),late=Date.parse('2026-11-08T10:00:00Z');
  assert.equal(effectiveDue(entry,early),Date.parse('2026-11-08T09:00:00Z'));assert.equal(slotFor(entry,[],cfg,early).time,'12:00');assert.equal(slotFor(entry,[],cfg,late).time,'13:00');assert.equal(requestedPeriodEnded(entry,late),false);
 });
-test('явный точный срок приёмника истёк до согласия, старое at других записей не меняется',()=>{
+test('отдельный явный дедлайн не увеличивается, старое at без дедлайна не меняется',()=>{
  const e={timing:{mode:'at',expireAt:'2026-11-08T09:00:00Z'}};assert.equal(requestedPeriodEnded(e,Date.parse('2026-11-08T09:00:01Z')),true);assert.equal(requestedPeriodEnded({timing:{mode:'at'}},Date.parse('2026-11-08T09:00:01Z')),false);
+});
+test('at сохраняет точные секунды нижней границы и окно до конца назначенной минуты',()=>{
+ const e={date:'2026-11-09',time:'14:30',timing:{mode:'at',atISO:'2026-11-09T11:30:30Z',expireAt:'2026-11-09T11:30:59.999Z'}};
+ assert.equal(effectiveDue(e,Date.parse('2026-11-09T11:30:01Z')),Date.parse(e.timing.atISO));
+ assert.equal(requestedPeriodEnded(e,Date.parse('2026-11-09T11:30:31Z')),false);assert.equal(requestedPeriodEnded(e,Date.parse('2026-11-09T11:31:00Z')),true);
+ assert.equal(requestedPeriodEnded(e,Date.parse('2026-11-10T11:30:00Z')),true);
 });

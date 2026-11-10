@@ -40,7 +40,7 @@ import { lock, readJson, writeAtomic, writeJson } from "../lib/files.mjs";
 import { alert, h, report, resolve, toGroup } from "../lib/notify.mjs";
 import { dueAt, human, mskDate, mskHour } from "../lib/time.mjs";
 import { adapter } from "../channels/index.mjs";
-import { sendReply } from "../channels/manual.mjs";
+import { sendReply,sendPackage } from "../channels/manual.mjs";
 import { check } from "../gates/index.mjs";
 import { ownsQueue, staleOnYoutube, syncAll as syncYoutube } from "../video/schedule.mjs";
 import { STATUS_TITLE, preview } from "./format.mjs";
@@ -53,6 +53,8 @@ import * as mediaIntake from '../bot/media-intake-runtime.mjs';
 import {deliverIntakeResults} from '../bot/media-intake-delivery.mjs';
 import {syncIntakeQueue} from '../bot/media-intake-sync.mjs';
 import {intakeYoutubeWaiting} from './intake-youtube-first.mjs';
+import {intakeRoute} from './intake-route.mjs';
+import {preflightIntakeYoutube} from '../video/intake-preflight.mjs';
 import { adoptServerState, sayAdopted, takeoverDoubt } from "./takeover.mjs";
 
 const STUCK_MIN = 15;
@@ -70,7 +72,7 @@ const intakeWait=entry=>{
  * @returns {Promise<{ published: string[], handed: string[], retry: string[], failed: string[], expired: string[], waiting: string[], digest: boolean, busy?: boolean, stopped?: boolean, held?: boolean, restored?: boolean, idle?: string }>}
  *   handed — пакеты, ушедшие человеку на ручную выкладку: публикацией они ещё не стали
  */
-export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedia=publicationMedia } = {}) {
+export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedia=publicationMedia,preflightYoutube=preflightIntakeYoutube } = {}) {
   const out = { published: [], handed: [], retry: [], failed: [], expired: [], waiting: [], digest: false };
   const rules = config().release;
 
@@ -276,7 +278,8 @@ export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedi
         throw e;
       }
 
-      const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : await adapter(entry.channel);
+      const manualRoute=intakeRoute(current,mediaIntake.instance().store.read())==='manual';
+      const mod = isReply ? { publish: (e, ctx) => sendReply(e, ctx) } : manualRoute?{publish:(e,ctx)=>sendPackage(e,{...ctx,steps:['Разместите согласованный текст и приложенные файлы в указанном аккаунте площадки.','Проверьте результат и передайте ссылку кнопкой «Выложено».'],why:'Для этого формата подтверждена ручная выкладка.'})}:await adapter(entry.channel);
       const transportBlocked=()=>{
         const latest=get(current.id);
         return !latest||latest.status!=='running'||latest.contentHash!==current.contentHash||!latest.approval?.at||latest.approval.at!==current.approval?.at||stopState().stopped||isHeld()||isRestored()||mediaIntake.publicationBlockers(latest).length>0||intakeWait(latest)===true;
@@ -289,7 +292,15 @@ export async function runOnce({ now = Date.now(), dry = false, sleep,resolveMedi
       let result;
       try {
         if(transportBlocked()){await postpone();continue;}
-        const withMedia=await resolveMedia(current);
+        if(current.channel==='youtube'&&!manualRoute){
+          const prepared=await preflightYoutube(current);
+          if(prepared.status!=='unmanaged'){
+            if(!prepared.ready){const reason=/^[a-z_]{1,64}$/.test(prepared.reason||'')?prepared.reason:'preflight_pending';await patch(current.id,{extra:{...current.extra,youtubePreflight:{status:['unknown','pending','blocked'].includes(prepared.status)?prepared.status:'blocked',reason,at:new Date(clock()).toISOString()}}},'intake YouTube preflight');await postpone();continue;}
+            current=prepared.entry||get(current.id);
+          }
+          if(transportBlocked()){await postpone();continue;}
+        }
+        const withMedia=await resolveMedia(current,{manual:manualRoute});
         if(transportBlocked()){await postpone();continue;}
         result = await mod.publish(withMedia, {
           sleep,
