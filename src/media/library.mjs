@@ -60,12 +60,14 @@ export function adoptPublic(id,url,{confirmed=false}={}){
  const row=rows().find(r=>r.mediaId===id);if(!confirmed||!row||row.role==='original'||new URL(url).protocol!=='https:')throw Error('нужно отдельное подтверждение публичной версии, оригинал не выдаётся');
  return edit(id,{delivery:{kind:'explicit-public',url,confirmedAt:new Date().toISOString()}});
 }
-export async function resolveEntryMedia(entry,{head=fetch}={}){
+export async function resolveEntryMedia(entry,{head=fetch,preferApproved=false}={}){
  if(!(entry.media||[]).some(m=>m.mediaId||m.coverMediaId))return entry;
  if(!['approved','running'].includes(entry.status)||!entry.approval?.at)throw Error('медиа выдаётся только согласованной записи');
  const all=rows();
  const resolve=async id=>{
   const row=all.find(r=>r.mediaId===id);if(!row||row.material!==entry.material||row.role==='original')throw Error('медиа отсутствует, относится к другому материалу или является закрытым оригиналом');
+  // Instagram получает GET/HEAD без S3-подписи; закрытая verified replica остаётся для хранения.
+  if(preferApproved){const {approvedMediaUrl}=await import('./approved.mjs');return approvedMediaUrl(entry,id,{all});}
   if(row.delivery?.kind==='explicit-public'){
    let r;try{r=await head(row.delivery.url,{method:'HEAD',signal:AbortSignal.timeout(20000)});}catch{throw Error('файл недоступен; выпуск остановлен, проверьте хранилище');}
    if(!r.ok)throw Error('файл недоступен; выпуск остановлен, проверьте хранилище');return row.delivery.url;

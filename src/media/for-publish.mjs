@@ -5,7 +5,7 @@ import {resolveEntryMedia} from './library.mjs';
 import {env} from '../lib/env.mjs';
 export async function publicationMedia(entry,{resolve=resolveEntryMedia,manual=false}={}){
   if(entry.channel==='youtube'&&!manual)return entry;
-  const ready=await resolve(entry),relay=env('IG_RELAY_URL');
+  const ready=await resolve(entry,{preferApproved:entry.channel==='instagram'}),relay=env('IG_RELAY_URL');
   if(!relay||!['instagram','threads'].includes(entry.channel))return ready;
   const proxy=new URL(relay);if(proxy.protocol!=='https:'||proxy.username||proxy.password)throw Error('неверный адрес медиарелея');
   const throughRelay=value=>{if(!value)return value;const url=new URL(value);return url.origin===new URL(env('PUBLIC_BASE_URL')).origin&&url.pathname.startsWith('/media/approved/')?proxy.origin+url.pathname:value;};
