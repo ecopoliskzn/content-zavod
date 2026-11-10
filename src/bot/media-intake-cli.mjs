@@ -90,7 +90,8 @@ export async function acceptContinuationEnvelope(e,{invoke=call,folder=dataPath(
 export async function intakeJobMetadata(){const jobs=await call('intake-jobs',{});if(!Array.isArray(jobs))throw Error('нет метаданных');return jobs.map(dispatchMetadata).filter(Boolean);}
 async function call(cmd,args){
  if(env('QUEUE_API_BASE')){
-  const res=await request(env('QUEUE_API_BASE').replace(/\/+$/,'')+'/admin/queue',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env('ADMIN_API_TOKEN')},body:JSON.stringify({cmd,args,actor:'intake-editor-cli'}),timeoutMs:60000,retries:0});
+  const readOnly=['intake-jobs','intake-health','intake-status','intake-show','intake-context'].includes(cmd);
+  const res=await request(env('QUEUE_API_BASE').replace(/\/+$/,'')+'/admin/queue',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+env('ADMIN_API_TOKEN')},body:JSON.stringify({cmd,args,actor:'intake-editor-cli'}),timeoutMs:readOnly?10000:60000,retries:readOnly?1:0,retryDelayMs:500});
   if(res.kind!=='ok'||res.data?.code!==0)throw Error('сервер не подтвердил команду; перед повтором сверить статус');return res.data.data;
  }
  if(wrongUser())throw Error('команда выполняется пользователем завода');

@@ -15,8 +15,8 @@ export async function intakeWatchCycle({folder=folderDefault(),metadata=intakeJo
    if(h.unknownCards||h.failedCards||h.failedFiles||h.blockedEvents||h.stalePendingEvents)problem='intake_delivery_problem:'+JSON.stringify([h.unknownCards||0,h.failedCards||0,h.failedFiles||0,h.blockedEvents||0,h.stalePendingEvents||0,h.lastIncomingAt||null]);
    else if(Object.values(state).some(i=>['unknown','queued','sending'].includes(i.status)&&now-Date.parse(i.attemptedAt||i.firstSeenAt)>120000))problem='editor_acceptance_delayed';
   }catch{problem='intake_api_unavailable';}
-  if(problem){if(watch.problem!==problem){durableJson(watchFile,{checkedAt:new Date(now).toISOString(),problem});const reason=problem.split(':')[0];return{status:'ERROR',reason,message:problemText[reason]};}if(!state)return{status:'NO_CHANGE',held:true};}
-  else durableJson(watchFile,{checkedAt:new Date(now).toISOString(),problem:null});
+  if(problem){const seen=new Set(watch.reportedProblems||[watch.problem].filter(Boolean));if(!seen.has(problem)){seen.add(problem);durableJson(watchFile,{checkedAt:new Date(now).toISOString(),problem,reportedProblems:[...seen].slice(-50)});const reason=problem.split(':')[0];return{status:'ERROR',reason,message:problemText[reason]};}if(!state)return{status:'NO_CHANGE',held:true};}
+  else durableJson(watchFile,{checkedAt:new Date(now).toISOString(),problem:null,reportedProblems:[]});
   const busy=new Set(jobs.filter(j=>j.status==='claimed').map(j=>j.materialId));for(const i of Object.values(state))if(i.kind!=='answer'&&['queued','unknown','sending'].includes(i.status))busy.add(i.materialId);
   const item=Object.values(state).find(i=>i.status==='planned'&&(i.kind==='answer'||!busy.has(i.materialId)));
   const accepted=Object.values(state).filter(i=>i.status==='accepted').length;if(!item)return{status:'NO_CHANGE',accepted};
