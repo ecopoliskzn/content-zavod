@@ -30,7 +30,9 @@ import { dataDir, dataPath, env } from "../lib/env.mjs";
 import { appendJsonl, latestById, readJson, writeJson } from "../lib/files.mjs";
 import { request, sleep } from "../lib/http.mjs";
 import { readInstagramComments } from "./instagram.mjs";
-import { h, toGroup } from "../lib/notify.mjs";
+import {intakeLock} from '../bot/media-intake-store.mjs';
+import {readThreadsComments} from './threads.mjs';
+import {flushCommentNotifications} from './notifications.mjs';
 import { idFromLink as rutubeId } from "../channels/rutube.mjs";
 import { rows as ledgerRows } from "../queue/ledger.mjs";
 import { readYoutubeComments } from "./youtube.mjs";
@@ -111,45 +113,34 @@ async function instagram() {
   return readInstagramComments();
 }
 
-async function threads() {
-  const token = env("THREADS_TOKEN");
-  if (!token) return { skipped: "нет THREADS_TOKEN" };
+export async function readScheduledThreads({dry=false,now=Date.now(),read=readThreadsComments}={}) {
   // Не чаще раза в сутки, что бы ни стояло в расписании.
   const state = readJson(dataPath("comments-state.json"), {}) || {};
-  if (state.threadsAt && Date.now() - Date.parse(state.threadsAt) < 20 * 3600_000) return { skipped: "Threads читается раз в сутки" };
-  const items = [];
-  for (const row of recent("threads", 7)) {
-    if (!row.externalId) continue;
-    const r = await request(`https://graph.threads.net/v1.0/${row.externalId}/replies?fields=id,text,timestamp,username,permalink&access_token=${encodeURIComponent(token)}`, { retries: 0 });
-    if (r.kind !== "ok") break; // отказ или предел: дальше не спрашиваем
-    const own = env("THREADS_USERNAME").toLowerCase();
-    for (const c of r.data?.data || []) {
-      if (!c.text || (own && String(c.username || "").toLowerCase() === own)) continue;
-      items.push({ id: `threads:${c.id}`, platform: "threads", at: c.timestamp, text: String(c.text), link: c.permalink || row.link || "", post: row.externalId });
-    }
-    await sleep(1500);
-  }
-  writeJson(dataPath("comments-state.json"), { ...state, threadsAt: new Date().toISOString() });
-  return { items };
+  if (state.threadsAt && now - Date.parse(state.threadsAt) < 20 * 3600_000) return { skipped: "Threads читается раз в сутки" };
+  if(state.threadsAttemptAt&&now-Date.parse(state.threadsAttemptAt)<30*60000)return{skipped:'Threads: ожидание после недавней попытки'};
+  if(!dry)writeJson(dataPath('comments-state.json'),{...state,threadsAttemptAt:new Date(now).toISOString()});
+  const result=await read();
+  if(!dry&&result.coverage?.complete&&result.coverage.posts>0)writeJson(dataPath('comments-state.json'),{...state,threadsAttemptAt:new Date(now).toISOString(),threadsAt:new Date(now).toISOString()});
+  return result;
 }
 
-const SOURCES = { youtube, vk, rutube, instagram, threads };
+const SOURCES = { youtube, vk, rutube, instagram, threads:readScheduledThreads };
 
 /** Один проход сбора. Возвращает новые комментарии и что пропущено. */
-export async function collect({ dry = false, only = [] } = {}) {
+export async function collect({ dry = false, only = [],sourceReaders=SOURCES,clock=Date.now } = {}) {
   // Даже --dry получает тексты людей по сети: на компьютере он не является безопасным
   // предпросмотром. Запрещаем живой сбор до чтения журнала и до первого запроса.
-  if (!dataDir().startsWith('/opt/')) return { fresh: [], notes: ['живой сбор комментариев разрешён только на российском сервере'], failed: 0 };
+  if (sourceReaders===SOURCES&&!dataDir().startsWith('/opt/')) return { fresh: [], notes: ['живой сбор комментариев разрешён только на российском сервере'], failed: 0 };
   const known = latestById(FILE());
   const fresh = [];
   const notes = [];
   let failed = 0;
   const coverage = {};
   const completedSources = [], skippedSources = [];
-  for (const [name, read] of Object.entries(SOURCES)) {
+  for (const [name, read] of Object.entries(sourceReaders)) {
     if (only.length && !only.includes(name)) continue;
     let res;
-    try { res = await read(); } catch (e) { res = { error: String(e?.message || e) }; }
+    try { res = await read({dry,now:clock()}); } catch { res = { error: 'внутренняя ошибка чтения; охват не подтверждён' }; }
     if (res.coverage) coverage[name] = res.coverage;
     if (res.skipped) { skippedSources.push(name); notes.push(`${TITLE[name]}: ${res.skipped}`); continue; }
     if (res.error) { failed++; notes.push(`${TITLE[name]}: не прочитан (${res.error})`); continue; }
@@ -166,9 +157,9 @@ export async function collect({ dry = false, only = [] } = {}) {
       }
       // Старые ветки YouTube сохраняем для полноты истории, но не выдаём за новые
       // вопросы. Новый ответ под старой веткой сам проходит сюда по своей дате.
-      const old = Date.now() - Date.parse(item.at) > 21 * 86_400_000;
-      if (old && name !== 'youtube') continue;
-      const row = foundRow(item);
+      const old = clock() - Date.parse(item.at) > 21 * 86_400_000;
+      if (old && !['youtube','threads'].includes(name)) continue;
+      const row = foundRow(item,clock());
       if (!old) fresh.push(row);
       known.set(row.id, row);
       if (!dry) appendJsonl(FILE(), row);
@@ -183,24 +174,22 @@ export async function collect({ dry = false, only = [] } = {}) {
 }
 
 /** Сводка новых комментариев в рабочую группу: одним сообщением. */
-export async function sendDigest(fresh) {
-  if (!fresh.length) return false;
-  const byPlatform = fresh.reduce((a, c) => { a[c.platform] = (a[c.platform] || 0) + 1; return a; }, {});
-  const head = `💬 <b>Новые комментарии: ${fresh.length}</b>\n${Object.entries(byPlatform).map(([p, n]) => `${TITLE[p] || p} ${n}`).join(" · ")}`;
-  const rows = fresh.slice(0, 12).map((c) => `· <a href="${h(c.link)}">${h(TITLE[c.platform] || c.platform)}</a>: «${h(c.text.replace(/\s+/g, " ").slice(0, 160))}»`);
-  const tail = fresh.length > 12 ? `\n…и ещё ${fresh.length - 12}` : "";
-  const sent = await toGroup("comments", `${head}\n\n${rows.join("\n")}${tail}\n\n<i>Ответы подготовит оператор и пришлёт сюда на согласование. Срочное можно ответить сразу: ссылка ведёт к комментарию.</i>`);
-  return sent.ok;
+export async function sendDigest(fresh=[]) {
+  const registered=new Map(all().map(c=>[c.id,c]));for(const c of fresh)registered.set(c.id,c);
+  const result=await flushCommentNotifications([...registered.values()]);return !result.failed&&!result.unknown;
 }
 
 if (isMain(import.meta.url)) {
   const dry = flag("dry");
-  collect({ dry, only: opt("only") ? opt("only").split(",") : [] }).then(
+  const only=opt('only')?opt('only').split(','):[];
+  const unlock=intakeLock(dataPath('comments-collect.lock'));
+  if(!unlock)console.log('Сбор комментариев уже выполняется.');
+  else (flag('notify-only')?Promise.resolve({fresh:[],notes:[],failed:0}):collect({ dry,only })).then(
     async ({ fresh, notes, failed }) => {
       console.log(`${new Date().toISOString()} новых комментариев: ${fresh.length}${notes.length ? ` · ${notes.join("; ")}` : ""}`);
-      if (!dry && flag("send") && fresh.length && !await sendDigest(fresh)) process.exitCode = 2;
+      if (!dry && flag("send")) {const delivery=await flushCommentNotifications(all(),{only});console.log('Сводки: '+JSON.stringify(delivery));if(delivery.failed||delivery.unknown)process.exitCode=2;}
       if (failed) process.exitCode = 2;
     },
-    (e) => { console.error(`сбой сбора комментариев: ${e?.stack || e}`); process.exitCode = 2; },
-  );
+    () => { console.error('Сбор комментариев не завершён; проверьте безопасные метаданные.'); process.exitCode = 2; },
+  ).catch(()=>{console.error('Доставка сводки не завершена; неизвестный исход не повторяется вслепую.');process.exitCode=2;}).finally(unlock);
 }
