@@ -11,7 +11,7 @@ export async function intakeWatchCycle({folder=folderDefault(),metadata=intakeJo
  const unlock=intakeLock(path.join(folder,'dispatch.lock'));if(!unlock)return{status:'BUSY'};
  try{
   const file=path.join(folder,'outbox.json'),watchFile=path.join(folder,'native-watch.json'),watch=read(watchFile,{});let jobs,state,problem=null;
-  try{jobs=await metadata();const h=await health();state=reconcileIntakeDispatch(read(file,{}),jobs);for(const item of Object.values(state))item.firstSeenAt||=new Date(now).toISOString();durableJson(file,state);
+  try{jobs=await metadata();const h=await health(),previous=read(file,{}),acks=Object.values(previous).filter(i=>i.kind==='answer').map(i=>read(path.join(folder,'acks',i.dispatchId+'.json'),null)).filter(Boolean);state=reconcileIntakeDispatch(previous,jobs,acks);for(const item of Object.values(state))item.firstSeenAt||=new Date(now).toISOString();durableJson(file,state);
    if(h.unknownCards||h.failedCards||h.failedFiles||h.blockedEvents||h.stalePendingEvents)problem='intake_delivery_problem:'+JSON.stringify([h.unknownCards||0,h.failedCards||0,h.failedFiles||0,h.blockedEvents||0,h.stalePendingEvents||0,h.lastIncomingAt||null]);
    else if(Object.values(state).some(i=>['unknown','queued','sending'].includes(i.status)&&now-Date.parse(i.attemptedAt||i.firstSeenAt)>120000))problem='editor_acceptance_delayed';
   }catch{problem='intake_api_unavailable';}
