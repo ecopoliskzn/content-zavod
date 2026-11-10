@@ -57,6 +57,7 @@ export async function intakeHostCycle({folder=dataPath('intake-dispatch'),sendEn
 }
 async function main(){
  const folder=dataPath('intake-dispatch'),config=read(path.join(folder,'config.json'),{}),sendEnabled=process.argv.includes('--send');
+ if(sendEnabled&&config.transport==='native-automation')throw Error('native automation owns dispatch');
  if(sendEnabled&&(config.enabled!==true||typeof config.codex!=='string'||!path.isAbsolute(config.codex)||path.basename(config.codex).toLowerCase()!=='codex.exe'||!existsSync(config.codex)))throw Error('dispatcher not configured');
  mkdirSync(folder,{recursive:true,mode:0o700});const lockFile=path.join(folder,'host.lock');
  // Долгоживущий lock не протухает по таймеру, пока PID жив.

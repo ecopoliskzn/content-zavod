@@ -8,6 +8,7 @@ import {editorTaskView,editorSourceView} from './media-intake-editor-view.mjs';
 import {dispatchMetadata} from '../../ops/intake-dispatch.mjs';
 import {intakeLock} from './media-intake-store.mjs';
 const safeJson=file=>{if(path.extname(file)!=='.json')throw Error('ожидается JSON-файл');return JSON.parse(readFileSync(file,'utf8'));};
+export async function intakeHealth(){return call('intake-health',{});}
 function writeReceipt(file,value){const temp=file+'.tmp';writeFileSync(temp,JSON.stringify(value,null,2),{mode:0o600});const fd=openSync(temp,'r+');try{fsyncSync(fd);}finally{closeSync(fd);}renameSync(temp,file);}
 export async function claimIntakeJob(id,owner,{invoke=call,folder=dataPath('intake-editor'),save=writeReceipt,requestId,expected}={}){
  if(!/^[a-f0-9]{16}$/.test(id||'')||!['S1','S2'].includes(owner))throw Error('нужны --id и --owner=S1|S2');

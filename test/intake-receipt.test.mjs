@@ -1,0 +1,17 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';
+const root=mkdtempSync(path.join(tmpdir(),'intake-receipt-'));process.env.DATA_DIR=root;process.env.ZAVOD_ENV_FILE=path.join(root,'absent.env');const {createIntake}=await import('../src/bot/media-intake.mjs');
+const config={enabled:true,groupId:'-100123',topicId:309,authors:['11','12'],coordinators:['33'],approvers:['22'],quietMs:15000,batchQuietMs:15000,editorPollSeconds:60,handoffMode:'B',policyVersion:'fixture',targets:[{channel:'telegram',format:'text',account_ref:'own',readiness:'passed',delivery_mode:'auto',verified_at:'2026-11-10T10:00:00Z'}],limits:{maxFiles:10,maxBytes:1000,maxPending:20,maxText:4000,maxJobInput:20000,maxJobOutput:10000,maxCalls:4}};
+const msg=(id,author=11)=>({update_id:id,message:{message_id:id,chat:{id:-100123},message_thread_id:309,from:{id:author},text:'Синтетическое описание',reply_to_message:{message_id:309}}});
+function fixture(){let now=Date.parse('2026-11-10T10:00:00Z');const sent=[];const app=createIntake({dir:mkdtempSync(path.join(root,'case-')),config,clock:()=>now,telegram:async(method,body)=>{sent.push({method,body});return{ok:true,messageId:1000};}});return{app,sent,advance:ms=>{now+=ms;}};}
+test('пачка одного автора после15сек получает одну карточку, другой автор и новый завершённый пакет не сливаются',async()=>{
+ const f=fixture();await f.app.handleUpdate(msg(400));f.advance(5000);await f.app.handleUpdate(msg(401));assert.equal(f.app.list().length,1);assert.equal(f.sent.length,0);f.advance(15000);await f.app.flush();assert.equal(f.sent.length,1);assert.match(f.sent[0].body.text,/Принято сообщений: 2/);await f.app.flush();assert.equal(f.sent.length,1);
+ await f.app.handleUpdate(msg(402));assert.equal(f.app.list().length,2);await f.app.handleUpdate(msg(403,12));assert.equal(f.app.list().length,3);
+});
+test('ожидание и реальный claim различаются; таймаут обновляет ту же карточку один раз без ложного обещания',async()=>{
+ const f=fixture();await f.app.handleUpdate(msg(400));f.advance(15000);await f.app.flush();const id=f.app.list()[0].id;f.app.edit(id,f.app.show(id).revision,'11',{rights:true});const ready=f.app.prepare(id,f.app.show(id).revision,'11');assert.equal(ready.ok,true);await f.app.flush();assert.match(f.sent.at(-1).body.text,/Ожидает приёма редактором/);assert.doesNotMatch(f.sent.at(-1).body.text,/Редактор принял/);
+ f.advance(121000);await f.app.flush();assert.match(f.sent.at(-1).body.text,/Задержка передачи/);const count=f.sent.length;await f.app.flush();assert.equal(f.sent.length,count);
+ const job=f.app.jobs()[0];assert.equal(f.app.claim(job.id,'S1','a'.repeat(32)).ok,true);await f.app.flush();assert.match(f.sent.at(-1).body.text,/Редактор принял/);assert.ok(f.sent.slice(1).every(s=>s.method==='editMessageText'));
+});
+test('известный отказ карточки повторяется с паузой; неизвестный исход не порождает второе сообщение',async()=>{
+ for(const uncertain of [false,true]){let now=Date.parse('2026-11-10T10:00:00Z'),calls=0;const app=createIntake({dir:mkdtempSync(path.join(root,'retry-')),config:{...config,quietMs:0,batchQuietMs:0},clock:()=>now,telegram:async()=>++calls===1?{ok:false,uncertain}:{ok:true,messageId:1000}});await app.handleUpdate(msg(400));await app.flush();assert.equal(calls,1);now+=31000;await app.flush();assert.equal(calls,uncertain?1:2);}
+});

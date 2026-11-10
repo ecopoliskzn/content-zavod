@@ -45,6 +45,7 @@ function validateConfig(c){
  if(!c||typeof c.enabled!=='boolean'||!/^-[0-9]+$/.test(String(c.groupId))||!Number.isSafeInteger(c.topicId)||c.topicId<0)throw Error('нужны рабочая группа и тема');
  for(const key of ['authors','coordinators','approvers'])if(!Array.isArray(c[key])||(!c[key].length&&!(key==='coordinators'&&c.coordinatorMode==='operator-admin'))||c[key].some(x=>!/^\d+$/.test(String(x))))throw Error('нужны числовые роли');
  if(!['A','B'].includes(c.handoffMode)||!c.policyVersion)throw Error('нужны режим передачи и версия правил');
+ for(const key of ['batchQuietMs','quietMs'])if(c[key]!==undefined&&(!Number.isSafeInteger(c[key])||c[key]<0||c[key]>60000))throw Error('неверная задержка пачки');
  if(!c.limits||['maxFiles','maxBytes','maxPending','maxText','maxJobInput','maxJobOutput','maxCalls'].some(k=>!Number.isSafeInteger(c.limits[k])||c.limits[k]<=0))throw Error('нужны пределы пилота');
  if(!Array.isArray(c.targets)||!c.targets.length||c.targets.some(t=>!validateTarget(t))||new Set(c.targets.map(targetKey)).size!==c.targets.length||c.targetCatalog&&(!Array.isArray(c.targetCatalog)||c.targetCatalog.some(t=>!validateTarget(t))||new Set(c.targetCatalog.map(targetKey)).size!==c.targetCatalog.length))throw Error('нужны явно описанные пути площадок и причины not_ready');
  if(c.groupId!==env('TG_GROUP_ID')&&String(c.groupId)!==String(env('TG_GROUP_ID')))throw Error('приём разрешён только в настроенной группе');
@@ -59,6 +60,13 @@ export async function admin(command,args={},actor='operator'){
   case 'intake-configure':{const c=validateConfig(args.config);mkdirSync(dir(),{recursive:true,mode:0o700});writeFileSync(configFile()+'.tmp',JSON.stringify(c),{mode:0o600});renameSync(configFile()+'.tmp',configFile());data={enabled:c.enabled,topicConfigured:true,targetCount:c.targets.length,handoffMode:c.handoffMode};break;}
   case 'intake-info':
   case 'intake-status':data={enabled:currentConfig().enabled||false,materials:app.list().length,jobs:app.jobs().length,observations:app.store.read().observations};break;
+  case 'intake-recover-topic-root':data=app.recoverTopicRootEvents();break;
+  case 'intake-health':{
+   const s=app.store.read(),active=Object.values(s.materials).filter(r=>!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode));
+   data={enabled:currentConfig().enabled===true,topicId:currentConfig().topicId,handoffMode:currentConfig().handoffMode,activeMaterials:active.length,
+    unknownCards:active.filter(r=>r.card.status==='unknown'||r.card.status==='sending'&&(!r.card.attemptedAt||Date.now()-Date.parse(r.card.attemptedAt)>120000)).length,
+    failedCards:active.filter(r=>r.card.status==='failed').length,failedFiles:active.reduce((n,r)=>n+r.files.filter(f=>!f.excluded&&f.status==='failed').length,0),
+    blockedEvents:Object.values(s.events).filter(e=>e.status==='blocked').length,stalePendingEvents:Object.values(s.events).filter(e=>e.status==='pending'&&Date.now()-Date.parse(e.at)>120000).length,lastIncomingAt:s.observations.at(-1)?.at||null};break;}
   case 'intake-list':data=app.list();break;
   case 'intake-show':{const r=app.show(args.id);if(!r)throw Error('комплект не найден');data={id:r.id,revision:r.revision,mode:r.mode,files:r.files.map(({fileUniqueId,status,mediaId,errorCode,excluded})=>({fileUniqueId,status,mediaId,errorCode,excluded:!!excluded})),readiness:app.readiness(r.id)};break;}
   case 'intake-jobs':data=app.jobs().map(({id,materialId,revision,inputHash,status,targets,createdAt,recipient,protocolVersion,manifestRevision,acceptedClaims,acceptedClaimsComplete,claim,answerRevision,answerHash})=>({id,materialId,revision,inputHash,status,current:targets.length>0&&targets.every(t=>app.isCurrentTarget(id,targetKey(t))),createdAt,recipient,protocolVersion,manifestRevision,claimFencingVersion:1,acceptedClaimsComplete:acceptedClaimsComplete===true,acceptedClaims:acceptedClaims||[],claim:claim?{owner:claim.owner,requestId:claim.requestId||null,initialInputHash:claim.initialInputHash||null,at:claim.at}:null,answerRevision:answerRevision||0,answerHash:answerHash||null,continuation:app.continuations().find(e=>e.jobId===id)||null}));break;

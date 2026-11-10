@@ -51,7 +51,10 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   if(cb){if(!String(cb.data||'').startsWith('mi:')||!scope(c,cb.message||{})||!numeric(cb.from?.id))return{accepted:false};
    return store.tx(s=>{const key='cb:'+cb.id;if(s.events[key])return{accepted:true,duplicate:true};s.events[key]={kind:'callback',id:cb.id,actor:String(cb.from.id),data:String(cb.data).slice(0,64),messageId:cb.message.message_id,at:now(),status:'pending'};return{accepted:true};});}
   if(!m||!scope(c,m)||m.sender_chat||!allowed(c,m.from?.id)||!Number.isSafeInteger(update.update_id))return{accepted:false};
-  const file=fileOf(m),reply=m.reply_to_message?.message_id,text=String(m.text||m.caption||'').slice(0,c.limits?.maxText||4000);
+  // Telegram может пометить обычное сообщение форума как reply на корень темы.
+  // Это новая подача, а не ответ на карточку или на чужое сообщение.
+  const rawReply=m.reply_to_message?.message_id,reply=c.topicId>0&&rawReply===c.topicId?null:rawReply;
+  const file=fileOf(m),text=String(m.text||m.caption||'').slice(0,c.limits?.maxText||4000);
   if(!file&&(!text.trim()||text.trim().startsWith('/')))return{accepted:false};
   if(file&&(!file.fileId||!file.fileUniqueId))return{accepted:false};
   return store.tx(s=>{const key='up:'+update.update_id;if(s.events[key])return{accepted:true,duplicate:true};
@@ -107,9 +110,17 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   if(q.answer){q.answers||=[{text:q.answer,by:q.answeredBy}];q.answers.push({text:e.text,by:e.author});q.status='conflict';}else q.status='answered';q.answer=e.text;q.answeredBy=e.author;
   r.answers_revision=(r.answers_revision||0)+1;const j=Object.values(s.jobs).find(j=>j.materialId===r.id&&currentJob(r,j)&&j.status==='claimed');if(j){j.answerRevision=r.answers_revision;j.answerHash=hash(r.questions.map(({id,status,answer,answers})=>({id,status,answer,answers:answers?.map(a=>a.text)})));}r.card.dirty=true;
  }
+ function recoverTopicRootEvents(){const c=cfg();if(!c.enabled||!Number.isSafeInteger(c.topicId)||c.topicId<=0)return{ok:false,recovered:0};return store.tx(s=>{let recovered=0;
+  for(const e of Object.values(s.events)){
+   if(e.status!=='ignored'||e.kind!=='message'||e.reply!==c.topicId||!allowed(c,e.author)||e.materialId||(!e.file&&!e.text?.trim())||Object.values(s.materials).some(r=>r.sources.some(x=>x.messageId===e.messageId)))continue;
+   e.recovery={kind:'forum-topic-root',at:now(),originalReply:e.reply};e.reply=null;e.status='pending';recovered++;
+  }return{ok:true,recovered};});}
  function events(){store.tx(s=>{for(const e of Object.values(s.events)){if(e.status!=='pending'||e.kind==='callback')continue;
    let r=Object.values(s.materials).find(r=>e.reply&&(r.card.messageId===e.reply||r.sources.some(x=>x.messageId===e.reply)));
    if(!r&&e.file)r=Object.values(s.materials).find(r=>r.album&&r.album===e.album);
+   // Незавершённая пачка одного автора объединяется только до первой карточки.
+   // Разные явные альбомы, реальные replies, другие авторы и подтверждённое не смешиваются.
+   if(!r&&!e.reply&&e.kind==='message'&&cfg().batchQuietMs>0)r=Object.values(s.materials).filter(m=>m.mode==='draft'&&m.card.status==='new'&&!m.card.messageId&&!m.confirmedRevision&&m.author===e.author&&(!e.album||!m.album||e.album===m.album)&&Number.isFinite(Date.parse(e.at))&&Date.parse(e.at)-Date.parse(m.lastSourceAt||m.createdAt)>=0&&Date.parse(e.at)-Date.parse(m.lastSourceAt||m.createdAt)<=cfg().batchQuietMs).sort((a,b)=>Date.parse(b.lastSourceAt||b.createdAt)-Date.parse(a.lastSourceAt||a.createdAt))[0];
    if(!r&&(e.file||e.text)&&e.kind!=='edited'&&!e.reply){
     if(Object.values(s.materials).filter(r=>!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode)).length>=(cfg().limits?.maxPending||20)){e.status='blocked';e.reason='pending_limit';continue;}
     r={id:uid(),author:e.author,groupId:String(cfg().groupId),topicId:cfg().topicId||0,album:e.album,revision:1,manifest_revision:1,brief_revision:1,timing_revision:1,confirmedRevision:null,files:[],sources:[],brief:'',goal:'show-object',editing_mode:'adapt',targets:chooseTargets(cfg().targets||[],[]),targetsExplicit:false,targetAssets:{},timing:{mode:'after_approval',source:'project'},rights:{status:'needs_clarification'},questions:[],mode:'draft',createdAt:now(),updatedAt:now(),card:{status:'new',messageId:null,dirty:true},evidence:[]};s.materials[r.id]=r;
@@ -136,7 +147,7 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
     else if(r.files.length<(cfg().limits?.maxFiles||10)){r.files.push({...e.file,messageId:e.messageId,messages:[e.messageId],status:'pending',excluded:false});r.files.sort((a,b)=>a.messageId-b.messageId);change(r,'manifest');r.rights={status:'needs_clarification'};}
     else{e.status='blocked';e.reason='file_limit';r.limitBlocked=true;change(r,'manifest');continue;}
    }
-   r.lastIncomingAt=clock();r.evidence.push(receipt('event',r,'passed','update:'+e.updateId));e.status='done';e.materialId=r.id;
+   r.lastIncomingAt=clock();r.lastSourceAt=e.at;if(!r.album&&e.album)r.album=e.album;r.evidence.push(receipt('event',r,'passed','update:'+e.updateId));e.status='done';e.materialId=r.id;
   }});}
  function edit(id,revision,actor,patch){return store.tx(s=>{const r=s.materials[id];if(!r||!actorCan(cfg(),r,actor))throw Error('нет права менять комплект');if(r.revision!==revision)throw Error('устаревшая версия');if(r.workflowClosed||r.mode==='cancelled')throw Error('задание закрыто; нужен новый явный комплект');
    const keys=Object.keys(patch);if(keys.some(k=>!['goal','brief','targets','targetAssets','excludeFile','editing_mode','timing','rights','mode','resolveQuestion'].includes(k)))throw Error('неизвестная правка');
@@ -192,12 +203,23 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   }}
   store.tx(s=>{s.events['cb:'+event.id].status='done';});if(telegram)await telegram('answerCallbackQuery',{callback_query_id:event.id,text:answer});
  }}
+ function receiptProgress(r){
+  if(!cfg().batchQuietMs||r.workflowClosed||['archive','cancelled','closed','discussion'].includes(r.mode))return{code:'inactive',text:''};
+  if(r.files.some(f=>!f.excluded&&f.status==='failed'))return{code:'file-failed',text:'Не все файлы удалось сохранить. Сообщения сохранены; оператору нужно проверить загрузку. Повторно отправлять всю пачку не нужно.'};
+  if(r.questions.some(q=>q.blocking&&q.status!=='resolved'))return{code:'question',text:'Нужно уточнение. Ответьте на вопрос в этой карточке; материал не потерян.'};
+  if(r.mode!=='submitted')return{code:'received',text:'Материалы получены. Проверьте состав и права на использование, затем нажмите «Подготовить так». Это ещё не одобрение публикации.'};
+  const jobs=Object.values(store.read().jobs).filter(j=>j.materialId===r.id&&currentJob(r,j)),claimed=jobs.find(j=>j.status==='claimed');
+  if(claimed){const late=clock()-Date.parse(claimed.claim?.at)>15*60*1000;return{code:late?'editor-delayed':'editor-accepted',text:late?'Подготовка затянулась. Материалы сохранены; требуется проверка оператора. Повторная передача не запускается.':'Редактор принял материал в обработку. Готовые варианты появятся на согласовании; срок готовности зависит от объёма.'};}
+  if(jobs.length&&jobs.every(j=>j.status==='completed'))return{code:'prepared',text:'Варианты подготовлены. Передаём их на отдельное согласование; без «Одобрить» публикации не будет.'};
+  const oldest=Math.min(...jobs.filter(j=>j.status==='queued').map(j=>Date.parse(j.createdAt)));const late=Number.isFinite(oldest)&&clock()-oldest>120000;
+  return{code:late?'dispatch-delayed':'editor-waiting',text:late?'Задержка передачи: редактор ещё не подтвердил приём. Материалы сохранены; оператору нужно проверить доставку.':'Ожидает приёма редактором. Контрольный срок подтверждения — 2 минуты; если он истечёт, здесь появится статус задержки.'};
+ }
  function card(id){const r=store.read().materials[id];if(!r)throw Error('комплект не найден');const active=r.files.filter(f=>!f.excluded),verified=active.filter(f=>f.status==='verified');
   const currentJob=Object.values(store.read().jobs).find(j=>j.materialId===id&&j.revision===r.revision),snapshots=r.queueSummary?.targets||Object.values(currentJob?.publicationState||{});
   const counts=r.queueSummary?{published_count:snapshots.filter(x=>x.stages?.P12?.result==='passed').length,cancelled_count:snapshots.filter(x=>x.status==='cancelled').length,deferred_count:0,unresolved_count:snapshots.filter(x=>!x.closed).length}:r.workflowSummary;
   const state=r.workflowClosed?'Итог':{draft:'Собираем материал',submitted:snapshots.some(x=>['approved','running','handed','published','failed','expired'].includes(x.status))?'Выпуск':snapshots.some(x=>['review','rework'].includes(x.status))?'На согласовании':currentJob?.claim?'В подготовке':'Ожидает подготовки',discussion:'Только обсуждение',archive:'В архиве; резервирование не подтверждено',cancelled:'Отменено',closed:'Итог'}[r.mode];
   const titles={telegram:'Telegram',vk:'ВКонтакте',instagram:'Instagram',threads:'Threads',dzen:'Дзен',youtube:'YouTube',rutube:'Rutube'},formats={album:'альбом',photopost:'пост с фото','photo-post':'пост с фото',carousel:'карусель',post:'пост',video:'видео'},goals={'show-object':'показать объект',object:'показать объект',product:'объяснить продукт',other:'другая цель'};
-  const lines=[`<b>${safe(state)}</b>`,`Сохранено ${verified.length} из ${active.length} файлов.`,r.changedAfterTransfer?'Состав изменён после передачи. Нужна новая версия задания.':'',`Предложение: ${safe(goals[r.goal]||r.goal||'предложить подачу')}.`,
+  const lines=[`<b>${safe(state)}</b>`,...(cfg().batchQuietMs?[`Принято сообщений: ${r.sources.length}. ${safe(receiptProgress(r).text)}`]:[]),`Сохранено ${verified.length} из ${active.length} файлов.`,r.changedAfterTransfer?'Состав изменён после передачи. Нужна новая версия задания.':'',`Предложение: ${safe(goals[r.goal]||r.goal||'предложить подачу')}.`,
    `Подготовим: ${r.targets.map(t=>{const problems=targetProblems(t,selectedFiles(r,t));return safe(`${titles[t.channel]||t.channel} — ${targetSpec(t)?.label||formats[t.format]||t.format} (${t.delivery_mode==='manual'?'ручная выкладка':'автоматическая публикация'})${problems.length?'; пока нельзя: '+problems.map(p=>p.reason).join(', '):''}`);}).join('; ')||'нет подходящих выбранных форматов'}.`,
    ...catalog().filter(t=>t.readiness!=='passed'&&!r.targets.some(x=>targetKey(x)===targetKey(t))).map(t=>`${safe(channelTitle(t.channel))}: ${safe(t.reason||'путь ещё не проверен')}.`),r.brief?`Описание: ${safe(r.brief.slice(0,1400))}`:'Нужен ответ: опишите, что важно показать. Ответьте на эту карточку.',
    r.rights.status==='confirmed'?'Права на текущий состав подтверждены.':active.length?'Нужен ответ: подтвердите право публично использовать текущие файлы. Людей/музыку при необходимости проверит редактор; дети в кадре запрещены.':'Нужен ответ: подтвердите право публично использовать этот текст.',
@@ -234,11 +256,12 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
     }catch(e){errorCode=ERRORS.has(e.code)?e.code:'INVALID_MEDIA';}
     store.tx(s=>{const m=s.materials[r.id],item=m.files.find(x=>x.fileUniqueId===f.fileUniqueId);Object.assign(item,errorCode?{status:'failed',errorCode}:{status:'verified',mediaId:result.mediaId,sha256:result.sha256,bytes:result.bytes,mime:result.mime});if(!errorCode)refreshTargets(m);m.card.dirty=true;m.evidence.push(receipt('file',m,errorCode?'failed':'passed',errorCode||result.mediaId));});
    }
-   for(const r of Object.values(store.read().materials)){if(!telegram||!r.card.dirty||['sending','unknown'].includes(r.card.status)||clock()-(r.lastIncomingAt||0)<(cfg().quietMs||0))continue;
+   if(cfg().batchQuietMs){const refresh=Object.values(store.read().materials).filter(r=>!['archive','cancelled','closed','discussion'].includes(r.mode)&&!r.workflowClosed&&!r.card.dirty&&r.card.receiptStage!==receiptProgress(r).code).map(r=>r.id);if(refresh.length)store.tx(s=>{for(const id of refresh)s.materials[id].card.dirty=true;});}
+   for(const r of Object.values(store.read().materials)){if(!telegram||!r.card.dirty||['sending','unknown','failed'].includes(r.card.status)||(r.card.retryAt||0)>clock()||clock()-(r.lastIncomingAt||0)<(cfg().quietMs||0))continue;
     const content=card(r.id),first=!r.card.messageId;
-    if(first)store.tx(s=>{s.materials[r.id].card.status='sending';});
+    if(first)store.tx(s=>{s.materials[r.id].card.status='sending';s.materials[r.id].card.attemptedAt=now();});
     let res;try{res=await telegram(first?'sendMessage':'editMessageText',{chat_id:r.groupId,...(r.topicId?{message_thread_id:r.topicId}:{}),...(first?{reply_parameters:{message_id:r.sources[0].messageId,allow_sending_without_reply:true}}:{message_id:r.card.messageId}),parse_mode:'HTML',...content});}catch{res={ok:false,uncertain:true};}
-    store.tx(s=>{const m=s.materials[r.id];if(res.ok&&(res.messageId||!first)){m.card={status:'sent',messageId:res.messageId||m.card.messageId,dirty:m.revision!==r.revision,revision:r.revision};m.evidence.push(receipt('card',m,'passed','message:'+m.card.messageId));}else{m.card.status=first?'unknown':'sent';m.card.dirty=true;}});
+    store.tx(s=>{const m=s.materials[r.id];if(res.ok&&(res.messageId||!first)){m.card={status:'sent',messageId:res.messageId||m.card.messageId,dirty:m.revision!==r.revision,revision:r.revision,...(cfg().batchQuietMs?{receiptStage:receiptProgress(r).code}:{})};m.evidence.push(receipt('card',m,'passed','message:'+m.card.messageId));}else{m.card.attempts=(m.card.attempts||0)+1;const known=res.ok===false&&res.uncertain===false;m.card.status=first&&!known?'unknown':m.card.attempts>=3?'failed':first?'new':'sent';m.card.retryAt=clock()+30000;m.card.dirty=true;}});
    }return{ok:true};
   }finally{unlock();}
  }
@@ -327,5 +350,5 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   if(!j||j.claim?.owner!==owner||j.claim.token!==token)return{ok:false,reason:'claim'};if(j.status!=='claimed')return{ok:false,reason:'status'};j.status=currentJob(s.materials[j.materialId],j)?'queued':'superseded';j.previousClaim=j.claim;j.claim=null;return{ok:true,status:j.status};});}
  function retry(id,revision,actor){return store.tx(s=>{const r=s.materials[id];if(!r||r.revision!==revision||!actorCan(cfg(),r,actor))throw Error('нет права или версия устарела');for(const f of r.files)if(f.status==='failed')f.status='pending';return{ok:true};});}
  return{ingest,flush,handleUpdate:async u=>{const r=ingest(u);await flush();return r;},list:()=>Object.values(store.read().materials).map(r=>({id:r.id,revision:r.revision,mode:r.mode,files:r.files.length})),show:id=>clone(store.read().materials[id]),
-  readiness,card,edit,prepare,jobs:()=>Object.values(store.read().jobs).map(clone),claim,result,question,facts,context,continuations,isCurrentTarget,queueFeedback,release,retry,store};
+  readiness,card,edit,prepare,jobs:()=>Object.values(store.read().jobs).map(clone),claim,result,question,facts,context,continuations,isCurrentTarget,queueFeedback,release,retry,recoverTopicRootEvents,store};
 }
