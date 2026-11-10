@@ -13,27 +13,25 @@
 import { channel as channelCfg } from "../lib/config.mjs";
 import { h, toGroup } from "../lib/notify.mjs";
 import { human } from "../lib/time.mjs";
+import {deliverManual} from './manual-delivery.mjs';
 
 /**
  * Ответ на комментарий: согласованный текст и ссылка на комментарий уходят сотруднику.
  * Ответить программой завод не берётся: десять ответов, отправленных конвейером, читаются
  * как конвейер, а на вопрос человека должен ответить человек с аккаунта компании.
  */
-export async function sendReply(entry, { onState } = {}) {
-  if (entry.result?.packageMessageId) return { ok: true, manual: true, note: "ответ отправлен сотруднику ранее" };
+export async function sendReply(entry, { onState,deliver=toGroup } = {}) {
+  if(!String(entry.text||'').trim())return{ok:false,retry:false,error:'Нет согласованного текста ответа; пакет не отправлен.'};
   const cfg = channelCfg(entry.channel);
-  const head = await toGroup("packages", [
+  const head = [
     `💬 <b>Ответить на комментарий · ${h(cfg.title)}</b>`,
     entry.context ? `Комментарий: «${h(String(entry.context).slice(0, 600))}»` : "",
     "",
     `1. Откройте комментарий: ${h(entry.link)}`,
     "2. Ответьте с аккаунта компании текстом из следующего сообщения.",
     "3. Нажмите «Отвечено».",
-  ].filter((x) => x !== "").join("\n"), { buttons: [[{ text: "✅ Отвечено", data: `d:done:${entry.id}` }]] });
-  if (!head.ok) return { ok: false, error: `ответ не ушёл в группу: ${head.error}`, retry: true };
-  if (onState) await onState({ packageMessageId: head.messageId });
-  await toGroup("packages", h(entry.text || ""), { extra: { reply_parameters: { message_id: head.messageId } } });
-  return { ok: true, manual: true, note: "ответ отправлен сотруднику" };
+  ].filter((x) => x !== "").join("\n");
+  return deliverManual(entry,{kind:'reply',head,body:entry.text||'',buttons:[[{text:'✅ Отвечено',data:`d:done:${entry.id}`}]],onState,deliver});
 }
 
 /**
@@ -41,9 +39,7 @@ export async function sendReply(entry, { onState } = {}) {
  * @param {{ steps: string[], onState?: Function, why?: string }} opts steps — что сделать человеку, по шагам
  * @returns {Promise<{ ok: boolean, manual?: boolean, note?: string, error?: string, retry?: boolean }>}
  */
-export async function sendPackage(entry, { steps, onState, why = "" }) {
-  // Пакет уже отправлен прошлым проходом: второй раз не шлём.
-  if (entry.result?.packageMessageId) return { ok: true, manual: true, note: "пакет отправлен ранее, ждёт ручной выкладки" };
+export async function sendPackage(entry, { steps, onState, why = "",deliver=toGroup }) {
   const cfg = channelCfg(entry.channel);
   const rows = [`📦 <b>Выложить руками · ${h(cfg.title)}</b>`, `Когда: ${human(entry)} по Москве. Запись одобрена.`];
   if (why) rows.push(`<i>${h(why)}</i>`);
@@ -51,11 +47,7 @@ export async function sendPackage(entry, { steps, onState, why = "" }) {
   for (const m of entry.media || []) rows.push("", `${m.type === "video" ? "🎬 Ролик" : "🖼 Картинка"}: ${h(m.url)}`, ...(m.cover ? [`Обложка: ${h(m.cover)}`] : []));
   if (entry.tags?.length) rows.push("", `Метки: ${h(entry.tags.join(", "))}`);
   rows.push("", "<b>Текст для вставки следующим сообщением.</b> После выкладки нажмите «Выложено» и ответьте на это сообщение ссылкой на публикацию.");
-  const head = await toGroup("packages", rows.join("\n"), { buttons: [[{ text: "✅ Выложено", data: `d:done:${entry.id}` }]] });
-  if (!head.ok) return { ok: false, error: `пакет не ушёл в группу: ${head.error}`, retry: true };
-  if (onState) await onState({ packageMessageId: head.messageId });
   // Текст отдельным сообщением и без разметки: его копируют целиком одним нажатием.
   const body = [entry.title ? entry.title : "", entry.text || (entry.posts || []).join("\n\n")].filter(Boolean).join("\n\n");
-  if (body) await toGroup("packages", h(body), { extra: { reply_parameters: { message_id: head.messageId } } });
-  return { ok: true, manual: true, note: "пакет отправлен в группу, ждёт ручной выкладки" };
+  return deliverManual(entry,{kind:'package',head:rows.join('\n'),body,buttons:[[{text:'✅ Выложено',data:`d:done:${entry.id}`}]],onState,deliver});
 }

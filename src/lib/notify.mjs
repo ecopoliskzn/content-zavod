@@ -38,14 +38,14 @@ function topicExtra(topic) {
 /** Сообщение в тему группы. Возвращает { ok, messageId, error }. */
 export async function toGroup(topic, text, { buttons, extra = {}, retries = 1 } = {}) {
   const chat = groupId();
-  if (!chat) return { ok: false, error: "нет TG_GROUP_ID: рабочая группа не задана" };
-  let last = { ok: false, error: "пустой текст" };
+  if (!chat) return { ok: false,kind:'refused',status:0,error: "нет TG_GROUP_ID: рабочая группа не задана" };
+  let last = { ok: false,kind:'refused',status:0,error: "пустой текст" };
   const parts = chunks(text);
   const messageIds=[];
   for (let i = 0; i < parts.length; i++) {
     const isLast = i === parts.length - 1;
     const res = await sendMessage(chat, parts[i], { ...topicExtra(topic), ...(isLast && buttons ? keyboard(buttons) : {}), ...extra }, {retries});
-    last = res.kind === "ok" ? { ok: true, messageId: res.result?.message_id } : { ok: false, error: res.error };
+    last = res.kind === "ok" ? { ok: true,kind:res.kind,status:res.status,messageId: res.result?.message_id } : { ok: false,kind:res.kind,status:res.status,error: res.error };
     if(last.ok)messageIds.push(last.messageId);
     if (!last.ok) {
       // Сбой отправки не глотаем молча: в журнале процесса он обязан быть виден.
