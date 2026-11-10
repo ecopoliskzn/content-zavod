@@ -1,0 +1,29 @@
+{
+  "channel": "telegram",
+  "kind": "post",
+  "name": "dokumenty-do-priemki",
+  "material": "blog:sdacha-ispolnitelno-tehnicheskoj-dokumentacii-po-rezinovomu-pokrytiju-chto-vazhno-znat-zakazchiku-i-podryadchiku",
+  "text": "Паспорт крошки и паспорт связующего — отдельные позиции в нашем перечне документов.\n\nДля сдачи резинового покрытия в нём перечислены паспорт качества крошки, паспорт полиуретанового связующего и паспорт красящего пигмента. Речь о материалах, которые применяли на объекте.\n\nОтдельно указаны технические характеристики плитки или бесшовного покрытия и рекомендации по эксплуатации.\n\nДокументацию рекомендуем готовить параллельно с работами.\n\nПеред сдачей сверьте комплект с фактически применёнными материалами и согласованным перечнем документов.",
+  "buttons": [
+    [
+      {
+        "text": "Состав документов на покрытие",
+        "url": "https://ecopolisrf.ru/blog/sdacha-ispolnitelno-tehnicheskoj-dokumentacii-po-rezinovomu-pokrytiju-chto-vazhno-znat-zakazchiku-i-podryadchiku/"
+      }
+    ]
+  ],
+  "facts": [
+    {
+      "claim": "Раздел статьи «Технологические карты или паспорта на применённые материалы» отдельно перечисляет паспорт качества крошки, паспорт полиуретанового связующего и паспорт на красящий пигмент. Перечень относится к применённым материалам, а не к обязательному использованию каждого компонента.",
+      "source": "https://ecopolisrf.ru/blog/sdacha-ispolnitelno-tehnicheskoj-dokumentacii-po-rezinovomu-pokrytiju-chto-vazhno-znat-zakazchiku-i-podryadchiku/"
+    },
+    {
+      "claim": "В том же разделе отдельно указаны технические характеристики резиновой плитки или бесшовного покрытия и рекомендации по эксплуатации.",
+      "source": "https://ecopolisrf.ru/blog/sdacha-ispolnitelno-tehnicheskoj-dokumentacii-po-rezinovomu-pokrytiju-chto-vazhno-znat-zakazchiku-i-podryadchiku/"
+    },
+    {
+      "claim": "Статья рекомендует подготавливать документацию параллельно с выполнением работ. Последняя фраза поста — практическое действие сверить применённые материалы и согласованный перечень, не правовое заключение и не обещание наличия документов у компании.",
+      "source": "https://ecopolisrf.ru/blog/sdacha-ispolnitelno-tehnicheskoj-dokumentacii-po-rezinovomu-pokrytiju-chto-vazhno-znat-zakazchiku-i-podryadchiku/"
+    }
+  ]
+}
