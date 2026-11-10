@@ -1,0 +1,273 @@
+{
+  "version": "meta-baseline-1",
+  "sourceCollectedFrom": "2026-11-10T10:53:27.672Z",
+  "sourceCollectedTo": "2026-11-10T10:53:47.113Z",
+  "requestedFrom": "2026-08-23T21:00:00.000Z",
+  "requestedTo": "2026-11-08T21:00:00.000Z",
+  "timezone": "Europe/Moscow",
+  "rankingPerformed": false,
+  "rankingReason": "Накопленные значения материалов разного возраста нельзя ранжировать как результат одинакового периода.",
+  "channels": [
+    {
+      "platform": "instagram",
+      "profile": {
+        "id": "17841404069364522",
+        "username": "ecopolis_kzn",
+        "accountType": "BUSINESS"
+      },
+      "status": "ok",
+      "inventoryComplete": true,
+      "stopReason": "end_of_feed",
+      "pages": 6,
+      "sourceRows": 552,
+      "uniqueIdsSeen": 552,
+      "duplicates": 0,
+      "invalidRows": 0,
+      "followers": {
+        "value": 7288,
+        "status": "measured",
+        "takenAt": "2026-11-10T10:53:28.130Z",
+        "definition": "Число подписчиков собственного профиля на момент запроса"
+      },
+      "baselineCount": 2,
+      "currentCount": 1,
+      "latestPublication": "2026-11-10T10:15:35.000Z",
+      "byFormat": {
+        "REELS": 2
+      },
+      "weeks": [
+        {
+          "from": "2026-08-23T21:00:00.000Z",
+          "to": "2026-08-30T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-08-30T21:00:00.000Z",
+          "to": "2026-09-06T21:00:00.000Z",
+          "count": 1
+        },
+        {
+          "from": "2026-09-06T21:00:00.000Z",
+          "to": "2026-09-13T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-13T21:00:00.000Z",
+          "to": "2026-09-20T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-20T21:00:00.000Z",
+          "to": "2026-09-27T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-27T21:00:00.000Z",
+          "to": "2026-10-04T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-04T21:00:00.000Z",
+          "to": "2026-10-11T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-11T21:00:00.000Z",
+          "to": "2026-10-18T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-18T21:00:00.000Z",
+          "to": "2026-10-25T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-25T21:00:00.000Z",
+          "to": "2026-11-01T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-11-01T21:00:00.000Z",
+          "to": "2026-11-08T21:00:00.000Z",
+          "count": 1
+        }
+      ],
+      "coverage": {
+        "views": {
+          "measured": 3,
+          "total": 3
+        },
+        "reach": {
+          "measured": 3,
+          "total": 3
+        },
+        "likes": {
+          "measured": 3,
+          "total": 3
+        },
+        "comments": {
+          "measured": 3,
+          "total": 3
+        },
+        "saved": {
+          "measured": 3,
+          "total": 3
+        },
+        "shares": {
+          "measured": 3,
+          "total": 3
+        }
+      },
+      "cumulativeMediansByFormatAndAgeWeek": [
+        {
+          "format": "REELS",
+          "ageWeek": 10,
+          "count": 1,
+          "medians": {
+            "views": 451,
+            "reach": 324,
+            "likes": 9,
+            "comments": 1,
+            "saved": 2,
+            "shares": 0
+          }
+        },
+        {
+          "format": "REELS",
+          "ageWeek": 0,
+          "count": 1,
+          "medians": {
+            "views": 530,
+            "reach": 420,
+            "likes": 2,
+            "comments": 0,
+            "saved": 0,
+            "shares": 0
+          }
+        }
+      ],
+      "errors": []
+    },
+    {
+      "platform": "threads",
+      "profile": {
+        "id": "29190941230594420",
+        "username": "ecopolis_kzn"
+      },
+      "status": "ok",
+      "inventoryComplete": true,
+      "stopReason": "end_of_feed",
+      "pages": 1,
+      "sourceRows": 1,
+      "uniqueIdsSeen": 1,
+      "duplicates": 0,
+      "invalidRows": 0,
+      "followers": {
+        "value": 810,
+        "status": "measured",
+        "takenAt": "2026-11-10T10:53:44.615Z",
+        "definition": "Число подписчиков собственного профиля на момент запроса"
+      },
+      "baselineCount": 1,
+      "currentCount": 0,
+      "latestPublication": "2026-11-06T06:55:37.000Z",
+      "byFormat": {
+        "IMAGE": 1
+      },
+      "weeks": [
+        {
+          "from": "2026-08-23T21:00:00.000Z",
+          "to": "2026-08-30T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-08-30T21:00:00.000Z",
+          "to": "2026-09-06T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-06T21:00:00.000Z",
+          "to": "2026-09-13T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-13T21:00:00.000Z",
+          "to": "2026-09-20T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-20T21:00:00.000Z",
+          "to": "2026-09-27T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-09-27T21:00:00.000Z",
+          "to": "2026-10-04T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-04T21:00:00.000Z",
+          "to": "2026-10-11T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-11T21:00:00.000Z",
+          "to": "2026-10-18T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-18T21:00:00.000Z",
+          "to": "2026-10-25T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-10-25T21:00:00.000Z",
+          "to": "2026-11-01T21:00:00.000Z",
+          "count": 0
+        },
+        {
+          "from": "2026-11-01T21:00:00.000Z",
+          "to": "2026-11-08T21:00:00.000Z",
+          "count": 1
+        }
+      ],
+      "coverage": {
+        "views": {
+          "measured": 1,
+          "total": 1
+        },
+        "likes": {
+          "measured": 1,
+          "total": 1
+        },
+        "replies": {
+          "measured": 1,
+          "total": 1
+        },
+        "reposts": {
+          "measured": 1,
+          "total": 1
+        },
+        "quotes": {
+          "measured": 1,
+          "total": 1
+        }
+      },
+      "cumulativeMediansByFormatAndAgeWeek": [
+        {
+          "format": "IMAGE",
+          "ageWeek": 0,
+          "count": 1,
+          "medians": {
+            "views": 96,
+            "likes": 0,
+            "replies": 4,
+            "reposts": 0,
+            "quotes": 0
+          }
+        }
+      ],
+      "errors": []
+    }
+  ]
+}

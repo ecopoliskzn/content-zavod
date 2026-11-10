@@ -1,0 +1,307 @@
+{
+  "baselineFrom": "2026-10-19T07:44:55.564Z",
+  "baselineTo": "2026-10-19T07:45:13.712Z",
+  "currentFrom": "2026-11-10T10:53:27.672Z",
+  "currentTo": "2026-11-10T10:53:47.113Z",
+  "channels": [
+    {
+      "platform": "instagram",
+      "followersBefore": {
+        "value": 7298,
+        "status": "measured",
+        "takenAt": "2026-10-19T07:44:56.190Z",
+        "definition": "Число подписчиков собственного профиля на момент запроса"
+      },
+      "followersNow": {
+        "value": 7288,
+        "status": "measured",
+        "takenAt": "2026-11-10T10:53:28.130Z",
+        "definition": "Число подписчиков собственного профиля на момент запроса"
+      },
+      "followersDelta": -10,
+      "inventoryComplete": true,
+      "metricsComplete": true,
+      "pages": 6,
+      "duplicates": 0,
+      "invalidRows": 0,
+      "stopReason": "end_of_feed",
+      "errors": [],
+      "posts": [
+        {
+          "id": "18429959116179136",
+          "link": "https://www.instagram.com/reel/DctJdIdtkGf/",
+          "publishedAt": "2026-08-31T13:02:53.000Z",
+          "format": "REELS",
+          "newSinceBaseline": false,
+          "metrics": {
+            "likes": {
+              "value": 9,
+              "status": "measured",
+              "source": "media_field",
+              "field": "like_count",
+              "period": "snapshot",
+              "takenAt": "2026-11-10T10:53:29.170Z",
+              "previous": 9,
+              "delta": 0
+            },
+            "comments": {
+              "value": 1,
+              "status": "measured",
+              "source": "media_field",
+              "field": "comments_count",
+              "period": "snapshot",
+              "takenAt": "2026-11-10T10:53:29.170Z",
+              "previous": 1,
+              "delta": 0
+            },
+            "views": {
+              "value": 451,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:40.295Z",
+              "previous": 420,
+              "delta": 31
+            },
+            "reach": {
+              "value": 324,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:40.295Z",
+              "previous": 310,
+              "delta": 14
+            },
+            "saved": {
+              "value": 2,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:40.295Z",
+              "previous": 2,
+              "delta": 0
+            },
+            "shares": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:40.295Z",
+              "previous": 0,
+              "delta": 0
+            }
+          }
+        },
+        {
+          "id": "17925255990222691",
+          "link": "https://www.instagram.com/reel/DfZkL4Hgk3v/",
+          "publishedAt": "2026-11-06T12:05:36.000Z",
+          "format": "REELS",
+          "newSinceBaseline": true,
+          "metrics": {
+            "likes": {
+              "value": 2,
+              "status": "measured",
+              "source": "media_field",
+              "field": "like_count",
+              "period": "snapshot",
+              "takenAt": "2026-11-10T10:53:29.170Z",
+              "previous": null,
+              "delta": null
+            },
+            "comments": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_field",
+              "field": "comments_count",
+              "period": "snapshot",
+              "takenAt": "2026-11-10T10:53:29.170Z",
+              "previous": null,
+              "delta": null
+            },
+            "views": {
+              "value": 530,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:41.841Z",
+              "previous": null,
+              "delta": null
+            },
+            "reach": {
+              "value": 420,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:41.841Z",
+              "previous": null,
+              "delta": null
+            },
+            "saved": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:41.841Z",
+              "previous": null,
+              "delta": null
+            },
+            "shares": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:41.841Z",
+              "previous": null,
+              "delta": null
+            }
+          }
+        },
+        {
+          "id": "18113498264462176",
+          "link": "https://www.instagram.com/p/Dfjq0k1DZBb/",
+          "publishedAt": "2026-11-10T10:15:35.000Z",
+          "format": "FEED",
+          "newSinceBaseline": true,
+          "metrics": {
+            "likes": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_field",
+              "field": "like_count",
+              "period": "snapshot",
+              "takenAt": "2026-11-10T10:53:29.170Z",
+              "previous": null,
+              "delta": null
+            },
+            "comments": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_field",
+              "field": "comments_count",
+              "period": "snapshot",
+              "takenAt": "2026-11-10T10:53:29.170Z",
+              "previous": null,
+              "delta": null
+            },
+            "views": {
+              "value": 50,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:42.998Z",
+              "previous": null,
+              "delta": null
+            },
+            "reach": {
+              "value": 17,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:42.998Z",
+              "previous": null,
+              "delta": null
+            },
+            "saved": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:42.998Z",
+              "previous": null,
+              "delta": null
+            },
+            "shares": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:42.998Z",
+              "previous": null,
+              "delta": null
+            }
+          }
+        }
+      ]
+    },
+    {
+      "platform": "threads",
+      "followersBefore": {
+        "value": 808,
+        "status": "measured",
+        "takenAt": "2026-10-19T07:45:12.943Z",
+        "definition": "Число подписчиков собственного профиля на момент запроса"
+      },
+      "followersNow": {
+        "value": 810,
+        "status": "measured",
+        "takenAt": "2026-11-10T10:53:44.615Z",
+        "definition": "Число подписчиков собственного профиля на момент запроса"
+      },
+      "followersDelta": 2,
+      "inventoryComplete": true,
+      "metricsComplete": true,
+      "pages": 1,
+      "duplicates": 0,
+      "invalidRows": 0,
+      "stopReason": "end_of_feed",
+      "errors": [],
+      "posts": [
+        {
+          "id": "18131545933695212",
+          "link": "https://www.threads.com/@ecopolis_kzn/post/DfZAtOdiCnO",
+          "publishedAt": "2026-11-06T06:55:37.000Z",
+          "format": "IMAGE",
+          "newSinceBaseline": true,
+          "metrics": {
+            "views": {
+              "value": 96,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:47.113Z",
+              "previous": null,
+              "delta": null
+            },
+            "likes": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:47.113Z",
+              "previous": null,
+              "delta": null
+            },
+            "replies": {
+              "value": 4,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:47.113Z",
+              "previous": null,
+              "delta": null
+            },
+            "reposts": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:47.113Z",
+              "previous": null,
+              "delta": null
+            },
+            "quotes": {
+              "value": 0,
+              "status": "measured",
+              "source": "media_insights",
+              "period": "lifetime",
+              "takenAt": "2026-11-10T10:53:47.113Z",
+              "previous": null,
+              "delta": null
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
