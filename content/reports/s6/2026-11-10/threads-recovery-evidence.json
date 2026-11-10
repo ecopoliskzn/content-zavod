@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "checkedAt": "2026-11-10T09:20:57.771Z",
+  "installedVersion": "d93b86b 20261110-091744",
+  "previousVersion": "73ca40f 20261108-074903",
+  "source": "Russian VPS; real Threads API; durable notification receipt; cron health and log metadata",
+  "before": {"commentsCronCount": 0, "threadsComments": 0, "activeIntakeMaterials": 0, "legacyJobs": 0, "v2Jobs": 0},
+  "collection": {"completedAt": "2026-11-10T09:19:04.290Z", "complete": true, "postPages": 1, "posts": 1, "replyPages": 1, "requests": 2, "visibleReplies": 4, "newComments": 2},
+  "notification": {"sent": 1, "failed": 0, "unknown": 0, "messageIds": [318], "topic": "Комментарии"},
+  "cron": {"schedule": "*/5 * * * *", "onlyThreads": true, "send": true, "foreignLinesPreserved": true, "observedRunAt": "2026-11-10T09:20:01.363Z", "logModifiedAt": "2026-11-10T09:20:01.367623188Z", "failed": 0, "apiSkippedWithinThrottle": true, "sentBatchesAfterRun": 1, "messageIdsAfterRun": [318]},
+  "privacy": {"commentTextsExportedToS0": false, "authorsExportedToS0": false, "secretsDisplayed": false},
+  "publicationsOrRepliesSent": 0,
+  "githubMainVerified": "6611e1e6ca99588b2089d8e56f2d6ecb09a82eda",
+  "githubPushPerformed": false
+}
