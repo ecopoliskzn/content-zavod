@@ -41,6 +41,7 @@ import {createIntakePump} from './bot/media-intake-pump.mjs';
 import {isRestored} from './queue/switch.mjs';
 import {attachTelegramOriginal} from './media/telegram-import.mjs';
 import {syncIntakeQueue} from './bot/media-intake-sync.mjs';
+import {handleIntakeUpload} from './media/intake-upload.mjs';
 async function deliverAndSync(){const app=mediaIntake.instance();const out=await deliverIntakeResults(app);syncIntakeQueue(app);return out;}
 
 const send = (res, status, body, headers = {}) => {
@@ -126,6 +127,7 @@ export function createHandler({intake=mediaIntake,deliver=deliverAndSync}={}) {
   return async function handler(req, res) {
     const url = new URL(req.url, "http://localhost");
     const p = url.pathname;
+    if(p.startsWith('/media/intake-upload/')){await handleIntakeUpload(req,res,{app:intake.instance()});return;}
 
     const mediaFile=publicMedia(p,req.method,req.headers);
     if(mediaFile) {res.writeHead(mediaFile.status,mediaFile.headers);if(mediaFile.stream)mediaFile.stream.on('error',()=>res.destroy()).pipe(res);else res.end(mediaFile.body);return;}

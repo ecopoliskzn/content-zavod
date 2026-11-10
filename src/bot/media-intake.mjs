@@ -5,6 +5,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {intakeStore,intakeLock} from './media-intake-store.mjs';
 import {targetSpec,targetKey,targetToken,targetEntryName,targetFiles,targetProblems,chooseTargets,recipientFor,channelTitle} from './media-intake-targets.mjs';
 import {evaluatePilot} from './media-intake-pilot.mjs';
+import {intakeFileProblem} from './media-intake-messages.mjs';
 
 const hash=x=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
 const safe=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -20,7 +21,7 @@ export function parseMaterialMoment(text){const value=String(text||'').trim();le
  return Number.isFinite(date.getTime())?date.toISOString():null;
 }
 
-export function createIntake({dir,config={},clock=Date.now,importFile,telegram,verifyResult,getQueueEntry,pilotEvidence}={}){
+export function createIntake({dir,config={},clock=Date.now,importFile,telegram,verifyResult,getQueueEntry,pilotEvidence,uploadLink}={}){
  if(!dir)throw Error('нужен закрытый каталог приёма');
  const store=intakeStore(dir);const now=()=>new Date(clock()).toISOString();
  const cfg=()=>store.read().config||(typeof config==='function'?config():config);
@@ -34,6 +35,10 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
  const sameContent=(r,j)=>r&&j&&r.mode==='submitted'&&(j.manifestRevision??j.input?.manifestRevision)===r.manifest_revision&&(j.input?.contentEpoch||0)===(r.content_epoch||0);
  const currentTarget=(r,j,key)=>Boolean(sameContent(r,j)&&(r.targetJobs?r.targetJobs[key]===j.id:r.revision===j.revision)&&j.targets.some(t=>targetKey(t)===key));
  const currentJob=(r,j)=>Boolean(sameContent(r,j)&&(r.revision===j.revision||j.scope==='target-rework'&&j.targets.length&&j.targets.every(t=>currentTarget(r,j,targetKey(t)))));
+ function syncDefaultRights(){if(cfg().rightsPolicy!=='staff-submission')return;const needed=Object.values(store.read().materials).filter(r=>allowed(cfg(),r.author)&&!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode)&&(r.rights.status!=='confirmed'||r.rights.manifestRevision!==r.manifest_revision||r.rights.textHash!==hash(r.brief)));if(!needed.length)return;
+  store.tx(s=>{for(const item of needed){const r=s.materials[item.id];r.rights={status:'confirmed',manifestRevision:r.manifest_revision,textRevision:r.brief_revision,textHash:hash(r.brief),basis:'operator-default',policy:'staff-submission-2026-11-10',at:now()};r.card.dirty=true;}});
+ }
+ function refreshCards(){syncDefaultRights();return store.tx(s=>{let refreshed=0;for(const r of Object.values(s.materials))if(r.card.messageId&&r.card.status==='sent'){if(!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode))refreshTargets(r);r.card.dirty=true;refreshed++;}return{ok:true,refreshed};});}
  function change(r,kind){
   if(r.queueSummary){r.previousQueueSummaries||=[];r.previousQueueSummaries.push({revision:r.revision,summary:r.queueSummary});delete r.queueSummary;r.workflowClosed=false;}
   r.revision++;r.content_epoch=(r.content_epoch||0)+1;r[kind+'_revision']=(r[kind+'_revision']||0)+1;r.updatedAt=now();r.card.dirty=true;r.confirmedRevision=null;if(r.mode==='submitted'){r.changedAfterTransfer=true;r.mode='draft';}
@@ -164,6 +169,7 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
    }return r;
   });}
  function prepare(id,rev,actor){
+  syncDefaultRights();
   const r=store.read().materials[id];if(!r||!actorCan(cfg(),r,actor)||r.revision!==rev)return{ok:false,reason:'stale_or_forbidden'};
   if(r.workflowClosed)return{ok:false,reason:'workflow_closed'};
   const repeated=Object.values(store.read().jobs).find(j=>j.materialId===id&&j.revision===rev);if(r.mode==='submitted'&&repeated)return r.questions.some(q=>q.blocking&&q.status!=='resolved')?{ok:false,reason:'question_open'}:{ok:true,duplicate:true,jobId:repeated.id};
@@ -199,6 +205,7 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
     else if(action.startsWith('omit-')){const qid=action.slice(5);store.tx(s=>{const m=s.materials[id],q=m.questions.find(q=>q.id===qid&&q.allowOmit);if(!q||q.status==='resolved')throw Error();q.status='resolved';q.resolution='omit';q.by=event.actor;change(m,'brief');});answer='Спорное утверждение исключается из подготовки';}
     else if(action==='reopen'&&['archive','discussion'].includes(r.mode)){edit(id,Number(ver),event.actor,{mode:'draft'});answer='Возвращено в подготовку задания; публикация не одобрена';}
     else if(action==='edit'){store.tx(s=>{s.materials[id].editRequested=true;s.materials[id].card.dirty=true;});answer='Ответьте на карточку: цель или описание. Площадки меняются кнопками.';}
+    else if(action==='refresh-link'){store.tx(s=>{s.materials[id].card.dirty=true;});answer='Ссылка обновляется в этой карточке';}
    }catch{answer='Действие не применено: откройте текущую карточку';}
   }}
   store.tx(s=>{s.events['cb:'+event.id].status='done';});if(telegram)await telegram('answerCallbackQuery',{callback_query_id:event.id,text:answer});
@@ -207,7 +214,7 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   if(!cfg().batchQuietMs||r.workflowClosed||['archive','cancelled','closed','discussion'].includes(r.mode))return{code:'inactive',text:''};
   if(r.files.some(f=>!f.excluded&&f.status==='failed'))return{code:'file-failed',text:'Не все файлы удалось сохранить. Сообщения сохранены; оператору нужно проверить загрузку. Повторно отправлять всю пачку не нужно.'};
   if(r.questions.some(q=>q.blocking&&q.status!=='resolved'))return{code:'question',text:'Нужно уточнение. Ответьте на вопрос в этой карточке; материал не потерян.'};
-  if(r.mode!=='submitted')return{code:'received',text:'Материалы получены. Проверьте состав и права на использование, затем нажмите «Подготовить так». Это ещё не одобрение публикации.'};
+  if(r.mode!=='submitted')return{code:'received',text:cfg().autoPrepare?'Материалы получены. После сохранения всех файлов передадим их редактору автоматически. Если понадобится уточнение, вопрос появится здесь. Публикация — только после «Одобрить».':cfg().rightsPolicy==='staff-submission'?'Материалы получены. Проверьте, что всё на месте, и нажмите «Подготовить так». Публикация будет только после отдельного «Одобрить».':'Материалы получены. Проверьте состав и права на использование, затем нажмите «Подготовить так». Это ещё не одобрение публикации.'};
   const jobs=Object.values(store.read().jobs).filter(j=>j.materialId===r.id&&currentJob(r,j)),claimed=jobs.find(j=>j.status==='claimed');
   if(claimed){const late=clock()-Date.parse(claimed.claim?.at)>15*60*1000;return{code:late?'editor-delayed':'editor-accepted',text:late?'Подготовка затянулась. Материалы сохранены; требуется проверка оператора. Повторная передача не запускается.':'Редактор принял материал в обработку. Готовые варианты появятся на согласовании; срок готовности зависит от объёма.'};}
   if(jobs.length&&jobs.every(j=>j.status==='completed'))return{code:'prepared',text:'Варианты подготовлены. Передаём их на отдельное согласование; без «Одобрить» публикации не будет.'};
@@ -215,39 +222,41 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   return{code:late?'dispatch-delayed':'editor-waiting',text:late?'Задержка передачи: редактор ещё не подтвердил приём. Материалы сохранены; оператору нужно проверить доставку.':'Ожидает приёма редактором. Контрольный срок подтверждения — 2 минуты; если он истечёт, здесь появится статус задержки.'};
  }
  function card(id){const r=store.read().materials[id];if(!r)throw Error('комплект не найден');const active=r.files.filter(f=>!f.excluded),verified=active.filter(f=>f.status==='verified');
+  const uploads=[];if(cfg().largeUploadEnabled&&uploadLink)for(const f of active.filter(f=>f.status==='failed'&&f.errorCode==='TOO_LARGE'))try{const url=uploadLink(r,f);if(url&&new URL(url).protocol==='https:')uploads.push({fileUniqueId:f.fileUniqueId,url});}catch{/* Сбой ссылки не скрывает уже принятый материал. */}
   const currentJob=Object.values(store.read().jobs).find(j=>j.materialId===id&&j.revision===r.revision),snapshots=r.queueSummary?.targets||Object.values(currentJob?.publicationState||{});
   const counts=r.queueSummary?{published_count:snapshots.filter(x=>x.stages?.P12?.result==='passed').length,cancelled_count:snapshots.filter(x=>x.status==='cancelled').length,deferred_count:0,unresolved_count:snapshots.filter(x=>!x.closed).length}:r.workflowSummary;
   const state=r.workflowClosed?'Итог':{draft:'Собираем материал',submitted:snapshots.some(x=>['approved','running','handed','published','failed','expired'].includes(x.status))?'Выпуск':snapshots.some(x=>['review','rework'].includes(x.status))?'На согласовании':currentJob?.claim?'В подготовке':'Ожидает подготовки',discussion:'Только обсуждение',archive:'В архиве; резервирование не подтверждено',cancelled:'Отменено',closed:'Итог'}[r.mode];
   const titles={telegram:'Telegram',vk:'ВКонтакте',instagram:'Instagram',threads:'Threads',dzen:'Дзен',youtube:'YouTube',rutube:'Rutube'},formats={album:'альбом',photopost:'пост с фото','photo-post':'пост с фото',carousel:'карусель',post:'пост',video:'видео'},goals={'show-object':'показать объект',object:'показать объект',product:'объяснить продукт',other:'другая цель'};
   const lines=[`<b>${safe(state)}</b>`,...(cfg().batchQuietMs?[`Принято сообщений: ${r.sources.length}. ${safe(receiptProgress(r).text)}`]:[]),`Сохранено ${verified.length} из ${active.length} файлов.`,r.changedAfterTransfer?'Состав изменён после передачи. Нужна новая версия задания.':'',`Предложение: ${safe(goals[r.goal]||r.goal||'предложить подачу')}.`,
-   `Подготовим: ${r.targets.map(t=>{const problems=targetProblems(t,selectedFiles(r,t));return safe(`${titles[t.channel]||t.channel} — ${targetSpec(t)?.label||formats[t.format]||t.format} (${t.delivery_mode==='manual'?'ручная выкладка':'автоматическая публикация'})${problems.length?'; пока нельзя: '+problems.map(p=>p.reason).join(', '):''}`);}).join('; ')||'нет подходящих выбранных форматов'}.`,
+   `Подготовим: ${r.targets.map(t=>{const problems=targetProblems(t,selectedFiles(r,t));return safe(`${titles[t.channel]||t.channel} — ${targetSpec(t)?.label||formats[t.format]||t.format} (${t.delivery_mode==='manual'?'ручная выкладка':'автоматическая публикация'})${problems.length?'; пока нельзя: '+problems.map(p=>p.reason).join(', '):''}`);}).join('; ')||(active.some(f=>f.status!=='verified')?'площадки выберем после загрузки файла':'оператору нужно настроить подходящую площадку')}.`,
    ...catalog().filter(t=>t.readiness!=='passed'&&!r.targets.some(x=>targetKey(x)===targetKey(t))).map(t=>`${safe(channelTitle(t.channel))}: ${safe(t.reason||'путь ещё не проверен')}.`),r.brief?`Описание: ${safe(r.brief.slice(0,1400))}`:'Нужен ответ: опишите, что важно показать. Ответьте на эту карточку.',
-   r.rights.status==='confirmed'?'Права на текущий состав подтверждены.':active.length?'Нужен ответ: подтвердите право публично использовать текущие файлы. Людей/музыку при необходимости проверит редактор; дети в кадре запрещены.':'Нужен ответ: подтвердите право публично использовать этот текст.',
-   active.some(f=>f.mime?.startsWith('video/'))&&!r.targets.some(t=>['video','image-or-video'].includes(targetSpec(t)?.media))?'Выберите совместимую видеоверсию и проверенный путь доставки.':'',
+   cfg().rightsPolicy==='staff-submission'?'':r.rights.status==='confirmed'?'Права на текущий состав подтверждены.':active.length?'Нужен ответ: подтвердите право публично использовать текущие файлы. Людей/музыку при необходимости проверит редактор; дети в кадре запрещены.':'Нужен ответ: подтвердите право публично использовать этот текст.',
+   active.some(f=>f.status==='verified'&&f.mime?.startsWith('video/'))&&!r.targets.some(t=>['video','image-or-video'].includes(targetSpec(t)?.media))?'Для этого видео ещё не настроена площадка. Оператор проверит подключение; пересылать ролик заново не нужно.':'',
    r.timingQuestion?'Ответьте на эту карточку: ДД.ММ.ГГГГ ЧЧ:ММ по Москве либо UTC с Z.':'',r.timingError||'',
    snapshots.some(t=>t.date&&t.time)?`Сроки по штатной очереди: ${snapshots.filter(t=>t.date&&t.time).map(t=>safe(`${titles[t.channel]||t.channel} — ${t.date} ${t.time} МСК${t.timing_mode==='not-before'?' (не раньше)':''}`)).join('; ')}.`:r.timing.mode==='choose_later'?'Выпуск отложен до выбора времени; «Одобрить» не отменяет это условие.':r.timing.at?`Выпуск ${r.timing.mode==='not_before'?'не раньше':'точно'} ${safe(new Date(r.timing.at).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'}))} (Москва), после отдельного «Одобрить».`:'Выпуск: после отдельного «Одобрить» готового варианта каждой площадки.',
-   r.limitBlocked?'Есть непринятые файлы: лимит комплекта. Нужен координатор, чтобы явно разделить комплект; передача остановлена.':'',
-   r.textBlocked?'Описание превышает предел пилота. Нужен сокращённый ответ или разделение задания.':'',
-   r.editRequested?'Ответьте на эту карточку новым описанием.':'',...r.questions.filter(q=>q.status!=='resolved').map(q=>`Нужен ваш ответ: ${safe(q.text)}${q.status==='answered'?' Ответ получен; редактор проверяет источник.':''}`),...r.files.filter(f=>f.status==='failed'&&!f.excluded).map(f=>`Не сохранён файл: ${safe(f.errorCode)}. Для большого видео — закрытая передача оператором в медиатеку.`),
+   r.limitBlocked?`В одной пачке можно принять до ${cfg().limits.maxFiles} файлов. Часть файлов пока не добавлена. Следующий шаг: разделите их с оператором на несколько материалов.`:'',
+   r.textBlocked?`Описание длиннее ${cfg().limits.maxText} знаков. Следующий шаг: сократите его или разделите с оператором на несколько материалов.`:'',
+   r.editRequested?'Ответьте на эту карточку новым описанием.':'',...r.questions.filter(q=>q.status!=='resolved').map(q=>`Нужен ваш ответ: ${safe(q.text)}${q.status==='answered'?' Ответ получен; редактор проверяет источник.':''}`),...r.files.filter(f=>f.status==='failed'&&!f.excluded).map(f=>safe(intakeFileProblem(f,{maxBytes:cfg().limits.maxBytes,uploadAvailable:uploads.some(u=>u.fileUniqueId===f.fileUniqueId)}))),
    ...snapshots.map(x=>`${titles[x.channel]||x.channel}: ${x.publishedVerified||x.stages?.P12?.result==='passed'?'опубликовано':({review:'ждёт одобрения',rework:'нужна правка',approved:'одобрено',running:'отправляется',handed:'ожидает ручной выкладки',failed:'нужен технический владелец',cancelled:'отменено',expired:'срок истёк',published:'выход ещё не проверен'})[x.status]||'ожидает передачи'}${(x.publishedVerified||x.stages?.P12?.result==='passed')&&x.link?' — '+safe(x.link):''}.`),
    counts?`Подтверждённо опубликовано: ${counts.published_count}; отменено: ${counts.cancelled_count}; отложено: ${counts.deferred_count}; открыто: ${counts.unresolved_count}.`:'',
    ...(r.previousQueueSummaries||[]).flatMap(p=>p.summary.targets.filter(t=>t.link&&t.stages?.P12?.result==='passed').map(t=>`Предыдущая версия, ${titles[t.channel]||t.channel}: ${safe(t.link)}`)) ];
   const data=action=>`mi:${r.id}:${r.revision}:${action}`;
-  const buttons=r.workflowClosed||['cancelled','closed'].includes(r.mode)?[]:['archive','discussion'].includes(r.mode)?[[{text:'Вернуть к заданию',callback_data:data('reopen')}]]:[[{text:'Подготовить так',callback_data:data('prepare')},{text:'Изменить задание',callback_data:data('edit')}],
-   [{text:'Только обсудить',callback_data:data('discuss')},{text:'В архив',callback_data:data('archive')}],...(r.rights.status!=='confirmed'?[[{text:'Право использования подтверждаю',callback_data:data('rights')}]]:[]),
+   const buttons=r.workflowClosed||['cancelled','closed'].includes(r.mode)?[]:['archive','discussion'].includes(r.mode)?[[{text:'Вернуть к заданию',callback_data:data('reopen')}]]:[[...(cfg().autoPrepare&&r.mode==='submitted'?[]:[{text:'Подготовить так',callback_data:data('prepare')}]),{text:'Изменить задание',callback_data:data('edit')}],
+   [{text:'Только обсудить',callback_data:data('discuss')},{text:'В архив',callback_data:data('archive')}],...(cfg().rightsPolicy!=='staff-submission'&&r.rights.status!=='confirmed'?[[{text:'Право использования подтверждаю',callback_data:data('rights')}]]:[]),
    ...r.questions.filter(q=>q.status!=='resolved'&&q.allowOmit).map(q=>[{text:'Не использовать спорное утверждение',callback_data:data('omit-'+q.id)}]),
    ...(r.editRequested?[[{text:'Показать объект',callback_data:data('object')},{text:'Объяснить продукт',callback_data:data('product')},{text:'Другое',callback_data:data('other')}],
     ...catalog().map(t=>[{text:(r.targets.some(x=>targetKey(x)===targetKey(t))?'✓ ':'')+channelTitle(t.channel)+' — '+(targetSpec(t)?.label||t.format),callback_data:data('fmt-'+targetToken(t))}]),
     ...r.targets.filter(t=>(targetSpec(t)?.max||Infinity)<targetFiles(t,r.files).length||r.targetAssets?.[targetKey(t)]).flatMap(t=>r.files.map((f,i)=>[{text:(selectedFiles(r,t).includes(f)?'✓ ':'')+(targetSpec(t)?.label||t.format)+': файл '+(i+1),callback_data:data('asset-'+targetToken(t)+'-'+i)}])),
     [{text:'После Одобрить сразу',callback_data:data('time-now')},{text:'Время позже',callback_data:data('time-later')}],
     [{text:'В точное время',callback_data:data('time-at')},{text:'Не раньше',callback_data:data('time-not-before')}]]:[]),[{text:'Отменить',callback_data:data('cancel')}]];
+  if(uploads.length){buttons.unshift(...uploads.map((u,i)=>[{text:'Загрузить оригинал'+(uploads.length>1?' '+(i+1):''),url:u.url}]));buttons.push([{text:'Обновить ссылку',callback_data:data('refresh-link')}]);}
   return{text:lines.filter(Boolean).join('\n\n').slice(0,3900),reply_markup:{inline_keyboard:buttons}};
  }
  async function flush(){
   // Один процесс импортирует/отправляет; при аварии неизвестная отправка не повторяется.
   if(!cfg().enabled)return{disabled:true};
   const unlock=intakeLock(store.dir+'/worker.lock');if(!unlock)return{busy:true};
-  try{events();await callbacks();
+  try{events();syncDefaultRights();await callbacks();
    for(const r of Object.values(store.read().materials))for(const f of r.files){if(f.status!=='pending'||f.excluded)continue;
     let result,errorCode;
     try{if(f.size>(cfg().limits?.maxBytes||0))throw Object.assign(Error(),{code:'TOO_LARGE'});if(!importFile)throw Object.assign(Error(),{code:'IMPORT_UNAVAILABLE'});
@@ -255,6 +264,11 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
      if(!result?.verified||!result.readable||!result.mediaId||!/^[a-f0-9]{64}$/.test(result.sha256)||!(result.bytes>0)||result.bytes>cfg().limits.maxBytes||!['image/jpeg','image/png','image/webp','video/mp4','video/quicktime'].includes(result.mime))throw Object.assign(Error(),{code:'INVALID_MEDIA'});
     }catch(e){errorCode=ERRORS.has(e.code)?e.code:'INVALID_MEDIA';}
     store.tx(s=>{const m=s.materials[r.id],item=m.files.find(x=>x.fileUniqueId===f.fileUniqueId);Object.assign(item,errorCode?{status:'failed',errorCode}:{status:'verified',mediaId:result.mediaId,sha256:result.sha256,bytes:result.bytes,mime:result.mime});if(!errorCode)refreshTargets(m);m.card.dirty=true;m.evidence.push(receipt('file',m,errorCode?'failed':'passed',errorCode||result.mediaId));});
+   }
+   if(cfg().autoPrepare&&cfg().rightsPolicy==='staff-submission')for(const r of Object.values(store.read().materials)){
+    if(r.mode!=='draft'||r.workflowClosed||r.changedAfterTransfer||r.evidence.some(e=>e.type==='brief-confirmation')||clock()-(r.lastIncomingAt||0)<(cfg().quietMs||0)||r.files.some(f=>!f.excluded&&f.status!=='verified'))continue;
+    if(!r.brief.trim()&&r.files.some(f=>!f.excluded&&f.status==='verified'))edit(r.id,r.revision,r.author,{brief:'Предложить подачу по присланным материалам. Использовать только то, что видно в кадре, и подтверждённые источники; не придумывать объект, даты, показатели или обещания.'});
+    const current=store.read().materials[r.id];prepare(current.id,current.revision,current.author);
    }
    if(cfg().batchQuietMs){const refresh=Object.values(store.read().materials).filter(r=>!['archive','cancelled','closed','discussion'].includes(r.mode)&&!r.workflowClosed&&!r.card.dirty&&r.card.receiptStage!==receiptProgress(r).code).map(r=>r.id);if(refresh.length)store.tx(s=>{for(const id of refresh)s.materials[id].card.dirty=true;});}
    for(const r of Object.values(store.read().materials)){if(!telegram||!r.card.dirty||['sending','unknown','failed'].includes(r.card.status)||(r.card.retryAt||0)>clock()||clock()-(r.lastIncomingAt||0)<(cfg().quietMs||0))continue;
@@ -350,5 +364,5 @@ export function createIntake({dir,config={},clock=Date.now,importFile,telegram,v
   if(!j||j.claim?.owner!==owner||j.claim.token!==token)return{ok:false,reason:'claim'};if(j.status!=='claimed')return{ok:false,reason:'status'};j.status=currentJob(s.materials[j.materialId],j)?'queued':'superseded';j.previousClaim=j.claim;j.claim=null;return{ok:true,status:j.status};});}
  function retry(id,revision,actor){return store.tx(s=>{const r=s.materials[id];if(!r||r.revision!==revision||!actorCan(cfg(),r,actor))throw Error('нет права или версия устарела');for(const f of r.files)if(f.status==='failed')f.status='pending';return{ok:true};});}
  return{ingest,flush,handleUpdate:async u=>{const r=ingest(u);await flush();return r;},list:()=>Object.values(store.read().materials).map(r=>({id:r.id,revision:r.revision,mode:r.mode,files:r.files.length})),show:id=>clone(store.read().materials[id]),
-  readiness,card,edit,prepare,jobs:()=>Object.values(store.read().jobs).map(clone),claim,result,question,facts,context,continuations,isCurrentTarget,queueFeedback,release,retry,recoverTopicRootEvents,store};
+  readiness,card,edit,prepare,jobs:()=>Object.values(store.read().jobs).map(clone),claim,result,question,facts,context,continuations,isCurrentTarget,queueFeedback,release,retry,recoverTopicRootEvents,refreshCards,store};
 }

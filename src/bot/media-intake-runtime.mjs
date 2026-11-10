@@ -8,6 +8,7 @@ import {verifyIntakeResult,entryFromIntakeVariant} from './media-intake-delivery
 import {contentHash} from '../queue/format.mjs';
 import {get as getQueueEntry} from '../queue/store.mjs';
 import {targetEntryName,targetKey,validateTarget} from './media-intake-targets.mjs';
+import {intakeUploadLink} from '../media/intake-upload.mjs';
 export {verifyIntakeResult};
 
 const dir=()=>dataPath('media-intake');
@@ -17,7 +18,7 @@ function currentConfig(){if(!existsSync(configFile()))return{enabled:false};try{
 export const isEnabled=()=>currentConfig().enabled===true;
 export function instance(){
  if(!singleton)singleton=createIntake({dir:dir(),config:currentConfig,getQueueEntry,pilotEvidence:()=>({version:readFileSync(new URL('../../VERSION',import.meta.url),'utf8').trim(),evidence:JSON.parse(readFileSync(dataPath('media-intake','deployment-pilot-evidence.json'),'utf8'))}),
-  importFile:async a=>{const {importTelegramFile}=await import('../media/telegram-import.mjs');return importTelegramFile(a);},
+  uploadLink:(r,f)=>intakeUploadLink(r,f),importFile:async a=>{const {importTelegramFile}=await import('../media/telegram-import.mjs');return importTelegramFile(a);},
   telegram:async(method,body)=>{const res=await tg(method,body,{retries:0});return{ok:res.kind==='ok'&&res.data?.ok===true,messageId:res.result?.message_id,uncertain:res.kind==='network'||res.status>=500};},verifyResult:verifyIntakeResult});
  return singleton;
 }
@@ -61,6 +62,7 @@ export async function admin(command,args={},actor='operator'){
   case 'intake-info':
   case 'intake-status':data={enabled:currentConfig().enabled||false,materials:app.list().length,jobs:app.jobs().length,observations:app.store.read().observations};break;
   case 'intake-recover-topic-root':data=app.recoverTopicRootEvents();break;
+  case 'intake-refresh-cards':data=app.refreshCards();break;
   case 'intake-health':{
    const s=app.store.read(),active=Object.values(s.materials).filter(r=>!r.workflowClosed&&!['archive','cancelled','closed'].includes(r.mode));
    data={enabled:currentConfig().enabled===true,topicId:currentConfig().topicId,handoffMode:currentConfig().handoffMode,activeMaterials:active.length,

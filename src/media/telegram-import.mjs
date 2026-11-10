@@ -17,6 +17,7 @@ function assetType(file,allowVideo){
  if(allowVideo&&n>=12&&b.toString('ascii',4,8)==='ftyp')return b.toString('ascii',8,12)==='qt  '?'.mov':'.mp4';
  throw failure('telegram_photo_type');
 }
+export {assetType as telegramAssetType};
 export async function decodePhoto(file){
  try{
   const probe=await exec('ffprobe',['-v','error','-protocol_whitelist','file,pipe','-select_streams','v:0','-show_entries','stream=width,height','-of','json',file],{timeout:10000,maxBuffer:16384,windowsHide:true});
