@@ -6,6 +6,11 @@ const {importTelegramPhoto,attachTelegramOriginal,importTelegramFile}=await impo
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=','base64');
 const input={fileId:'photo_test',bytes:png.length,material:'case:tg-test',source:'telegram:message:1',variant:'message-1'};
 const opts={fetcher:async()=>new Response(png,{headers:{'content-length':String(png.length)}}),decode:async()=>({width:1,height:1}),space:()=>({freeBytes:2*1024**3,quotaBytes:512*1024**2,bytes:0})};
+test('сбой сети и недостаток места сохраняют свою причину, а не обвиняют исходный файл',async()=>{
+ const asset={fileId:input.fileId,size:input.bytes,kind:'photo',material:input.material,source:input.source,variant:input.variant};
+ await assert.rejects(()=>importTelegramFile(asset,{...opts,fetcher:async()=>{throw Error('simulated network');}}),e=>e.code==='NETWORK');
+ await assert.rejects(()=>importTelegramFile(asset,{...opts,space:()=>({freeBytes:0,quotaBytes:100,bytes:0})}),e=>e.code==='QUOTA');
+});
 test('файл импортируется закрытым original и повтор не создаёт вторую версию',async()=>{
  const a=await importTelegramPhoto(input,opts),b=await importTelegramPhoto(input,opts);assert.equal(a.mediaId,b.mediaId);assert.equal(a.role,'original');assert.equal(a.delivery,null);assert.equal(a.mime,'image/png');assert.equal(a.bytes,png.length);
  assert.deepEqual(readFileSync(path.join(dir,'media-library','blobs',a.sha256)),png);assert.equal(readdirSync(path.join(dir,'telegram-staging')).length,0);

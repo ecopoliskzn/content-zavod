@@ -70,8 +70,8 @@ export async function importTelegramFile({fileId,size,kind,material,source,varia
   const row=await importTelegramAsset({fileId,bytes:size,material,source,variant},{...options,allowVideo:kind!=='photo'});
   return {...row,verified:true,readable:true};
  }catch(error){
-  const code=/^telegram_photo_[a-z]+$/.test(error?.code||'')?error.code:'telegram_photo_import';
-  throw failure(code);
+  const codes={telegram_photo_limit:'TOO_LARGE',telegram_photo_space:'QUOTA',telegram_photo_network:'NETWORK',telegram_photo_download:'DOWNLOAD_UNAVAILABLE',telegram_photo_busy:'NETWORK',telegram_photo_type:'UNSUPPORTED',telegram_photo_relay:'IMPORT_UNAVAILABLE'};
+  throw failure(codes[error?.code]||'INVALID_MEDIA');
  }
 }
 /** Привязка явно доставленного оператором оригинала: только закрытый blob этой задачи. */

@@ -100,7 +100,7 @@ test('архив/отмена/обсуждение не дают API prepare и 
 });
 test('неизвестный размер передаётся импорту как undefined; переполнение очереди и файл-лимит видны',async()=>{
  let size='not-called';const f=fixture({importFile:async a=>{size=a.size;throw Object.assign(Error(),{code:'QUOTA'});}});const p=photo();delete p.message.photo[0].file_size;await f.app.handleUpdate(p);assert.equal(size,undefined);
- const q=fixture({config:{...config,limits:{...config.limits,maxPending:1,maxFiles:1}}});await q.app.handleUpdate(photo());assert.equal(q.app.ingest(photo(7,'new-album')).blocked,true);await q.app.handleUpdate(photo(2));assert.match(q.app.card(q.app.list()[0].id).text,/лимит комплекта/);
+ const q=fixture({config:{...config,limits:{...config.limits,maxPending:1,maxFiles:1}}});await q.app.handleUpdate(photo());assert.equal(q.app.ingest(photo(7,'new-album')).blocked,true);await q.app.handleUpdate(photo(2));assert.match(q.app.card(q.app.list()[0].id).text,/В одной пачке можно принять до 1/);assert.match(q.app.card(q.app.list()[0].id).text,/разделите.*несколько материалов/);
 });
 test('одного LLM JSON без проверяемого артефакта недостаточно для P6',async()=>{
  const f=fixture({verifyResult:undefined}),id=await ready(f),j=f.app.jobs()[0],owner=f.app.claim(j.id,'S1');const result={inputHash:j.inputHash,variants:j.targets.map(t=>({channel:t.channel,format:t.format,text:'Текст',mediaIds:['med_u1']}))};assert.equal(f.app.result(j.id,'S1',owner.token,result).reason,'artifact_verification');assert.equal(f.app.readiness(id).P6.result,'blocked');

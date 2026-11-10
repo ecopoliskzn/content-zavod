@@ -17,5 +17,5 @@ test('approved queue → move сохраняет contentHash и ранее да�
  await store.transition(e.id,'review');await store.transition(e.id,'approved',{approval:{at:'2026-11-08T07:00:00Z'}});const before=store.get(e.id);assert.equal((await execute('move',{ref:e.id,date:'2030-06-05',time:'13:00'},'operator')).code,0);const after=store.get(e.id);assert.equal(after.status,'approved');assert.equal(after.contentHash,before.contentHash);assert.equal(after.approval.at,before.approval.at);
 });
 test('закрытое видео не превращается в заведомо неверный фото-job',async()=>{
- const {app,id}=await material('video/mp4');assert.equal(app.prepare(id,app.show(id).revision,'11').ok,false);assert.ok(app.readiness(id).P4.blockers.some(b=>b.reason_code==='media_target_mismatch'));assert.match(app.card(id).text,/видеоверсию|Видеоверсию/);assert.equal(app.jobs().length,0);
+ const {app,id}=await material('video/mp4');assert.equal(app.prepare(id,app.show(id).revision,'11').ok,false);assert.ok(app.readiness(id).P4.blockers.some(b=>b.reason_code==='media_target_mismatch'));assert.match(app.card(id).text,/Для этого видео ещё не настроена площадка/);assert.equal(app.jobs().length,0);
 });
