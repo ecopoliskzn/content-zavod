@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "checkedBy": "S0",
+  "date": "2026-11-10",
+  "serverVersion": "88de626 20261110-095733",
+  "serverHealth": 200,
+  "cleanCommittedTests": {"passed": 515, "failed": 0},
+  "workingTreeTests": {"passed": 525, "failed": 0},
+  "botTests": {"passed": 143, "failed": 0},
+  "doctor": {"exitCode": 1, "missingLocalSettings": 6, "legalWarnings": 5, "liveCalls": false},
+  "vault": {"notes": 615, "links": 2737, "brokenLinks": 0},
+  "workerVersion": "16d3183b-5fa4-488a-8a24-f760da31f5d9",
+  "workerOrigin": "https://ecopolisgo.ru",
+  "nonexistentUnapprovedMedia": {"originStatus": 404, "relayStatus": 404},
+  "threads": {"cronPreserved": true, "sentDigests": 1, "digestMessageId": 318, "skippedComments": 2},
+  "intake": {"activeMaterials": 0, "legacyJobs": 0, "v2Jobs": 0},
+  "editorControl": {"handshake": true, "existingUuidRead": true, "savedModelRead": true, "resumeAccepted": false, "rpcCode": -32600, "reason": "already has an active writer", "generationRequested": false, "writerTakeover": false, "eventResent": false},
+  "activation": {"newHostEnabled": false, "newWindowsTaskCreated": false, "oldHeartbeatPaused": false, "dailyGithubChanged": false, "freshP0Accepted": false, "realEditorialAcceptanceProven": false},
+  "deployment": {"standardScript": true, "cleanCheckout": true, "plannedServiceRestarts": 1, "clientDataChanged": false, "approvalBypassed": false},
+  "limits": ["Новый положительный approved-media путь проверен интеграционными тестами, но новая клиентская публикация для проверки не создавалась.", "Приватная загрузка нового intake YouTube не объявляется проверенной боем на основании тестов.", "Полный режим A остаётся не принят до безопасного resume существующего владельца, реального consumer ACK и свежего P0-акта."]
+}
