@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,readFileSync} from 'node:fs';import {tmpdir} from 'node:os';import path from 'node:path';import {claimIntakeJob} from '../src/bot/media-intake-cli.mjs';
-import {refreshClaimContext,annotateClaimFacts,submitClaimResult,acceptDispatchEnvelope} from '../src/bot/media-intake-cli.mjs';import {createIntake} from '../src/bot/media-intake.mjs';
+import {refreshClaimContext,annotateClaimFacts,submitClaimResult,acceptDispatchEnvelope,claimCurrentIntakeJob} from '../src/bot/media-intake-cli.mjs';import {createIntake} from '../src/bot/media-intake.mjs';
 import {writeFileSync} from 'node:fs';
 test('accept передаёт fencing identity серверу до claim; устаревший конверт не принимает задание',async()=>{
  const folder=mkdtempSync(path.join(tmpdir(),'envelope-fence-')),envelope={schema:1,dispatchId:'a'.repeat(64),requestId:'a'.repeat(32),jobId:'b'.repeat(16),materialId:'c'.repeat(16),revision:1,inputHash:'d'.repeat(64),protocolVersion:2,manifestRevision:1,owner:'S1'};let invoked=0;
@@ -15,6 +15,18 @@ test('result привязывает прочитанные claims к закры�
  await submitClaimResult(file,value,{invoke});assert.deepEqual(submitted.variants[0].entry.facts,[fact]);assert.equal(submitted.variants[0].factRefs,undefined);
  await assert.rejects(()=>submitClaimResult(file,{...value,inputHash:'c'.repeat(64)},{invoke}));
  await assert.rejects(()=>submitClaimResult(file,{...value,variants:[{...value.variants[0],factRefs:[]}]},{invoke}));
+});
+test('result success с потерей ответа повторяется точным intent без context completed и второго эффекта',async()=>{
+ const folder=mkdtempSync(path.join(tmpdir(),'result-recovery-')),file=path.join(folder,'claim.json'),job={id:'a'.repeat(16),inputHash:'b'.repeat(64),input:{facts:[]}};writeFileSync(file,JSON.stringify({schema:1,owner:'S1',token:'closed',job}));
+ let completed=false,effects=0,contexts=0;
+ const invoke=async(cmd,a)=>{if(cmd==='intake-context'){contexts++;assert.equal(completed,false);return{ok:true,revision:1,job};}if(completed)return{ok:true,duplicate:true};completed=true;effects++;throw Error('response lost');};
+ const value={inputHash:job.inputHash,variants:[{channel:'telegram',format:'post',factRefs:[],entry:{text:'Синтетический текст.'}}]};
+ await assert.rejects(()=>submitClaimResult(file,value,{invoke}));assert.equal((await submitClaimResult(file,value,{invoke})).duplicate,true);assert.equal(contexts,1);assert.equal(effects,1);
+ await assert.rejects(()=>submitClaimResult(file,{...value,variants:[]},{invoke}));assert.equal(effects,1);
+});
+test('ручной B claim использует свежую metadata и expected, не отключает fencing',async()=>{
+ const folder=mkdtempSync(path.join(tmpdir(),'manual-fenced-')),id='a'.repeat(16),job={id,materialId:'b'.repeat(16),revision:2,inputHash:'c'.repeat(64),protocolVersion:2,manifestRevision:1,recipient:'S1'},calls=[];
+ await claimCurrentIntakeJob(id,'S1',{folder,invoke:async(cmd,args)=>{calls.push(cmd);if(cmd==='intake-jobs')return[job];assert.equal(args.expected.inputHash,job.inputHash);assert.equal(args.expected.revision,2);return{ok:true,token:'closed',job};}});assert.deepEqual(calls,['intake-jobs','intake-claim']);
 });
 test('dispatcher requestId сохраняется до сети и иной dispatch не получает старую квитанцию',async()=>{
  const folder=mkdtempSync(path.join(tmpdir(),'dispatch-claim-')),id='b'.repeat(16),requestId='c'.repeat(32),seen=[];

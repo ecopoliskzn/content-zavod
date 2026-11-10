@@ -28,7 +28,8 @@ test('CLI claim → question → ответ → context → facts → result →
  const queue=new Map(),executeQueue=async(cmd,args)=>{if(cmd==='add'){const e=normalize(args.entries);queue.set(e.id,{...e,status:'draft',contentHash:contentHash(e)});}else if(cmd==='submit'){const e=queue.get(args.ref);e.status='review';e.approval={card:{messageId:700},cardHash:e.contentHash,preview:{complete:true}};}return{code:0};};
  const server=createServer(async(req,res)=>{try{
   assert.equal(req.headers.authorization,'Bearer synthetic-only');const chunks=[];for await(const chunk of req)chunks.push(chunk);const {cmd,args}=JSON.parse(Buffer.concat(chunks));let data;
-  if(cmd==='intake-claim')data=app.claim(args.id,args.owner,args.requestId);
+  if(cmd==='intake-jobs')data=app.jobs().map(({id,materialId,revision,inputHash,status,recipient,protocolVersion,manifestRevision})=>({id,materialId,revision,inputHash,status,recipient,protocolVersion,manifestRevision}));
+  else if(cmd==='intake-claim'){assert.ok(args.expected);data=app.claim(args.id,args.owner,args.requestId,args.expected);}
   else if(cmd==='intake-question')data=app.question(args.id,args.owner,args.token,args.question);
   else if(cmd==='intake-context')data=app.context(args.id,args.owner,args.token);
   else if(cmd==='intake-facts')data=app.facts(args.id,args.revision,args.jobId,args.owner,args.token,args.facts);

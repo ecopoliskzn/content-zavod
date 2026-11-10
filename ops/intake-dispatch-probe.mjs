@@ -2,21 +2,23 @@
 // Тот же core claim/context/question обслуживается только на loopback с отдельным секретом.
 // Production queue, конфигурация, роли, материалы темы309 и карточка312 не затрагиваются.
 import {createServer} from 'node:http';import {randomBytes} from 'node:crypto';import {fileURLToPath} from 'node:url';import path from 'node:path';import {existsSync,readFileSync,mkdirSync} from 'node:fs';
-const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),folder=path.join(root,'data','intake-dispatch-probe');
+const role=process.argv.includes('--probe-role=S2')?'S2':'S1';
+const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),folder=path.join(root,'data',role==='S2'?'intake-dispatch-probe-s2':'intake-dispatch-probe');
 process.env.ZAVOD_ENV_FILE=path.join(folder,'absent.env');process.env.DATA_DIR=path.join(folder,'consumer-data');
 const read=(file,fallback)=>existsSync(file)?JSON.parse(readFileSync(file,'utf8')):fallback;
 export async function serveProbe(){
  const {createIntake}=await import('../src/bot/media-intake.mjs'),{durableJson}=await import('./intake-dispatch-host.mjs');
  mkdirSync(folder,{recursive:true,mode:0o700});const apiToken=randomBytes(32).toString('hex'),entries={};
  const config={enabled:true,groupId:'-100123',topicId:9,authors:['11'],coordinators:['22'],approvers:['33'],handoffMode:'A',policyVersion:'transport-probe-only',quietMs:0,targets:[{channel:'telegram',account_ref:'synthetic',format:'text',delivery_mode:'auto',readiness:'passed',verified_at:new Date().toISOString()}],limits:{maxFiles:10,maxBytes:100000,maxPending:20,maxText:4000,maxJobInput:24000,maxJobOutput:24000,maxCalls:4}};
- const app=createIntake({dir:path.join(folder,'server-state'),config,telegram:async()=>({ok:true,messageId:777}),verifyResult:()=>true,getQueueEntry:id=>entries[id]});
- if(!app.jobs().length){await app.handleUpdate({update_id:1,message:{message_id:1,chat:{id:-100123},message_thread_id:9,from:{id:11},text:'Техническая проверка передачи задания. Не материал клиента.'}});const m=app.list()[0];app.edit(m.id,m.revision,'11',{rights:true});app.prepare(m.id,app.show(m.id).revision,'11');}
+ if(role==='S2')config.targets=[{...config.targets[0],channel:'youtube',format:'video'}];
+ const app=createIntake({dir:path.join(folder,'server-state'),config,telegram:async()=>({ok:true,messageId:777}),verifyResult:()=>true,getQueueEntry:id=>entries[id],importFile:async()=>({mediaId:'med_'+'e'.repeat(32),sha256:'f'.repeat(64),bytes:1,mime:'video/mp4',verified:true,readable:true})});
+ if(!app.jobs().length){const common={message_id:1,chat:{id:-100123},message_thread_id:9,from:{id:11}};await app.handleUpdate({update_id:1,message:role==='S2'?{...common,caption:'Техническая проверка маршрута S2. Синтетические метаданные, самого ролика нет.',video:{file_id:'synthetic',file_unique_id:'synthetic-video',file_size:1}}:{...common,text:'Техническая проверка передачи задания. Не материал клиента.'}});const m=app.list()[0];app.edit(m.id,m.revision,'11',{rights:true});app.prepare(m.id,app.show(m.id).revision,'11');}
  const server=createServer(async(req,res)=>{
   const reply=(status,data)=>{res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(data));};
   if(req.method!=='POST'||req.url!=='/admin/queue'||req.headers.authorization!=='Bearer '+apiToken){reply(403,{code:1});return;}
   let body='';for await(const chunk of req){body+=chunk;if(body.length>65536){reply(413,{code:1});return;}}
   try{const {cmd,args:a={}}=JSON.parse(body);let data;
-   if(cmd==='intake-jobs')data=app.jobs().map(j=>({id:j.id,materialId:j.materialId,revision:j.revision,inputHash:j.inputHash,status:j.status,recipient:j.recipient,protocolVersion:j.protocolVersion,manifestRevision:j.manifestRevision,claimFencingVersion:1,acceptedClaimsComplete:j.acceptedClaimsComplete===true,acceptedClaims:j.acceptedClaims||[],continuation:app.continuations().find(e=>e.jobId===j.id)||null}));
+   if(cmd==='intake-jobs')data=app.jobs().map(j=>({id:j.id,materialId:j.materialId,revision:j.revision,inputHash:j.inputHash,status:j.status,current:j.targets.length>0&&j.targets.every(t=>app.isCurrentTarget(j.id,`${t.channel}:${t.format}`)),recipient:j.recipient,protocolVersion:j.protocolVersion,manifestRevision:j.manifestRevision,claimFencingVersion:1,acceptedClaimsComplete:j.acceptedClaimsComplete===true,acceptedClaims:j.acceptedClaims||[],continuation:app.continuations().find(e=>e.jobId===j.id)||null}));
    else if(cmd==='intake-claim')data=app.claim(a.id,a.owner,a.requestId,a.expected);
    else if(cmd==='intake-context')data=app.context(a.id,a.owner,a.token);
    else if(cmd==='intake-question')data=app.question(a.id,a.owner,a.token,a.question);

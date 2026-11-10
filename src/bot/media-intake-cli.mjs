@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Явный забор готового задания существующей сессией S1/S2. Пустой опрос не зовёт LLM.
 // Квитанция claim хранится закрытым файлом, её токен не выводится и не попадает в Git.
-import {mkdirSync,readFileSync,writeFileSync,existsSync,renameSync,openSync,closeSync,fsyncSync} from 'node:fs';import path from 'node:path';import {randomUUID} from 'node:crypto';
+import {mkdirSync,readFileSync,writeFileSync,existsSync,renameSync,openSync,closeSync,fsyncSync} from 'node:fs';import path from 'node:path';import {randomUUID,createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';import {dataPath,env,wrongUser} from '../lib/env.mjs';
 import {request} from '../lib/http.mjs';
 import {editorTaskView,editorSourceView} from './media-intake-editor-view.mjs';
 import {dispatchMetadata} from '../../ops/intake-dispatch.mjs';
+import {intakeLock} from './media-intake-store.mjs';
 const safeJson=file=>{if(path.extname(file)!=='.json')throw Error('ожидается JSON-файл');return JSON.parse(readFileSync(file,'utf8'));};
 function writeReceipt(file,value){const temp=file+'.tmp';writeFileSync(temp,JSON.stringify(value,null,2),{mode:0o600});const fd=openSync(temp,'r+');try{fsyncSync(fd);}finally{closeSync(fd);}renameSync(temp,file);}
 export async function claimIntakeJob(id,owner,{invoke=call,folder=dataPath('intake-editor'),save=writeReceipt,requestId,expected}={}){
@@ -34,6 +35,18 @@ export async function annotateClaimFacts(file,facts,{invoke=call,save=writeRecei
  save(file,{...claim,job:response.job,contextRevision:response.revision});return response;
 }
 export async function submitClaimResult(file,value,{invoke=call,save=writeReceipt}={}){
+ const unlock=intakeLock(file+'.result.lock');if(!unlock)throw Error('результат уже передаётся');
+ try{return await submitResultLocked(file,value,{invoke,save});}finally{unlock();}
+}
+async function submitResultLocked(file,value,{invoke,save}){
+ const digest=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex'),intentFile=file+'.result-intent.json',inputDigest=digest(value),prior=safeJson(file);
+ if(existsSync(intentFile)){
+  const intent=safeJson(intentFile);
+  if(intent.jobId!==prior.job?.id||intent.owner!==prior.owner||intent.inputDigest!==inputDigest||intent.resultHash!==digest(intent.result))throw Error('неопределённый прежний результат требует сверки, payload не заменяется');
+  if(intent.status==='accepted')return{ok:true,duplicate:true};
+  const response=await invoke('intake-result',{id:prior.job.id,owner:prior.owner,token:prior.token,result:intent.result});
+  if(!response?.ok)throw Error('сохранённый результат не подтверждён');save(intentFile,{...intent,status:'accepted'});return response;
+ }
  const claim=await refreshClaimContext(file,{invoke,save}),job=claim.job;
  if(claim.schema!==1||!claim.token||value?.inputHash!==job.inputHash||!Array.isArray(value.variants))throw Error('нужна актуальная версия результата');
  const result=structuredClone(value);
@@ -46,8 +59,16 @@ export async function submitClaimResult(file,value,{invoke=call,save=writeReceip
   }else if(JSON.stringify(variant.entry.facts)!==JSON.stringify(expected))throw Error('факты результата изменены');
   delete variant.factRefs;
  }
- const response=await invoke('intake-result',{id:job.id,owner:claim.owner,token:claim.token,result});
- if(!response?.ok)throw Error('результат не принят');return response;
+ const intent={schema:1,jobId:job.id,owner:claim.owner,inputDigest,resultHash:digest(result),result,status:'sending'};save(intentFile,intent);
+ try{const response=await invoke('intake-result',{id:job.id,owner:claim.owner,token:claim.token,result});
+  if(!response?.ok)throw Error('результат не принят');save(intentFile,{...intent,status:'accepted'});return response;
+ }catch(error){save(intentFile,{...intent,status:'unknown'});throw error;}
+}
+export async function claimCurrentIntakeJob(id,owner,{invoke=call,...options}={}){
+ const jobs=await invoke('intake-jobs',{}),j=Array.isArray(jobs)?jobs.find(j=>j.id===id):null;
+ if(!j)throw Error('нет актуальных метаданных задания');
+ let expected;if(j.protocolVersion===2){if(!dispatchMetadata(j)||j.recipient!==owner)throw Error('нет актуальной версии/роли');expected=Object.fromEntries(['materialId','revision','inputHash','protocolVersion','manifestRevision'].map(k=>[k,j[k]]));}
+ return claimIntakeJob(id,owner,{...options,invoke,expected});
 }
 export async function acceptDispatchEnvelope(envelope,{invoke=call,folder=dataPath('intake-editor')}={}){
  const e=envelope;
@@ -88,7 +109,7 @@ export async function main(argv=process.argv.slice(2)){
  }
  if(action==='show'){console.log(JSON.stringify(await call('intake-show',{id:args.id}),null,2));return;}
  if(action==='claim'){
-  const file=await claimIntakeJob(args.id,args.owner,{requestId:args['request-id']});
+  const file=await claimCurrentIntakeJob(args.id,args.owner,{requestId:args['request-id']});
   console.log('Задание принято. Закрытая квитанция: '+file);return;
  }
  if(action==='accept'){

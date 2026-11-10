@@ -44,7 +44,9 @@ function readJson(file,fallback){return existsSync(file)?JSON.parse(readFileSync
 function writeJson(file,value){const temp=file+'.'+process.pid+'.tmp';writeFileSync(temp,JSON.stringify(value,null,2),{mode:0o600});renameSync(temp,file);}
 
 async function cli(){
- const folder=path.join(ROOT,'content','reports','monitoring');mkdirSync(folder,{recursive:true});
+ const requested=process.argv.find(x=>x.startsWith('--state-dir='))?.slice(12),probe=path.join(ROOT,'data','intake-dispatch-review-probe');
+ if(requested&&path.resolve(requested)!==probe)throw Error('Неподдерживаемый изолированный каталог');
+ const folder=requested?probe:path.join(ROOT,'content','reports','monitoring');mkdirSync(folder,{recursive:true});
  const file=path.join(folder,'review-watch.json'),unlock=lock(file+'.lock',120000);
  if(!unlock){console.log(JSON.stringify({status:'BUSY'}));return;}
  try{
@@ -59,6 +61,7 @@ async function cli(){
    state.pending.attempted=true;writeJson(file,state);console.log(JSON.stringify({status:'SEND',batchId:id}));return;
   }
   if(state.pending){output();return;}
+  if(requested){output();return;} // Изолированная проба никогда не опрашивает production API.
   const {env}=await import('../src/lib/env.mjs');const {request}=await import('../src/lib/http.mjs');
   const api=env('QUEUE_API_BASE'),token=env('ADMIN_API_TOKEN');
   const call=async(cmd,args={})=>{
